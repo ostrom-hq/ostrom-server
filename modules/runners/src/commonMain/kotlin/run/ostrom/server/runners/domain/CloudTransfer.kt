@@ -49,14 +49,15 @@ enum class TransferState(val wire: String) {
  * @property sessionId The session.
  * @property fromMemberId The owner when the transfer was asked.
  * @property toMemberId The recipient.
- * @property initiatedBy The member who asked (the owner).
+ * @property initiatedBy The member who asked: the owner, or the administrator who asked for them
+ *   (`runners.cloud.onbehalf.writes.v1`); the scope of the request's `Idempotency-Key`.
  * @property state Where the transfer is.
  * @property resume Resume the session under the recipient once the owner changed.
  * @property version Incremented by every write, for compare-and-set.
  * @property createdAt When it was asked.
  * @property updatedAt When it last changed; for an accepted transfer, when the owner change started (its deadline).
  * @property expiresAt Offers only: when the recipient can no longer accept.
- * @property decidedBy Who accepted, declined or cancelled.
+ * @property decidedBy Who accepted, declined or cancelled: the person who made the call, even for another member.
  * @property decidedAt When.
  * @property completedAt When the owner changed.
  * @property atEpoch The last execution run for the former owner; executions after it run for the recipient.

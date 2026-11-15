@@ -23,8 +23,9 @@ val DANA: Uuid = Uuid.parse("00000000-0000-0000-0000-00000000da0a")
 /**
  * The test identities: the tokens `alice` and `bob` (members of org A), `dana` (admin of org A), `carol` (owner of
  * org B) and `nobody` (no org) are browser sessions with every user scope; `reader` is a service token of alice's with
- * `cloud:read` only, `dana-cli` a personal API token of dana's with `cloud:write`. Cloud sessions are open to org A
- * only. A request whose `Ostrom-Org` header names an organization the caller is not a member of resolves to no one.
+ * `cloud:read` only, `dana-cli` a personal API token of dana's (`pat-dana`) with `cloud:write`. Cloud sessions are open
+ * to org A only. A request whose `Ostrom-Org` header names an organization the caller is not a member of resolves to
+ * no one.
  */
 val testIdentities = testIdentitiesWith(emptyMap())
 
@@ -44,7 +45,8 @@ fun testIdentitiesWith(config: Map<String, String>) = module {
                     AuthenticatedPrincipal(token, PrincipalKind.USER, scopes, channel = PrincipalChannel.BROWSER)
                 }
                 "reader" -> AuthenticatedPrincipal("alice", PrincipalKind.SERVICE, setOf("cloud:read"))
-                "dana-cli" -> AuthenticatedPrincipal("dana", PrincipalKind.USER, setOf("cloud:write"))
+                "dana-cli" ->
+                    AuthenticatedPrincipal("dana", PrincipalKind.USER, setOf("cloud:write"), credentialId = "pat-dana")
                 else -> null
             }
         }

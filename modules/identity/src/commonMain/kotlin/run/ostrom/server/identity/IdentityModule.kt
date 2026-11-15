@@ -145,6 +145,7 @@ import run.ostrom.server.identity.infrastructure.IdentityInstanceAccounts
 import run.ostrom.server.identity.infrastructure.IdentityInstanceAuditTrail
 import run.ostrom.server.identity.infrastructure.IdentityMigrations
 import run.ostrom.server.identity.infrastructure.IdentityOrgAuditTrail
+import run.ostrom.server.identity.infrastructure.IdentityTransactionalOrgAuditTrail
 import run.ostrom.server.identity.infrastructure.MagicLinksRepositoryImpl
 import run.ostrom.server.identity.infrastructure.MobileCodesRepositoryImpl
 import run.ostrom.server.identity.infrastructure.MobileTokensRepositoryImpl
@@ -180,6 +181,7 @@ import run.ostrom.server.identity.presentation.orgAuditRoutes
 import run.ostrom.server.identity.presentation.sessionRoutes
 import run.ostrom.server.identity.presentation.signInRoutes
 import run.ostrom.server.kernel.audit.OrgAuditTrail
+import run.ostrom.server.kernel.audit.TransactionalOrgAuditTrail
 import run.ostrom.server.kernel.auth.GovernanceAudit
 import run.ostrom.server.kernel.auth.PhoneUnlockProofs
 import run.ostrom.server.kernel.auth.ServiceKeyAudit
@@ -260,6 +262,7 @@ object IdentityModule : ServerModule {
         single<ServiceKeyAudit> { ServiceKeyAuditImpl(get()) }
         single<GovernanceAudit> { AuditLogGovernanceAudit(get()) }
         single<OrgAuditTrail> { IdentityOrgAuditTrail(get()) }
+        single<TransactionalOrgAuditTrail> { IdentityTransactionalOrgAuditTrail(get()) }
         single<InstanceAuditTrail> { IdentityInstanceAuditTrail(get()) }
         single<InstanceAccounts> { IdentityInstanceAccounts(get(), get()) }
         single<AuditVerifier> { AuditVerifierImpl(get(), get()) }

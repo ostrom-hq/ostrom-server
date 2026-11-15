@@ -108,7 +108,11 @@ interface CloudConversationService {
         enabled: Boolean,
     ): CloudSession
 
-    /** Changes the agent's model, or its effort when [effort] is true; the owner only. @return The session. */
+    /**
+     * Changes the agent's model, or its effort when [effort] is true; the owner, or an administrator acting for them
+     * (`runners.cloud.onbehalf.writes.v1`), journaled with the effective member and the credential. @return The
+     * session.
+     */
     suspend fun setAgentOption(
         caller: Caller,
         principal: AuthenticatedPrincipal,
@@ -376,7 +380,8 @@ class CloudConversationServiceImpl(
         val now = clock.now()
         if (!store.setAgentOption(caller.orgId, id, effort, value, now)) throw notRunning()
         val event = if (effort) "cloud.session.effort_changed" else "cloud.session.model_changed"
-        audit.record(OrgAuditRecord(caller.orgId, principal, event, SUBJECT, id.toString()))
+        val details = caller.onBehalfDetails("owner" to session.ownerId)
+        audit.record(OrgAuditRecord(caller.orgId, principal, event, SUBJECT, id.toString(), details))
         val changed = sessions.ownedBy(caller, id)
         // A running conversation agent takes it at its next turn; a paused or terminal one at its next start.
         val running = changed.state == SessionState.RUNNING && changed.desiredState == DesiredState.RUNNING

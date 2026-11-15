@@ -3,6 +3,8 @@ package run.ostrom.server.kernel.module
 
 import run.ostrom.server.kernel.audit.DiscardingOrgAuditTrail
 import run.ostrom.server.kernel.audit.OrgAuditTrail
+import run.ostrom.server.kernel.audit.DiscardingTransactionalOrgAuditTrail
+import run.ostrom.server.kernel.audit.TransactionalOrgAuditTrail
 import run.ostrom.server.kernel.auth.PhoneUnlockProofs
 import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import run.ostrom.server.kernel.auth.RejectingPhoneUnlockProofs
@@ -33,13 +35,13 @@ import org.koin.dsl.module
 /**
  * Builds the server's Koin: the kernel, then every module, **without overrides** (two modules binding the same type
  * fail the start instead of one silently replacing the other). The only defaults a module may replace are the
- * [TokenAuthenticator], the [PrincipalOrgResolver], the [OrgAuditTrail], the [ServiceKeyAudit], the
- * [PhoneUnlockProofs], the [InstanceKeyring], the [OrgEventPublisher] and the instance's administration ports
- * ([InstanceSettings], [InstanceAdministrators], [InstanceAdminGrants], [InstanceAccounts], [InstanceAuditTrail]): when
- * no module binds them (before the identity, orgs, instance, events and admin modules exist, or in a module's own
- * tests), every token is rejected, no one is a member of any organization, the audit trails write nothing, no service
- * key acts, no phone unlock proves a yes, only the current key verifies, no event is published, no setting is stored
- * and nobody administers the instance.
+ * [TokenAuthenticator], the [PrincipalOrgResolver], the [OrgAuditTrail], the [TransactionalOrgAuditTrail], the
+ * [ServiceKeyAudit], the [PhoneUnlockProofs], the [InstanceKeyring], the [OrgEventPublisher] and the instance's
+ * administration ports ([InstanceSettings], [InstanceAdministrators], [InstanceAdminGrants], [InstanceAccounts],
+ * [InstanceAuditTrail]): when no module binds them (before the identity, orgs, instance, events and admin modules
+ * exist, or in a module's own tests), every token is rejected, no one is a member of any organization, the audit
+ * trails write nothing, no service key acts, no phone unlock proves a yes, only the current key verifies, no event is
+ * published, no setting is stored and nobody administers the instance.
  *
  * @param kernel The kernel definitions ([kernelModule]).
  * @param modules The functional modules.
@@ -64,6 +66,7 @@ fun serverKoin(kernel: Module, modules: List<ServerModule>, overrides: Module? =
     if (koin.getOrNull<OrgAuditTrail>() == null) {
         koin.loadModules(listOf(module { single<OrgAuditTrail> { DiscardingOrgAuditTrail() } }))
     }
+    loadDefault<TransactionalOrgAuditTrail>(koin) { DiscardingTransactionalOrgAuditTrail() }
     if (koin.getOrNull<ServiceKeyAudit>() == null) {
         koin.loadModules(listOf(module { single<ServiceKeyAudit> { RejectingServiceKeyAudit() } }))
     }

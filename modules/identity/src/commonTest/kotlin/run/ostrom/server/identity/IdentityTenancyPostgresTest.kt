@@ -15,6 +15,10 @@ import run.ostrom.server.identity.domain.ResolveUserUseCase
 import run.ostrom.server.identity.domain.TokenKind
 import run.ostrom.server.identity.domain.VerifiedIdentity
 import run.ostrom.server.identity.infrastructure.TransactionalAuditLog
+import run.ostrom.server.kernel.audit.OrgAuditRecord
+import run.ostrom.server.kernel.audit.TransactionalOrgAuditTrail
+import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.database.PurgeDateRefusedException
 import run.ostrom.server.kernel.database.TENANT_ROLE
 import run.ostrom.server.kernel.database.inOrg
@@ -202,6 +206,30 @@ class IdentityTenancyPostgresTest {
         assertFailsWith<IllegalArgumentException>("Only an organization's action") {
             s.driver.inOrg(orgA) { audit.record(this, AuditEntry(null, null, "account", "t", "3")) }
         }
+    }
+
+    // Another module's change (a cloud session write) journals through the kernel's port, in its own transaction, the
+    // same entry as the after-commit trail: the person as the actor, the credential in the details.
+    @Test
+    fun aModulesChangeIsJournaledInItsTransactionThroughTheKernelPort() = serverTest(listOf(IdentityModule)) { s ->
+        val trail = s.koin.get<TransactionalOrgAuditTrail>()
+        val ada = Uuid.random()
+        val person = AuthenticatedPrincipal("$ada", PrincipalKind.USER, setOf("user:*"))
+        fun change(event: String) = OrgAuditRecord(orgA, person, event, "cloud_session", "s", mapOf("owner" to "b"))
+
+        assertFails {
+            s.driver.inOrg(orgA) {
+                trail.record(this, change("cloud.session.paused"))
+                error("the change fails")
+            }
+        }
+        s.driver.inOrg(orgA) { trail.record(this, change("cloud.session.created")) }
+
+        val lines = s.koin.get<AuditRepository>().listOrg(orgA, OrgAuditQuery(limit = 10))
+        assertEquals(listOf("cloud.session.created"), lines.map { it.event.entry.action })
+        val entry = lines.single().event.entry
+        assertEquals(ada, entry.actorId)
+        assertEquals(mapOf("owner" to "b", "credential" to "api_token"), entry.details)
     }
 
     // Identity appends on Exposed (AuditLog.record), the modules still on sqlx4k in their own transaction

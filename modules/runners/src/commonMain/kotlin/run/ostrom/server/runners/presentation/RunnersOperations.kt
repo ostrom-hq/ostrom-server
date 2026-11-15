@@ -45,15 +45,23 @@ internal const val SESSION_ID = "The cloud session's id."
 /**
  * `Ostrom-On-Behalf-Of` of a cloud session write (`runners.cloud.onbehalf.v1`, TeamCode's `TeamCode-On-Behalf-Of`).
  */
-internal fun Parameters.Builder.onBehalfHeader(ownerOnly: Boolean = false) = headerText(
+internal fun Parameters.Builder.onBehalfHeader(ownerOnly: Boolean = false, writes: Boolean = false) = headerText(
     "Ostrom-On-Behalf-Of",
-    if (ownerOnly) {
-        "`runners.cloud.onbehalf.v1`: on this owner-only write, absent or naming the caller; any other member, " +
-            "even for an administrator, is the route's owner-only 403."
-    } else {
-        ON_BEHALF
+    when {
+        ownerOnly -> "`runners.cloud.onbehalf.v1`: on this owner-only write, absent or naming the caller; any other " +
+            "member, even for an administrator, is the route's owner-only 403."
+        writes -> "`runners.cloud.onbehalf.writes.v1`, as on the session writes: $ON_BEHALF"
+        else -> ON_BEHALF
     },
 )
+
+/** The refusals of `Ostrom-On-Behalf-Of` on a write that reads it with `runners.cloud.onbehalf.writes.v1`. */
+internal const val ON_BEHALF_FORBIDDEN = "A caller who may not act for someone else named another member in " +
+    "`Ostrom-On-Behalf-Of` (`on_behalf_forbidden`)."
+
+/** The member `Ostrom-On-Behalf-Of` names is no active member. */
+internal const val ON_BEHALF_INVALID_MEMBER = "The member `Ostrom-On-Behalf-Of` names is not an active member of the " +
+    "organization (`invalid_effective_member`)."
 
 private const val ON_BEHALF =
     "`runners.cloud.onbehalf.v1`: the member the write acts for, by member id or login (an id wins over a " +

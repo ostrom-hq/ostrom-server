@@ -48,6 +48,7 @@ class RunnersFeaturesTest {
     /** What every cloud runtime serves: its agent tokens are bound to their cloud session. */
     private val cloud = setOf(
         "runners.v1", "runners.cloud.v1", "runners.cloud.agent.v1", "runners.cloud.idempotency.v1",
+        "runners.cloud.sessions.owner.v1",
     )
 
     private fun koin(driver: RunnersConfig.DriverKind) = koinApplication {
@@ -123,7 +124,7 @@ class RunnersFeaturesTest {
         assertEquals(setOf("runners.v1"), RunnersModule.features(koin(RunnersConfig.DriverKind.NONE)))
         assertEquals(cloud, RunnersModule.features(koin(RunnersConfig.DriverKind.DOCKER)))
         assertEquals(
-            cloud + "runners.cloud.profiles.v1" + "runners.cloud.retention.v1",
+            cloud + "runners.cloud.profiles.v1" + "runners.cloud.profiles.member.v1" + "runners.cloud.retention.v1",
             RunnersModule.features(koin(RunnersConfig.DriverKind.KUBERNETES)),
             "Sessions on the console's clusters run on the organizations' profiles",
         )
@@ -257,6 +258,7 @@ class RunnersFeaturesTest {
             val listed = if (wiring.routes == null) emptySet() else setOf(
                 "runners.cloud.transfer.v1",
                 "runners.cloud.onbehalf.v1",
+                "runners.cloud.onbehalf.writes.v1",
             )
             assertEquals(cloud + listed, RunnersModule.features(koin))
         }

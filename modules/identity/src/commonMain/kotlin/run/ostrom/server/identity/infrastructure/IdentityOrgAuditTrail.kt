@@ -5,7 +5,9 @@ import run.ostrom.server.identity.domain.AuditEntry
 import run.ostrom.server.identity.domain.AuditLog
 import run.ostrom.server.kernel.audit.OrgAuditRecord
 import run.ostrom.server.kernel.audit.OrgAuditTrail
+import run.ostrom.server.kernel.audit.TransactionalOrgAuditTrail
 import run.ostrom.server.kernel.auth.PrincipalKind
+import io.github.smyrgeorge.sqlx4k.Transaction
 import kotlin.uuid.Uuid
 
 /**
@@ -18,16 +20,31 @@ import kotlin.uuid.Uuid
  */
 class IdentityOrgAuditTrail(private val log: AuditLog) : OrgAuditTrail {
     override suspend fun record(record: OrgAuditRecord) {
-        val actor = record.actor
-        val person = Uuid.parseOrNull(actor.subjectId)?.takeIf { actor.kind == PrincipalKind.USER }
-        val credential = buildMap {
-            put("credential", actor.channel.name.lowercase())
-            if (person == null) {
-                put("actor_kind", actor.kind.name.lowercase())
-                put("actor_id", actor.subjectId)
-            }
-        }
-        val details = record.details + credential
-        log.record(AuditEntry(record.orgId, person, record.event, record.subjectType, record.subjectId, details))
+        log.record(record.toAuditEntry())
     }
+}
+
+/**
+ * [TransactionalOrgAuditTrail] on the signed audit log: the entry of [IdentityOrgAuditTrail], appended inside the
+ * transaction of the change it tells.
+ *
+ * @param log Appends inside a sqlx4k transaction.
+ */
+class IdentityTransactionalOrgAuditTrail(private val log: TransactionalAuditLog) : TransactionalOrgAuditTrail {
+    override suspend fun record(transaction: Transaction, record: OrgAuditRecord) {
+        log.record(transaction, record.toAuditEntry())
+    }
+}
+
+/** The audit entry of a change: the person as the actor, the credential in the details. */
+private fun OrgAuditRecord.toAuditEntry(): AuditEntry {
+    val person = Uuid.parseOrNull(actor.subjectId)?.takeIf { actor.kind == PrincipalKind.USER }
+    val credential = buildMap {
+        put("credential", actor.channel.name.lowercase())
+        if (person == null) {
+            put("actor_kind", actor.kind.name.lowercase())
+            put("actor_id", actor.subjectId)
+        }
+    }
+    return AuditEntry(orgId, person, event, subjectType, subjectId, details + credential)
 }

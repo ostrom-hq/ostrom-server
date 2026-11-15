@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.cloud.domain
 
+import run.ostrom.core.api.OnBehalfOf
 import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.OstromException
 
@@ -99,3 +100,30 @@ class CloudSettingsConflictException : OstromException(
     "The cloud settings were changed meanwhile: reload them and save again.",
     "cloud_settings_conflict",
 )
+
+/**
+ * Only an owner or an admin lists another member's profiles (403 `forbidden`, TeamCode's
+ * `requireCloudAdministrator`).
+ */
+class ProfilesMemberForbiddenException : OstromException(
+    ErrorKind.FORBIDDEN,
+    "Only an owner or an admin of the organization lists another member's profiles.",
+)
+
+/**
+ * The member named is not an active member of the organization (422 `invalid_effective_member`, as
+ * `Ostrom-On-Behalf-Of`).
+ */
+class InvalidEffectiveMemberException : OstromException(
+    ErrorKind.UNPROCESSABLE,
+    "The member must be an active member of the organization, named by id or login.",
+    OnBehalfOf.INVALID_MEMBER,
+)
+
+/**
+ * A query parameter read once was sent several times (400 `invalid_query`, TeamCode's).
+ *
+ * @param name The parameter.
+ */
+class InvalidQueryException(name: String) :
+    OstromException(ErrorKind.INVALID_REQUEST, "Send $name at most once.", "invalid_query")

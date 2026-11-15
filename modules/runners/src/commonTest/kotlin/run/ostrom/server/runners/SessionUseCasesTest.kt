@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners
 
+import run.ostrom.server.kernel.audit.OrgAuditRecord
 import run.ostrom.server.kernel.errors.InvalidPageException
 import run.ostrom.server.runners.domain.AgentKind
 import run.ostrom.server.runners.domain.Caller
@@ -366,8 +367,13 @@ class SessionUseCasesTest {
         val paused = session(state = SessionState.PAUSED, desired = DesiredState.PAUSED)
         repository.put(paused)
         val vanishing = object : run.ostrom.server.runners.domain.CloudSessionsRepository by repository {
-            override suspend fun resumeWithinCap(orgId: Uuid, id: Uuid, maxRunning: Int, now: Instant) =
-                run.ostrom.server.runners.domain.ResumeOutcome.NotFound
+            override suspend fun resumeWithinCap(
+                orgId: Uuid,
+                id: Uuid,
+                maxRunning: Int,
+                now: Instant,
+                journal: OrgAuditRecord?,
+            ) = run.ostrom.server.runners.domain.ResumeOutcome.NotFound
         }
 
         assertFailsWith<CloudSessionNotFoundException> {
@@ -402,7 +408,13 @@ class SessionUseCasesTest {
     fun changesOfASessionDeletedBetweenTheReadAndTheWriteAreNotFound() = runTest {
         val created = create(alice, payload())
         val vanishing = object : run.ostrom.server.runners.domain.CloudSessionsRepository by repository {
-            override suspend fun setDesiredState(orgId: Uuid, id: Uuid, desiredState: DesiredState, now: Instant) = null
+            override suspend fun setDesiredState(
+                orgId: Uuid,
+                id: Uuid,
+                desiredState: DesiredState,
+                now: Instant,
+                journal: OrgAuditRecord?,
+            ) = null
         }
         val racing = ChangeCloudSessionUseCaseImpl(vanishing, plans, RepositoryCloudUsageMeter(vanishing), clock)
 

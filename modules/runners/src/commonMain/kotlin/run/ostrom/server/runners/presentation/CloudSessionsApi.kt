@@ -5,16 +5,22 @@ import io.ktor.resources.Resource
 import kotlinx.serialization.Serializable
 
 /**
- * `GET /api/v1/cloud/sessions` (the caller's sessions, `?before=<id>&limit=&kind=`) and `POST` (create), as in
+ * `GET /api/v1/cloud/sessions` (the caller's sessions, `?before=<id>&limit=&kind=&owner=`) and `POST` (create), as in
  * ostrom-core's `api/openapi.yaml` (operations `listCloudSessions`, `createCloudSession`).
  *
  * @property before The cursor of the previous page.
  * @property limit The page size, 1 to 50.
  * @property kind The kinds listed, repeatable (`cloud`, `remote`); cloud sessions only when absent.
+ * @property owner The owner (`runners.cloud.sessions.owner.v1`): the caller's member id, at most once.
  */
 @Serializable
 @Resource("/api/v1/cloud/sessions")
-class CloudSessionsApi(val before: String? = null, val limit: Int? = null, val kind: List<String> = emptyList()) {
+class CloudSessionsApi(
+    val before: String? = null,
+    val limit: Int? = null,
+    val kind: List<String> = emptyList(),
+    val owner: List<String> = emptyList(),
+) {
     /**
      * `GET`/`DELETE /api/v1/cloud/sessions/{id}`.
      *

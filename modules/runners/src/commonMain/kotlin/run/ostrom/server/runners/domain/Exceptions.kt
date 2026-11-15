@@ -339,3 +339,18 @@ class GitHubOwnerConsentException : OstromException(
         "allows it. Ask the owner to create the session.",
     OnBehalfOf.GITHUB_OWNER_CONSENT,
 )
+
+/**
+ * The listing names another owner than the caller (`runners.cloud.sessions.owner.v1`, TeamCode's): nobody lists other
+ * members' sessions, administrators included (403 `forbidden`).
+ */
+class CloudSessionsOwnerForbiddenException :
+    OstromException(ErrorKind.FORBIDDEN, "Only your own sessions are listed.")
+
+/**
+ * A query parameter that is read once was sent several times (400 `invalid_query`, TeamCode's).
+ *
+ * @param name The parameter.
+ */
+class InvalidQueryException(name: String) :
+    OstromException(ErrorKind.INVALID_REQUEST, "Send $name at most once.", "invalid_query")

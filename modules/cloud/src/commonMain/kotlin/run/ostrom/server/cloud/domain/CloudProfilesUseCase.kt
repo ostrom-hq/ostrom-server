@@ -2,20 +2,32 @@
 package run.ostrom.server.cloud.domain
 
 import run.ostrom.server.kernel.auth.MemberDirectory
+import run.ostrom.server.kernel.auth.MemberLogins
+import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.secrets.domain.Caller
 import kotlin.time.Clock
 import kotlin.uuid.Uuid
 
+/** The roles that see every profile. */
+private val ADMINISTRATORS = setOf(OrgRole.OWNER, OrgRole.ADMIN)
+
 /** The organization's cloud profiles (TeamCode's `cloud_profiles`): versioned, assigned to members. */
 interface CloudProfilesUseCase {
     /**
-     * The profiles the caller may see: every one for an owner or an admin, the assigned ones for a member.
+     * The profiles the caller may see: every one for an owner or an admin, the assigned ones for a member. With
+     * [member] (`runners.cloud.profiles.member.v1`, TeamCode's `cloud.profiles.member.v1`), the profiles that member
+     * can create sessions from, as an administrator creating on their behalf sees them.
      *
      * @param caller A member of the organization.
+     * @param member Another member, by id or login; null, or the caller themselves, for the caller's.
      *
      * @return They, by name.
+     *
+     * @throws ProfilesMemberForbiddenException When a caller who does not administer the organization names another
+     *   member.
+     * @throws InvalidEffectiveMemberException When the member named is not an active member of the organization.
      */
-    suspend fun list(caller: Caller): List<CloudProfile>
+    suspend fun list(caller: Caller, member: String? = null): List<CloudProfile>
 
     /**
      * Creates a profile at version 1.
@@ -54,6 +66,7 @@ interface CloudProfilesUseCase {
  * @param members Who the profile may be assigned to.
  * @param storage Reads the workspace storage class on the cluster (TeamCode's check at publish); null where sessions
  *   do not run on Kubernetes.
+ * @param logins The members' logins, to name a member by login; none without the orgs module.
  */
 class CloudProfilesUseCaseImpl(
     private val repository: CloudProfilesRepository,
@@ -61,11 +74,27 @@ class CloudProfilesUseCaseImpl(
     private val clock: Clock,
     private val members: MemberDirectory,
     private val storage: WorkspaceStorageClasses? = null,
+    private val logins: MemberLogins? = null,
 ) : CloudProfilesUseCase {
-    override suspend fun list(caller: Caller): List<CloudProfile> {
-        val all = repository.list(caller.orgId)
-        return if (caller.role.isAdmin) all else all.filter { caller.memberId.toString() in it.assignedMemberIds }
+    override suspend fun list(caller: Caller, member: String?): List<CloudProfile> {
+        val self = caller.memberId.toString()
+        val target = if (member == null) self else memberId(caller.orgId, member)
+        if (target == self) return visible(caller.orgId, self, caller.role.isAdmin)
+        // As a creation on someone's behalf: only an administrator names another member, who must be one.
+        if (!caller.role.isAdmin) throw ProfilesMemberForbiddenException()
+        if (target == null || !members.isActiveMember(caller.orgId, target)) throw InvalidEffectiveMemberException()
+        return visible(caller.orgId, target, members.roleOf(caller.orgId, target) in ADMINISTRATORS)
     }
+
+    /** Every profile for someone who administers the organization, the ones assigned to [memberId] otherwise. */
+    private suspend fun visible(orgId: Uuid, memberId: String, administers: Boolean): List<CloudProfile> {
+        val all = repository.list(orgId)
+        return if (administers) all else all.filter { memberId in it.assignedMemberIds }
+    }
+
+    /** The member a reference names: an id as it is, a login through the members' logins; null for none. */
+    private suspend fun memberId(orgId: Uuid, reference: String): String? =
+        (Uuid.parseOrNull(reference) ?: logins?.let { it.idsOf(orgId, listOf(reference))[reference] })?.toString()
 
     override suspend fun create(caller: Caller, input: CloudProfileInput): CloudProfile {
         caller.requireAdmin()

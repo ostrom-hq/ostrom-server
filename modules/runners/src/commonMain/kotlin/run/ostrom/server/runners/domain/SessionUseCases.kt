@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners.domain
 
-import run.ostrom.server.kernel.audit.DiscardingOrgAuditTrail
 import run.ostrom.server.kernel.audit.OrgAuditRecord
-import run.ostrom.server.kernel.audit.OrgAuditTrail
 import run.ostrom.server.kernel.audit.auditDetails
 import run.ostrom.server.kernel.errors.Pages
 import kotlin.time.Clock
@@ -91,14 +89,14 @@ interface CreateCloudSessionUseCase {
 data class KeyedCreation(val session: CloudSession, val replayed: Boolean)
 
 /**
- * [CreateCloudSessionUseCase] on the repository and the plan.
+ * [CreateCloudSessionUseCase] on the repository and the plan. An API creation is journaled `cloud.session.created`, in
+ * the creation's transaction.
  *
  * @param repository The sessions.
  * @param plans The organizations' plans.
  * @param usage The hours used.
  * @param clock The time.
  * @param profiles The profile a Kubernetes session runs on; none elsewhere.
- * @param audit The organization's audit log: an API creation is journaled `cloud.session.created`.
  */
 class CreateCloudSessionUseCaseImpl(
     private val repository: CloudSessionsRepository,
@@ -106,10 +104,9 @@ class CreateCloudSessionUseCaseImpl(
     private val usage: CloudUsageMeter,
     private val clock: Clock,
     private val profiles: SessionProfiles = NoSessionProfiles,
-    private val audit: OrgAuditTrail = DiscardingOrgAuditTrail(),
 ) : CreateCloudSessionUseCase {
     override suspend fun invoke(caller: Caller, payload: CreateCloudSessionPayload): CloudSession =
-        existing(caller, payload) ?: created(caller, payload).also { journal(audit, caller, it, CREATED) }
+        existing(caller, payload) ?: created(caller, payload)
 
     override suspend fun createKeyed(
         caller: Caller,
@@ -120,11 +117,9 @@ class CreateCloudSessionUseCaseImpl(
         val (session, plan) = drafted(caller, payload)
         // Scoped to the member who sent it, whoever the session is for (TeamCode's idempotency scope).
         val record = CreateKey(key, requestDigest, session.createdAt + IDEMPOTENCY_RETENTION, caller.initiatorId)
-        return when (val outcome = repository.createKeyed(session, plan.maxRunningSessions, record)) {
-            KeyedCreateOutcome.Created -> {
-                journal(audit, caller, session, CREATED)
-                KeyedCreation(session, replayed = false)
-            }
+        val journal = caller.journal(session, CREATED)
+        return when (val outcome = repository.createKeyed(session, plan.maxRunningSessions, record, journal)) {
+            KeyedCreateOutcome.Created -> KeyedCreation(session, replayed = false)
             is KeyedCreateOutcome.Replayed -> KeyedCreation(outcome.session, replayed = true)
             KeyedCreateOutcome.Conflict -> throw CloudSessionIdempotencyConflictException(
                 "This Idempotency-Key was already used with a different request, or its session no longer exists.",
@@ -135,7 +130,7 @@ class CreateCloudSessionUseCaseImpl(
 
     private suspend fun created(caller: Caller, payload: CreateCloudSessionPayload): CloudSession {
         val (session, plan) = drafted(caller, payload)
-        if (!repository.createWithinCap(session, plan.maxRunningSessions)) {
+        if (!repository.createWithinCap(session, plan.maxRunningSessions, caller.journal(session, CREATED))) {
             throw CloudSessionLimitException(plan.maxRunningSessions)
         }
         return session
@@ -267,19 +262,31 @@ class CreateCloudSessionUseCaseImpl(
 }
 
 /**
- * Journals a write of a session made through the API (`runners.cloud.onbehalf.v1`, TeamCode's `CloudWrite`): the
- * actor is the credential, with the effective member and the credential's id; a write of the server itself (a
- * workflow run, an automation) is not journaled here.
+ * The audit entry of a write of a session made through the API (`runners.cloud.onbehalf.v1`, TeamCode's
+ * `CloudWrite`), which the repository writes in the write's transaction: the actor is the credential, with the
+ * effective member and the credential's id ([onBehalfDetails]).
+ *
+ * @param session The session written.
+ * @param event What happened (`cloud.session.paused`).
+ *
+ * @return The entry, or null for a write of the server itself (a workflow run, an automation), not journaled here.
  */
-internal suspend fun journal(audit: OrgAuditTrail, caller: Caller, session: CloudSession, event: String) {
-    val principal = caller.principal ?: return
-    val details = auditDetails(
-        "effective_member_id" to caller.memberId,
-        "credential_id" to caller.credentialId,
-        "owner" to session.ownerId,
-    )
-    audit.record(OrgAuditRecord(caller.orgId, principal, event, "cloud_session", session.id.toString(), details))
+internal fun Caller.journal(session: CloudSession, event: String): OrgAuditRecord? {
+    val actor = principal ?: return null
+    val details = onBehalfDetails("owner" to session.ownerId)
+    return OrgAuditRecord(orgId, actor, event, "cloud_session", session.id.toString(), details)
 }
+
+/**
+ * The details every cloud write journals (`runners.cloud.onbehalf.writes.v1`): the member it acted for and the id of
+ * the credential it presented, then the write's own facts.
+ *
+ * @param facts The write's own facts, by name.
+ *
+ * @return The details.
+ */
+internal fun Caller.onBehalfDetails(vararg facts: Pair<String, Any?>): Map<String, String> =
+    auditDetails("effective_member_id" to memberId, "credential_id" to credentialId, *facts)
 
 /**
  * Refuses when the organization used the hours of its plan this period.
@@ -354,16 +361,21 @@ interface ListCloudSessionsUseCase {
      * @param limit The page size, 1 to 50; 20 when null.
      * @param kinds The kinds listed: cloud sessions only by default, so that a client from before remote sessions
      *   never lists one it cannot show.
+     * @param owner The owner asked for (`runners.cloud.sessions.owner.v1`, TeamCode's `owner`): the caller's member
+     *   id, or null for the caller.
      *
      * @return The sessions, newest first.
      *
      * @throws InvalidCloudSessionRequestException When the limit is out of bounds.
+     * @throws CloudSessionsOwnerForbiddenException When [owner] names anyone else (another member, a login, `all`),
+     *   whatever the caller's role.
      */
     suspend operator fun invoke(
         caller: Caller,
         before: Uuid?,
         limit: Int?,
         kinds: Set<SessionKind> = setOf(SessionKind.CLOUD),
+        owner: String? = null,
     ): List<CloudSession>
 }
 
@@ -378,9 +390,13 @@ class ListCloudSessionsUseCaseImpl(private val repository: CloudSessionsReposito
         before: Uuid?,
         limit: Int?,
         kinds: Set<SessionKind>,
+        owner: String?,
     ): List<CloudSession> {
         val size = limit ?: DEFAULT_PAGE
         ensureValid(size in 1..MAX_PAGE) { "The limit must be between 1 and $MAX_PAGE." }
+        // Nobody lists other members' sessions, administrators included: a session is reached by its owner, or after
+        // a transfer (TeamCode's rule).
+        if (owner != null && owner != caller.memberId) throw CloudSessionsOwnerForbiddenException()
         // A `before` that names no session of the organization (forged, or another's) is a 400, not an empty page.
         return Pages.checked("before", before, repository.list(caller.orgId, caller.memberId, before, size, kinds)) {
             repository.get(caller.orgId, it) != null
@@ -437,29 +453,27 @@ interface ChangeCloudSessionUseCase {
 }
 
 /**
- * [ChangeCloudSessionUseCase] on the repository and the plan.
+ * [ChangeCloudSessionUseCase] on the repository and the plan. An API call that changes the session is journaled in the
+ * change's transaction.
  *
  * @param repository The sessions.
  * @param plans The organizations' plans.
  * @param usage The hours used.
  * @param clock The time.
- * @param audit The organization's audit log: an API call that changed the session is journaled.
  */
 class ChangeCloudSessionUseCaseImpl(
     private val repository: CloudSessionsRepository,
     private val plans: CloudPlanProvider,
     private val usage: CloudUsageMeter,
     private val clock: Clock,
-    private val audit: OrgAuditTrail = DiscardingOrgAuditTrail(),
 ) : ChangeCloudSessionUseCase {
     override suspend fun pause(caller: Caller, id: Uuid): CloudSession {
         val session = repository.ownedBy(caller, id)
         if (session.state.isFinal) throw CloudSessionStateException("This session is over.")
         if (session.desiredState == DesiredState.PAUSED) return session
-        val paused = repository.setDesiredState(caller.orgId, id, DesiredState.PAUSED, clock.now())
+        val journal = caller.journal(session, "cloud.session.paused")
+        return repository.setDesiredState(caller.orgId, id, DesiredState.PAUSED, clock.now(), journal)
             ?: throw CloudSessionNotFoundException()
-        journal(audit, caller, paused, "cloud.session.paused")
-        return paused
     }
 
     override suspend fun resume(caller: Caller, id: Uuid): CloudSession {
@@ -476,11 +490,9 @@ class ChangeCloudSessionUseCaseImpl(
         val now = clock.now()
         // A remote session runs on its owner's device: no hour of the plan is used.
         if (session.kind == SessionKind.CLOUD) requireHoursLeft(usage, plan, caller.orgId, now)
-        val outcome = repository.resumeWithinCap(caller.orgId, id, plan.maxRunningSessions, now)
-        if (outcome is ResumeOutcome.Resumed) {
-            journal(audit, caller, outcome.session, "cloud.session.resumed")
-            return outcome.session
-        }
+        val journal = caller.journal(session, "cloud.session.resumed")
+        val outcome = repository.resumeWithinCap(caller.orgId, id, plan.maxRunningSessions, now, journal)
+        if (outcome is ResumeOutcome.Resumed) return outcome.session
         throw if (outcome == ResumeOutcome.AtCap) {
             CloudSessionLimitException(plan.maxRunningSessions)
         } else {
@@ -491,9 +503,8 @@ class ChangeCloudSessionUseCaseImpl(
     override suspend fun delete(caller: Caller, id: Uuid): CloudSession {
         val session = repository.ownedBy(caller, id)
         if (session.desiredState == DesiredState.TERMINATED || session.state.isFinal) return session
-        val deleted = repository.setDesiredState(caller.orgId, id, DesiredState.TERMINATED, clock.now())
+        val journal = caller.journal(session, "cloud.session.deleted")
+        return repository.setDesiredState(caller.orgId, id, DesiredState.TERMINATED, clock.now(), journal)
             ?: throw CloudSessionNotFoundException()
-        journal(audit, caller, deleted, "cloud.session.deleted")
-        return deleted
     }
 }

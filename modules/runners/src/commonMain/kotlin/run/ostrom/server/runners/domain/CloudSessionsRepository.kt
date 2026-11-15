@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners.domain
 
+import run.ostrom.server.kernel.audit.OrgAuditRecord
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -14,10 +15,13 @@ interface CloudSessionsRepository {
      *
      * @param session The session to create.
      * @param maxRunning The organization's cap.
+     * @param journal The audit entry of the change (`runners.cloud.onbehalf.writes.v1`, TeamCode's `CloudWrite`),
+     *   written in its transaction: kept only when the session is created, and the creation does not
+     *   happen when it cannot be written. Null for a change of the server itself, which journals nothing.
      *
      * @return True when the session was created, false when the cap was reached.
      */
-    suspend fun createWithinCap(session: CloudSession, maxRunning: Int): Boolean
+    suspend fun createWithinCap(session: CloudSession, maxRunning: Int, journal: OrgAuditRecord? = null): Boolean
 
     /**
      * Creates a session under an `Idempotency-Key` (TeamCode's `SqlCloudSessionStore.insert`), in one transaction
@@ -28,10 +32,18 @@ interface CloudSessionsRepository {
      * @param session The session to create.
      * @param maxRunning The organization's cap.
      * @param key The key, the request's digest and when the record expires.
+     * @param journal The audit entry of the change (`runners.cloud.onbehalf.writes.v1`, TeamCode's `CloudWrite`),
+     *   written in its transaction: kept only when the session is created (not on a replay), and the creation does not
+     *   happen when it cannot be written. Null for a change of the server itself, which journals nothing.
      *
      * @return What happened.
      */
-    suspend fun createKeyed(session: CloudSession, maxRunning: Int, key: CreateKey): KeyedCreateOutcome
+    suspend fun createKeyed(
+        session: CloudSession,
+        maxRunning: Int,
+        key: CreateKey,
+        journal: OrgAuditRecord? = null,
+    ): KeyedCreateOutcome
 
     /**
      * Deletes a bounded batch of the expired idempotency records of every organization (TeamCode's `maintain`).
@@ -97,10 +109,19 @@ interface CloudSessionsRepository {
      * @param id The session.
      * @param desiredState The new desired state.
      * @param now The time, to schedule the reconciliation.
+     * @param journal The audit entry of the change (`runners.cloud.onbehalf.writes.v1`, TeamCode's `CloudWrite`),
+     *   written in its transaction: kept only when the session is changed, and the change does not
+     *   happen when it cannot be written. Null for a change of the server itself, which journals nothing.
      *
      * @return The session after the change, or null when it does not exist in this organization.
      */
-    suspend fun setDesiredState(orgId: Uuid, id: Uuid, desiredState: DesiredState, now: Instant): CloudSession?
+    suspend fun setDesiredState(
+        orgId: Uuid,
+        id: Uuid,
+        desiredState: DesiredState,
+        now: Instant,
+        journal: OrgAuditRecord? = null,
+    ): CloudSession?
 
     /**
      * Sets whose GitHub access a session uses.
@@ -123,10 +144,19 @@ interface CloudSessionsRepository {
      * @param id The session.
      * @param maxRunning The organization's cap.
      * @param now The time.
+     * @param journal The audit entry of the change (`runners.cloud.onbehalf.writes.v1`, TeamCode's `CloudWrite`),
+     *   written in its transaction: kept only when the session is resumed, and the resume does not
+     *   happen when it cannot be written. Null for a change of the server itself, which journals nothing.
      *
      * @return The outcome.
      */
-    suspend fun resumeWithinCap(orgId: Uuid, id: Uuid, maxRunning: Int, now: Instant): ResumeOutcome
+    suspend fun resumeWithinCap(
+        orgId: Uuid,
+        id: Uuid,
+        maxRunning: Int,
+        now: Instant,
+        journal: OrgAuditRecord? = null,
+    ): ResumeOutcome
 
     /**
      * Writes a session if nobody changed it since it was read (compare-and-set on [CloudSession.generation]); the

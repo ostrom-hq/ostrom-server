@@ -139,15 +139,17 @@ private fun Route.optionRoutes(dependencies: CloudConversationRoutesDependencies
             call.respond(hosts.response(session))
         }
         put<CloudModelApi> { params ->
+            // `runners.cloud.onbehalf.writes.v1`: an administrator changes it for the member the header names.
+            val caller = call.cloudActor(orgResolver, resolveActor)
             val principal = call.requirePrincipal()
-            val caller = orgResolver.callerOf(principal, CLOUD_WRITE)
             val model = call.receive<SetCloudModelBody>().model
             val session = conversation.setAgentOption(caller, principal, sessionId(params.parent.id), false, model)
             call.respond(hosts.response(session))
         }
         put<CloudEffortApi> { params ->
+            // `runners.cloud.onbehalf.writes.v1`: an administrator changes it for the member the header names.
+            val caller = call.cloudActor(orgResolver, resolveActor)
             val principal = call.requirePrincipal()
-            val caller = orgResolver.callerOf(principal, CLOUD_WRITE)
             val effort = call.receive<SetCloudEffortBody>().effort
             val session = conversation.setAgentOption(caller, principal, sessionId(params.parent.id), true, effort)
             call.respond(hosts.response(session))

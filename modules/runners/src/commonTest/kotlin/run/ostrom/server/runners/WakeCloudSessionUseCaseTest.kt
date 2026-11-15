@@ -140,8 +140,13 @@ class WakeCloudSessionUseCaseTest {
     fun aSessionDeletedBetweenTheReadAndTheResumeIsEnded() = runTest {
         val paused = paused()
         val deleting = object : run.ostrom.server.runners.domain.CloudSessionsRepository by repository {
-            override suspend fun resumeWithinCap(orgId: Uuid, id: Uuid, maxRunning: Int, now: kotlin.time.Instant) =
-                run.ostrom.server.runners.domain.ResumeOutcome.NotFound
+            override suspend fun resumeWithinCap(
+                orgId: Uuid,
+                id: Uuid,
+                maxRunning: Int,
+                now: kotlin.time.Instant,
+                journal: run.ostrom.server.kernel.audit.OrgAuditRecord?,
+            ) = run.ostrom.server.runners.domain.ResumeOutcome.NotFound
         }
         val racing = WakeCloudSessionUseCaseImpl(
             deleting, plans, RepositoryCloudUsageMeter(deleting), members, OrgAuditTrail { audit += it }, clock,

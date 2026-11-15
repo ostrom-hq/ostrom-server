@@ -46,7 +46,8 @@ fun Route.cloudSessionsRoutes(dependencies: CloudSessionsRoutesDependencies) = w
         get<CloudSessionsApi> { params ->
             val caller = orgResolver.callerOf(call.requirePrincipal(), CLOUD_READ)
             val kinds = kinds(params.kind)
-            val sessions = listCloudSessions(caller, params.before?.let { parseId(it) }, params.limit, kinds)
+            val owner = atMostOnce("owner", params.owner)
+            val sessions = listCloudSessions(caller, params.before?.let { parseId(it) }, params.limit, kinds, owner)
             val limit = params.limit ?: DEFAULT_LIMIT
             call.respond(
                 CloudSessionsResponse(

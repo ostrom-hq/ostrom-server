@@ -13,5 +13,15 @@ object KnownDrifts {
         // An offer's body over its limit (bodyLimit, refused before it is read): the contract, served since
         // ostrom-core#286, does not declare that 413 yet (the runner channel's are, since ostrom-core#293).
         "transferCloudSession 413 \$ STATUS" to "the contract does not declare the transfer offer's 413 (body limit)",
+        // A Discord interaction's answer (served since ostrom-core#296): the contract declares `data` without the
+        // message fields Discord reads (content, flags, components, allowed_mentions).
+        "receiveDiscordInteraction 200 \$.data.allowed_mentions UNDECLARED" to
+            "the contract does not declare the interaction message's allowed_mentions",
+        "receiveDiscordInteraction 200 \$.data.components UNDECLARED" to
+            "the contract does not declare the interaction message's components",
+        "receiveDiscordInteraction 200 \$.data.content UNDECLARED" to
+            "the contract does not declare the interaction message's content",
+        "receiveDiscordInteraction 200 \$.data.flags UNDECLARED" to
+            "the contract does not declare the interaction message's flags",
     )
 }

@@ -2,8 +2,6 @@
 package run.ostrom.server.runners
 
 import kotlinx.coroutines.test.runTest
-import run.ostrom.server.kernel.audit.OrgAuditRecord
-import run.ostrom.server.kernel.audit.OrgAuditTrail
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.runners.domain.Caller
@@ -38,14 +36,14 @@ import kotlin.uuid.Uuid
 
 /**
  * Cloud session writes on behalf of another member (`runners.cloud.onbehalf.v1`, TeamCode's `CloudSessionService`):
- * the effective member owns what is created, the creation and each change are journaled with the caller as actor.
+ * the effective member owns what is created, the creation and each change are journaled with the caller as actor, with
+ * the write (the repository's transaction).
  */
 class OnBehalfSessionUseCasesTest {
     private val repository = InMemoryCloudSessionsRepository()
     private val plans = FixedPlans()
     private val clock = SettableClock()
-    private val audit = mutableListOf<OrgAuditRecord>()
-    private val trail = OrgAuditTrail { audit += it }
+    private val audit get() = repository.journal
 
     /** Bob may use the profile; an owner or an admin may use any. */
     private val profiles = object : SessionProfiles {
@@ -59,9 +57,9 @@ class OnBehalfSessionUseCasesTest {
         override suspend fun legacy(): SessionProfile? = null
     }
     private val create =
-        CreateCloudSessionUseCaseImpl(repository, plans, RepositoryCloudUsageMeter(repository), clock, profiles, trail)
+        CreateCloudSessionUseCaseImpl(repository, plans, RepositoryCloudUsageMeter(repository), clock, profiles)
     private val change =
-        ChangeCloudSessionUseCaseImpl(repository, plans, RepositoryCloudUsageMeter(repository), clock, trail)
+        ChangeCloudSessionUseCaseImpl(repository, plans, RepositoryCloudUsageMeter(repository), clock)
     private val principal = AuthenticatedPrincipal("dana", PrincipalKind.USER, setOf("user:*"), credentialId = "cs-1")
 
     /** Dana, an admin, acting for [member]. */

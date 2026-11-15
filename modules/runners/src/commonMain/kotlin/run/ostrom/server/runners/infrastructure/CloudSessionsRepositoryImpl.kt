@@ -27,10 +27,14 @@ import run.ostrom.server.runners.domain.SessionState
 import run.ostrom.server.runners.domain.SessionKind
 import run.ostrom.server.runners.domain.RemoteHost
 import run.ostrom.server.runners.domain.RemoteSessionRules
+import run.ostrom.server.kernel.audit.DiscardingTransactionalOrgAuditTrail
+import run.ostrom.server.kernel.audit.OrgAuditRecord
+import run.ostrom.server.kernel.audit.TransactionalOrgAuditTrail
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.QueryExecutor
 import io.github.smyrgeorge.sqlx4k.ResultSet
 import io.github.smyrgeorge.sqlx4k.Statement
+import io.github.smyrgeorge.sqlx4k.Transaction
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstantOrNull
@@ -56,23 +60,34 @@ import kotlin.uuid.Uuid
  * Once a write of a session commits ([compareAndSet], [setDesiredState]), [written] is told, so that the inference
  * credentials of an execution that ended are revoked right after it (`runners.cloud.inference.v1`).
  *
+ * An API write's audit entry is written in the transaction of the write it tells ([audit]): the write does not happen
+ * when its entry cannot be written, and an entry is never kept for a write that did not happen.
+ *
  * @param driver The database.
  * @param written Told of every session written by [compareAndSet] and [setDesiredState], once committed.
+ * @param audit Writes an API write's audit entry in its transaction.
  */
 @Suppress("TooManyFunctions") // One implementation of the one port of the table.
 class CloudSessionsRepositoryImpl(
     private val driver: Driver,
     private val written: CloudSessionWritten = NoCloudSessionWritten,
+    private val audit: TransactionalOrgAuditTrail = DiscardingTransactionalOrgAuditTrail(),
 ) : CloudSessionsRepository {
-    override suspend fun createWithinCap(session: CloudSession, maxRunning: Int): Boolean =
+    override suspend fun createWithinCap(session: CloudSession, maxRunning: Int, journal: OrgAuditRecord?): Boolean =
         driver.inTenant(session.orgId) {
             lockOrg(session.orgId)
             if (countHolding(session.orgId, null) >= maxRunning) return@inTenant false
             insertSession(session)
+            writeJournal(journal)
             true
         }
 
-    override suspend fun createKeyed(session: CloudSession, maxRunning: Int, key: CreateKey): KeyedCreateOutcome =
+    override suspend fun createKeyed(
+        session: CloudSession,
+        maxRunning: Int,
+        key: CreateKey,
+        journal: OrgAuditRecord?,
+    ): KeyedCreateOutcome =
         driver.inTenant(session.orgId) {
             // Serialized per organization like the cap: one of concurrent requests with a key creates, the others
             // then read its record.
@@ -109,6 +124,7 @@ class CloudSessionsRepositoryImpl(
                 ).bindKey(session, key).bind("digest", key.requestDigest).bind("session_id", session.id)
                     .bind("now", session.createdAt).bind("expires_at", key.expiresAt),
             ).getOrThrow()
+            writeJournal(journal)
             KeyedCreateOutcome.Created
         }
 
@@ -160,6 +176,7 @@ class CloudSessionsRepositoryImpl(
         id: Uuid,
         desiredState: DesiredState,
         now: Instant,
+        journal: OrgAuditRecord?,
     ): CloudSession? = driver.inTenant(orgId) {
         val updated = fetchAll(
             Statement.create(
@@ -170,7 +187,10 @@ class CloudSessionsRepositoryImpl(
                 """,
             ).bind("desired", desiredState.wire).bind("now", now).bind("id", id).bind("org_id", orgId),
         ).getOrThrow().firstOrNull()?.toSession()
-        if (updated != null) lookAt(id, now)
+        if (updated != null) {
+            lookAt(id, now)
+            writeJournal(journal)
+        }
         updated ?: select(id)
     }?.also { written.written(it) }
 
@@ -192,7 +212,13 @@ class CloudSessionsRepositoryImpl(
         ).getOrThrow().firstOrNull()?.toSession()
     }
 
-    override suspend fun resumeWithinCap(orgId: Uuid, id: Uuid, maxRunning: Int, now: Instant): ResumeOutcome =
+    override suspend fun resumeWithinCap(
+        orgId: Uuid,
+        id: Uuid,
+        maxRunning: Int,
+        now: Instant,
+        journal: OrgAuditRecord?,
+    ): ResumeOutcome =
         driver.inTenant(orgId) {
             lockOrg(orgId)
             val current = select(id) ?: return@inTenant ResumeOutcome.NotFound
@@ -212,6 +238,7 @@ class CloudSessionsRepositoryImpl(
                 ).bind("now", now).bind("id", id).bind("org_id", orgId),
             ).getOrThrow().firstOrNull() ?: return@inTenant ResumeOutcome.NotFound
             lookAt(id, now)
+            writeJournal(journal)
             ResumeOutcome.Resumed(updated.toSession())
         }
 
@@ -415,6 +442,11 @@ class CloudSessionsRepositoryImpl(
             Statement.create("""UPDATE runners_session_routes SET next_reconcile_at = :now WHERE session_id = :id""")
                 .bind("now", now).bind("id", id),
         ).getOrThrow()
+    }
+
+    /** Writes an API write's audit entry in this transaction; a write of the server itself has none. */
+    private suspend fun Transaction.writeJournal(record: OrgAuditRecord?) {
+        if (record != null) audit.record(this, record)
     }
 
     private suspend fun QueryExecutor.select(id: Uuid): CloudSession? = fetchAll(

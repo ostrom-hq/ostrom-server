@@ -19,6 +19,8 @@ import run.ostrom.server.testing.Contract
 import run.ostrom.server.testing.ContractObserver
 import org.koin.dsl.koinApplication
 import org.koin.dsl.module
+import run.ostrom.core.api.OnBehalfOf
+import run.ostrom.server.kernel.audit.OrgAuditRecord
 import run.ostrom.server.kernel.audit.OrgAuditTrail
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.OrgPrincipal
@@ -34,6 +36,7 @@ import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.runners.domain.CloudTransfer
 import run.ostrom.server.runners.domain.CloudTransfersUseCaseImpl
 import run.ostrom.server.runners.domain.DesiredState
+import run.ostrom.server.runners.domain.ResolveCloudActorUseCaseImpl
 import run.ostrom.server.runners.domain.SessionFailure
 import run.ostrom.server.runners.domain.SessionState
 import run.ostrom.server.runners.domain.TransferState
@@ -73,6 +76,8 @@ class CloudTransfersRoutesTest {
             "agent" -> AuthenticatedPrincipal("alice", PrincipalKind.AGENT, setOf("cloud:write"))
             "reader" -> AuthenticatedPrincipal("alice", PrincipalKind.USER, setOf("cloud:read"))
             "stranger" -> AuthenticatedPrincipal("stranger", PrincipalKind.USER, setOf("user:*"))
+            "carol-cli" ->
+                AuthenticatedPrincipal("carol", PrincipalKind.USER, setOf("user:*"), credentialId = "pat-carol")
             else -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf("user:*"))
         }
     }
@@ -82,20 +87,23 @@ class CloudTransfersRoutesTest {
             members[principal.subjectId]
     }
 
+    private val audit = mutableListOf<OrgAuditRecord>()
+    private val recipients = FakeTransferRecipients(
+        TransferRecipient(aliceId, "alice", false),
+        TransferRecipient(bobId, "bob", false),
+        TransferRecipient(carolId, "carol", true),
+    )
+
     private val module = object : ServerModule {
         override val name: String = "transfers"
         override val koinModule = module {}
 
         override fun routes(route: io.ktor.server.routing.Route, koin: org.koin.core.Koin) {
-            val recipients = FakeTransferRecipients(
-                TransferRecipient(aliceId, "alice", false),
-                TransferRecipient(bobId, "bob", false),
-                TransferRecipient(carolId, "carol", true),
-            )
             val use = CloudTransfersUseCaseImpl(
-                sessions, transfers, recipients, policy, OrgAuditTrail { }, SettableClock(),
+                sessions, transfers, recipients, policy, OrgAuditTrail { audit += it }, SettableClock(),
             )
-            route.cloudTransfersRoutes(CloudTransfersRoutesDependencies(use, resolver))
+            val actor = ResolveCloudActorUseCaseImpl(recipients)
+            route.cloudTransfersRoutes(CloudTransfersRoutesDependencies(use, resolver, actor))
         }
     }
 
@@ -128,6 +136,7 @@ class CloudTransfersRoutesTest {
     ): HttpResponse = post(path) {
         header(HttpHeaders.Authorization, "Bearer $token")
         if (key != null) header("Idempotency-Key", key)
+        onBehalfOf?.let { header(OnBehalfOf.HEADER, it) }
         if (body != null) {
             header(HttpHeaders.ContentType, contentType.toString())
             setBody(body)
@@ -136,6 +145,24 @@ class CloudTransfersRoutesTest {
 
     private suspend fun HttpClient.read(path: String, token: String): HttpResponse =
         get(path) { header(HttpHeaders.Authorization, "Bearer $token") }
+
+    /** The member the next writes name in `Ostrom-On-Behalf-Of`, or none. */
+    private var onBehalfOf: String? = null
+
+    /** A write sent with `Ostrom-On-Behalf-Of` naming [member]. */
+    private suspend fun HttpClient.sendFor(
+        member: String,
+        path: String,
+        token: String,
+        key: String? = null,
+        body: String? = null,
+    ): HttpResponse =
+        try {
+            onBehalfOf = member
+            send(path, token, key, body)
+        } finally {
+            onBehalfOf = null
+        }
 
     private fun running(owner: String = aliceId) = session(state = SessionState.RUNNING, ownerId = owner)
         .copy(desiredState = DesiredState.RUNNING).also(sessions::put)
@@ -291,5 +318,54 @@ class CloudTransfersRoutesTest {
         for (part in listOf("\"atEpoch\":4", "transfer_timeout", "\"completedAt\":\"2026-10-30T10:00:00Z\"")) {
             assertTrue(part in read.bodyAsText(), read.bodyAsText())
         }
+    }
+
+    /** `runners.cloud.onbehalf.writes.v1`: an administrator writes a transfer as the member the header names. */
+    @Test
+    fun anAdministratorAsksAcceptsDeclinesAndCancelsForTheMemberTheHeaderNames() = run {
+        val body = """{"toMemberId":"bob"}"""
+        fun path() = "/api/v1/cloud/sessions/${running().id}/transfer"
+        val forbidden = client.sendFor("alice", path(), "bob", "k-0", body)
+        assertEquals(HttpStatusCode.Forbidden, forbidden.status)
+        assertTrue(OnBehalfOf.FORBIDDEN in forbidden.bodyAsText())
+        val ghost = client.sendFor("ghost", path(), "carol-cli", "k-0", body)
+        assertEquals(HttpStatusCode.UnprocessableEntity, ghost.status)
+        assertTrue(OnBehalfOf.INVALID_MEMBER in ghost.bodyAsText())
+        // An agent is refused before the header is read: a transfer write is a person's.
+        assertEquals(HttpStatusCode.Forbidden, client.sendFor("x y", path(), "agent", "k-0", body).status)
+
+        // Carol gives alice's session away as alice: her rights, so it is accepted at once, and she asked.
+        val given = client.sendFor("alice", path(), "carol-cli", "k-1", body)
+        assertEquals(HttpStatusCode.Accepted, given.status)
+        val requested = transfers.transfers.getValue(Uuid.parse(idOf(given.bodyAsText())))
+        assertEquals(aliceId, requested.fromMemberId)
+        assertEquals(carolId to carolId, requested.initiatedBy to requested.decidedBy)
+        assertEquals(TransferState.ACCEPTED, requested.state)
+
+        // Alice's offers to bob: carol accepts one and declines one as bob, and withdraws one as alice.
+        val outcomes = listOf("accept" to bobId, "decline" to bobId, "cancel" to aliceId).map { (write, member) ->
+            val offer = client.send(path(), "alice", "k-$write", body)
+            val id = idOf(offer.bodyAsText())
+            val decided = client.sendFor(member, "/api/v1/cloud/transfers/$id/$write", "carol-cli")
+            assertTrue(decided.status.value in 200..299, "$write ${decided.bodyAsText()}")
+            transfers.transfers.getValue(Uuid.parse(id))
+        }
+        assertEquals(
+            listOf(TransferState.ACCEPTED, TransferState.DECLINED, TransferState.CANCELLED),
+            outcomes.map { it.state },
+        )
+        assertTrue(outcomes.all { it.initiatedBy == aliceId && it.decidedBy == carolId })
+
+        val byCarol = audit.filter { it.actor.subjectId == "carol" }
+        assertEquals(
+            listOf("requested", "accepted", "declined", "cancelled").map { "cloud.transfer.$it" },
+            byCarol.map { it.event },
+        )
+        assertEquals(
+            listOf(aliceId, bobId, bobId, aliceId),
+            byCarol.map { it.details["effective_member_id"] },
+        )
+        assertTrue(byCarol.all { it.details["credential_id"] == "pat-carol" })
+        assertTrue(audit.filter { it.actor.subjectId == "alice" }.all { it.details["effective_member_id"] == aliceId })
     }
 }

@@ -38,16 +38,20 @@ private fun ApiCatalog.cloudSessionListing() {
         description = "With `runners.cloud.remote.v1`, `kind` (repeatable) chooses the kinds listed, `cloud` or " +
             "`remote` (400 `invalid_kind` otherwise); without it, cloud sessions only, so a client from " +
             "before remote sessions never lists one it cannot show. A page of `limit` sessions (20 by " +
-            "default) is followed by `next` while there may be more. $ORG_RESOLUTION"
+            "default) is followed by `next` while there may be more. With `runners.cloud.sessions.owner.v1` " +
+            "(TeamCode's `owner`), `owner` is the caller's member id, or absent; another member's id, a login or " +
+            "`all` is 403 `forbidden`, administrators included. $ORG_RESOLUTION"
         parameters {
             organizationHeader()
             queryText("kind", "The kind of session to list, `cloud` or `remote`; repeat it to list both.")
+            queryText("owner", "The caller's member id; anything else is refused.")
             queryText("before", "The `next` of the previous page.")
             queryNumber("limit", "How many sessions a page holds.")
         }
         responses {
             ok<CloudSessionsResponse>("A page of the caller's sessions, newest first, with the cursor of the next.")
-            badRequest("An unknown `kind` (`invalid_kind`).")
+            badRequest("An unknown `kind` (`invalid_kind`), or `owner` sent more than once (`invalid_query`).")
+            error(HttpStatusCode.Forbidden, "`owner` names anyone but the caller (`forbidden`).")
             notFound("The caller is no member of an organization the request can act in (`not_found`).")
         }
     }

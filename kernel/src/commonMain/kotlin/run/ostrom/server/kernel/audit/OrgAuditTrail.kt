@@ -2,6 +2,7 @@
 package run.ostrom.server.kernel.audit
 
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import io.github.smyrgeorge.sqlx4k.Transaction
 import kotlin.uuid.Uuid
 
 /**
@@ -42,6 +43,27 @@ fun interface OrgAuditTrail {
 /** Writes nothing: the default for a server built without the identity module (a module's own tests). */
 class DiscardingOrgAuditTrail : OrgAuditTrail {
     override suspend fun record(record: OrgAuditRecord) = Unit
+}
+
+/**
+ * Writes a change of an organization to the same signed audit log as [OrgAuditTrail], inside the sqlx4k transaction
+ * that makes it (TeamCode's `CloudWrite`): the entry is kept if and only if the change commits, and an entry that
+ * cannot be written fails the change. The identity module binds it on its log; until it is bound,
+ * [serverKoin][run.ostrom.server.kernel.module.serverKoin] binds [DiscardingTransactionalOrgAuditTrail].
+ */
+fun interface TransactionalOrgAuditTrail {
+    /**
+     * Records a change inside its transaction.
+     *
+     * @param transaction The transaction that makes the change, confined to [OrgAuditRecord.orgId].
+     * @param record The change.
+     */
+    suspend fun record(transaction: Transaction, record: OrgAuditRecord)
+}
+
+/** Writes nothing: the default for a server built without the identity module (a module's own tests). */
+class DiscardingTransactionalOrgAuditTrail : TransactionalOrgAuditTrail {
+    override suspend fun record(transaction: Transaction, record: OrgAuditRecord) = Unit
 }
 
 /** The longest value a detail keeps: a long list is cut, the log never holds a whole document. */
