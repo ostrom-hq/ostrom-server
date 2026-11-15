@@ -3,12 +3,13 @@ package run.ostrom.server.gates
 
 import run.ostrom.server.gates.domain.models.Gate
 import run.ostrom.server.gates.domain.services.GateReceiptSigner
-import run.ostrom.server.gates.infrastructure.PostgresGatesRepository
+import run.ostrom.server.gates.domain.repositories.GatesRepository
 import run.ostrom.server.testing.serverTest
-import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -16,6 +17,8 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Instant
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.uuid.Uuid
 
 /**
@@ -38,51 +41,55 @@ class GateSessionEndsPostgresTest {
 
     @Test
     fun theEndOfASessionIsMarkedOnceInItsOrganization() = serverTest(listOf(GatesModule), signer) { server ->
-        val repository = PostgresGatesRepository(server.driver)
-        repository.transaction {
+        val repository = server.koin.get<GatesRepository>()
+        repository.transaction(orgA) {
             lockSession(orgA, "s-1")
             assertNull(sessionEndedAt(orgA, "s-1"))
             markSessionEnded(orgA, "s-1", endedAt)
             markSessionEnded(orgA, "s-1", endedAt + WAIT)
         }
-        assertEquals(endedAt, repository.transaction { sessionEndedAt(orgA, "s-1") }, "The first time stays")
-        assertNull(repository.transaction { sessionEndedAt(orgB, "s-1") }, "Another organization sees no end")
-        repository.transaction { markSessionEnded(orgB, "s-1", endedAt + WAIT) }
-        assertEquals(endedAt + WAIT, repository.transaction { sessionEndedAt(orgB, "s-1") })
-        assertEquals(endedAt, repository.transaction { sessionEndedAt(orgA, "s-1") }, "Its own row only")
-        assertEquals(emptyList(), repository.transaction { gatesOfSession(orgA, "s-1") })
+        assertEquals(endedAt, repository.transaction(orgA) { sessionEndedAt(orgA, "s-1") }, "The first time stays")
+        assertNull(repository.transaction(orgB) { sessionEndedAt(orgB, "s-1") }, "Another organization sees no end")
+        repository.transaction(orgB) { markSessionEnded(orgB, "s-1", endedAt + WAIT) }
+        assertEquals(endedAt + WAIT, repository.transaction(orgB) { sessionEndedAt(orgB, "s-1") })
+        assertEquals(endedAt, repository.transaction(orgA) { sessionEndedAt(orgA, "s-1") }, "Its own row only")
+        assertEquals(emptyList(), repository.transaction(orgA) { gatesOfSession(orgA, "s-1") })
     }
 
     @Test
     fun aSessionsLockHoldsItsOtherTransactionsUntilItEnds() = serverTest(listOf(GatesModule), signer) { server ->
-        val repository = PostgresGatesRepository(server.driver)
-        val locked = CompletableDeferred<Unit>()
-        val release = CompletableDeferred<Unit>()
-        coroutineScope {
-            val ending = async {
-                repository.transaction {
-                    lockSession(orgA, "s-2")
-                    locked.complete(Unit)
-                    release.await()
-                    markSessionEnded(orgA, "s-2", endedAt)
+        val repository = server.koin.get<GatesRepository>()
+        val locked = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        // On the real clock, each transaction on a thread of its own: they really wait for each other.
+        withContext(Dispatchers.Default) {
+            coroutineScope {
+                val ending = async {
+                    repository.transaction(orgA) {
+                        lockSession(orgA, "s-2")
+                        locked.countDown()
+                        check(release.await(HOLD_SECONDS, TimeUnit.SECONDS)) { "Never released" }
+                        markSessionEnded(orgA, "s-2", endedAt)
+                    }
                 }
-            }
-            locked.await()
-            val asking = async {
-                repository.transaction {
-                    lockSession(orgA, "s-2")
-                    sessionEndedAt(orgA, "s-2")
+                check(locked.await(HOLD_SECONDS, TimeUnit.SECONDS)) { "Never locked" }
+                val asking = async {
+                    repository.transaction(orgA) {
+                        lockSession(orgA, "s-2")
+                        sessionEndedAt(orgA, "s-2")
+                    }
                 }
+                delay(WAIT)
+                assertFalse(asking.isCompleted, "The second transaction waits for the session's lock")
+                release.countDown()
+                ending.await()
+                assertEquals(endedAt, asking.await(), "It reads the end once the first transaction committed")
             }
-            delay(WAIT)
-            assertFalse(asking.isCompleted, "The second transaction waits for the session's lock")
-            release.complete(Unit)
-            ending.await()
-            assertEquals(endedAt, asking.await(), "It reads the end once the first transaction committed")
         }
     }
 
     private companion object {
         val WAIT = 300.milliseconds
+        const val HOLD_SECONDS = 10L
     }
 }

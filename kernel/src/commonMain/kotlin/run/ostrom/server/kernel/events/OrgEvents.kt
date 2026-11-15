@@ -3,6 +3,7 @@ package run.ostrom.server.kernel.events
 
 import io.github.smyrgeorge.sqlx4k.Transaction
 import kotlinx.serialization.json.JsonObject
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import kotlin.uuid.Uuid
 
 /**
@@ -144,6 +145,20 @@ interface OrgEventPublisher {
      * @throws IllegalArgumentException When an event's data is longer than [MAX_EVENT_DATA].
      */
     suspend fun publishIn(transaction: Transaction, orgId: Uuid, events: List<OrgEventDraft>)
+
+    /**
+     * [publishIn] for a module on Exposed: appends [events] in order inside [transaction], the caller's
+     * `JdbcDatabase.inOrg` (or `withOrganization`) transaction confined to [orgId], after its other writes. Not
+     * `suspend`, as an Exposed transaction's block. Both writers take the same row lock of the organization's cursor,
+     * so they take turns on one gap-free sequence whichever pool each runs on.
+     *
+     * @param transaction The caller's transaction, confined to [orgId]: the one the Exposed DSL runs in.
+     * @param orgId The organization.
+     * @param events The events; none is a no-op.
+     *
+     * @throws IllegalArgumentException When an event's data is longer than [MAX_EVENT_DATA].
+     */
+    fun publishIn(transaction: JdbcTransaction, orgId: Uuid, events: List<OrgEventDraft>)
 }
 
 /** Publishes nothing: the default for a server built without the events module (a module's own tests). */
@@ -151,4 +166,6 @@ class DiscardingOrgEventPublisher : OrgEventPublisher {
     override suspend fun publish(orgId: Uuid, events: List<OrgEventDraft>) = Unit
 
     override suspend fun publishIn(transaction: Transaction, orgId: Uuid, events: List<OrgEventDraft>) = Unit
+
+    override fun publishIn(transaction: JdbcTransaction, orgId: Uuid, events: List<OrgEventDraft>) = Unit
 }

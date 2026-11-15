@@ -14,10 +14,13 @@ import run.ostrom.server.usage.domain.SpendHold
 import run.ostrom.server.usage.domain.SpendLimits
 import run.ostrom.server.usage.domain.UsageCursor
 import run.ostrom.server.usage.domain.UsageWindow
+import run.ostrom.server.usage.infrastructure.ReviewCursor
 import run.ostrom.server.usage.infrastructure.accountSpentRead
+import run.ostrom.server.usage.infrastructure.historyRead
 import run.ostrom.server.usage.infrastructure.holdTotalsRead
 import run.ostrom.server.usage.infrastructure.launchSpentRead
 import run.ostrom.server.usage.infrastructure.listRead
+import run.ostrom.server.usage.infrastructure.pendingRead
 import run.ostrom.server.usage.infrastructure.spentRead
 import run.ostrom.server.usage.infrastructure.summaryRead
 import run.ostrom.server.usage.infrastructure.workflowSpentRead
@@ -72,6 +75,16 @@ class UsageQueryPlansTest {
             "to_timestamp(${TestCallers.epoch.epochSeconds}) - (i % 2160) * INTERVAL '1 hour' " +
             "FROM generate_series(1, $count) AS i"
 
+    /** [count] corrections of [org] over the last 90 days (the usage review). */
+    private fun reconciliations(org: Uuid, count: Int): String =
+        "INSERT INTO usage_reconciliations (call_id, org_id, member_id, held_at, previous_micros, micros, source, " +
+            "reference, reason, reconciled_by, reconciled_at) " +
+            "SELECT gen_random_uuid(), CAST('$org' AS uuid), CAST(md5('m' || (i % 30)) AS uuid), " +
+            "to_timestamp(${TestCallers.epoch.epochSeconds}) - (i % 2160) * INTERVAL '1 hour', 10, 5, " +
+            "'PROVIDER_RECORD', 'ref', 'why', CAST(md5('a') AS uuid), " +
+            "to_timestamp(${TestCallers.epoch.epochSeconds}) - (i % 2000) * INTERVAL '1 hour' " +
+            "FROM generate_series(1, $count) AS i"
+
     /** Fixtures only: the rows of two organizations at once and the statistics, which no request writes. */
     private suspend fun TestServer.fill() {
         val fixtures = database.superuser
@@ -79,6 +92,9 @@ class UsageQueryPlansTest {
         fixtures.execute(seed(TestCallers.orgA, 2_000)).getOrThrow()
         fixtures.execute(holds(TestCallers.orgB, 20_000)).getOrThrow()
         fixtures.execute(holds(TestCallers.orgA, 200)).getOrThrow()
+        fixtures.execute(reconciliations(TestCallers.orgB, 10_000)).getOrThrow()
+        fixtures.execute(reconciliations(TestCallers.orgA, 100)).getOrThrow()
+        fixtures.execute("VACUUM ANALYZE usage_reconciliations").getOrThrow()
         fixtures.execute("VACUUM ANALYZE usage_events").getOrThrow()
         fixtures.execute("VACUUM ANALYZE usage_holds").getOrThrow()
         fixtures.execute("VACUUM ANALYZE usage_spend_days").getOrThrow()
@@ -118,6 +134,13 @@ class UsageQueryPlansTest {
                         SpendLimits(null, null, launchMicros = 1),
                         window,
                     ).query,
+                "unknown usage awaiting review, newest page (usage review)" to
+                    pendingRead(org, null, null, 51).query,
+                "unknown usage awaiting review, next page of a member (usage review)" to
+                    pendingRead(org, member, ReviewCursor(TestCallers.epoch - 10.days, Uuid.random()), 51).query,
+                "corrections, newest page (usage review)" to historyRead(org, null, null, 51).query,
+                "corrections, next page of a member (usage review)" to
+                    historyRead(org, member, ReviewCursor(TestCallers.epoch - 10.days, Uuid.random()), 51).query,
                 "summary of 30 days by model" to
                     summaryRead(UsageWindow(org, null, since), UsageGroupBy.MODEL, 1000).query,
             )
@@ -130,6 +153,7 @@ class UsageQueryPlansTest {
                 assertFalse("Seq Scan on usage_events" in plan, "$name scans the table:\n$plan")
                 assertFalse("Seq Scan on usage_holds" in plan, "$name scans the holds:\n$plan")
                 assertFalse("Seq Scan on usage_spend_days" in plan, "$name scans the spend of the days:\n$plan")
+                assertFalse("Seq Scan on usage_reconciliations" in plan, "$name scans the corrections:\n$plan")
             }
             // The cursor `(at, id) < (?, ?)` walks the org's index on (org_id, at, id) from where the page starts.
             val next = plans.getValue("next page of the org")

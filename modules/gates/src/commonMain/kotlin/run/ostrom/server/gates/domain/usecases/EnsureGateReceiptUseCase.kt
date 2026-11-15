@@ -38,7 +38,7 @@ class EnsureGateReceiptUseCaseImpl(
         if (gate.receiptId != null || gate.decidedAt == null || gate.status == GateStatus.PENDING) return gate
         return try {
             val receiptId = signer.sign(gate)
-            repository.transaction {
+            repository.transaction(gate.orgId) {
                 // Re-read under lock: a session may have reserved the yes while the receipt was being signed.
                 val current = lockGate(gate.orgId, gate.id)
                 if (current == null) {

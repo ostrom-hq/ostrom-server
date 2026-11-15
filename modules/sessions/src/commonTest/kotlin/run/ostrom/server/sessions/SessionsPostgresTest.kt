@@ -16,7 +16,7 @@ import run.ostrom.server.gates.domain.models.GateSubject
 import run.ostrom.server.gates.domain.models.RequestStatus
 import run.ostrom.server.gates.domain.services.GateActorResolver
 import run.ostrom.server.gates.domain.services.OpenSegment
-import run.ostrom.server.gates.infrastructure.PostgresGatesRepository
+import run.ostrom.server.gates.domain.repositories.GatesRepository
 import run.ostrom.server.gates.presentation.GateScopes
 import run.ostrom.server.instance.InstanceModule
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
@@ -460,8 +460,8 @@ class SessionsPostgresTest {
         clock.now += 1.minutes
         server.start("agent:a:launch-2", "s-2")
         val gate = approvalFor("s-1", approver = "ana")
-        val repository = PostgresGatesRepository(server.driver)
-        repository.transaction {
+        val repository = server.koin.get<GatesRepository>()
+        repository.transaction(orgA) {
             insertGate(gate)
             val request = ApprovalRequest(
                 id = Uuid.random(),

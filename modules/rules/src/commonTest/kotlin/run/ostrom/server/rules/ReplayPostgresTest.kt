@@ -55,11 +55,11 @@ class ReplayPostgresTest {
         val mergeA = action(orgId = orgA, subject = push(cls = "merge"), hoursAgo = 1)
         val pushA = action(orgId = orgA, hoursAgo = 2)
         val pushB = action(orgId = orgB, subject = push(repo = "globex/secret"), askedBy = listOf("bob"))
-        gates.transaction {
+        gates.transaction(orgA) {
             insertGate(mergeA)
             insertGate(pushA)
         }
-        gates.transaction { insertGate(pushB) }
+        gates.transaction(orgB) { insertGate(pushB) }
         val rules = server.koin.get<RulesRepository>()
         rules.transaction(orgA) { insertRule(gated(id = "rule_a", orgId = orgA, approvers = listOf("bob"))) }
         rules.transaction(orgB) { insertRule(gated(id = "rule_b", orgId = orgB, cls = "merge")) }

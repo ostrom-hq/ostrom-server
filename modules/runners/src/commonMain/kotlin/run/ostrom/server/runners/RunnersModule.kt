@@ -224,7 +224,7 @@ object RunnersModule : ServerModule {
         }
         single<RunnerWorkSignals> { InProcessRunnerWorkSignals(get(), get()) }
         // The console's cloud runtime names the runner image (cloud module); OSTROM_RUNNERS_IMAGE while it names none.
-        // A Docker or registered session runs OSTROM_RUNNERS_IMAGE, a Kubernetes one its profile's image.
+        // A Docker or registered session runs the runtime's session image, a Kubernetes one its profile's image.
         // Its server URL, else OSTROM_RUNNERS_SERVER_URL (an upgraded install's in-cluster URL), else the public one.
         single<RunnerDeliverySource> {
             val config = get<RunnersConfig>()

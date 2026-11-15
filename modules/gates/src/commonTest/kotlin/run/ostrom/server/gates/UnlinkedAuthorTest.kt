@@ -2,6 +2,7 @@
 package run.ostrom.server.gates
 
 import run.ostrom.server.gates.domain.models.Answer
+import run.ostrom.server.gates.domain.models.BoundUnlockRequiredException
 import run.ostrom.server.gates.domain.models.GateStatus
 import run.ostrom.server.gates.domain.models.GitHubLinkRequiredException
 import run.ostrom.server.gates.domain.models.SelfApprovalPolicy
@@ -94,6 +95,31 @@ class UnlinkedAuthorTest {
         assertEquals(hook.gate.id, bench.open(bench.mergeRequest()).gate.id)
         assertEquals(AUTHOR, bench.repository.gates.getValue(hook.gate.id).unlinkedAuthor)
         assertFailsWith<GitHubLinkRequiredException> { bench.answer(joined, "rev-b") }
+    }
+
+    // Q-APP-STEPUP-RISK with the GitHub links read between two passes: the first pass ends with nothing written and
+    // asks the unlock nothing; the unlock is used once, by the yes, as on main. A yes the second pass refuses has used
+    // it, as any refused yes does (E2E-AUTH-008 (3)): the app unlocks again for the next one.
+    @Test
+    fun aYesFromThePhoneThatNeedsTheLinksUsesItsUnlockOnce() = runTest {
+        val bench = never()
+        val opened = bench.unlinkedPullRequest()
+        val request = opened.requests.first { it.approverId == "rev-b" }.id.toString()
+        val phone = user("rev-b").copy(phoneCredential = "osm-1")
+
+        bench.gitHub.ids["rev-b"] = AUTHOR
+        bench.unlocks.unlock("osm-1", request)
+        assertFailsWith<SelfApprovalRefusedException> { bench.answer(opened, "rev-b", actor = phone) }
+        assertEquals(listOf("osm-1"), bench.unlocks.asked, "one use for the two passes")
+        assertEquals(GateStatus.PENDING, bench.repository.gates.getValue(opened.gate.id).status, "nothing written")
+        bench.gitHub.ids["rev-b"] = OTHER
+        assertFailsWith<BoundUnlockRequiredException>("the refused yes used the unlock") {
+            bench.answer(opened, "rev-b", actor = phone)
+        }
+
+        bench.unlocks.unlock("osm-1", request)
+        assertEquals(GateStatus.APPROVED, bench.answer(opened, "rev-b", actor = phone).gate.status)
+        assertEquals(listOf("osm-1", "osm-1", "osm-1"), bench.unlocks.asked)
     }
 
     private companion object {

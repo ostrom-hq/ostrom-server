@@ -15,27 +15,30 @@ class RunnerDeliveryTest {
     }
 
     @Test
-    fun theConsoleRuntimeNamesTheRunnerImageAndItsBinaryAndDockerSessionsKeepTheConfiguredImage() = runTest {
+    fun theConsoleRuntimeNamesTheRunnerImageItsBinaryAndTheSessionImage() = runTest {
         val image = "docker.io/ostromhq/ostrom-runner:1@sha256:ab"
-        val runtime = CloudRuntime(runnerImage = image, runnerBinary = "/bin/ostrom")
-        // The runner image only delivers the binary: a Docker or registered session runs OSTROM_RUNNERS_IMAGE.
+        val runtime = CloudRuntime(runnerImage = image, runnerBinary = "/bin/ostrom", sessionImage = "session:1")
+        // The runner image only delivers the binary: a Docker or registered session runs the runtime's session image.
         assertEquals(
             RunnerDelivery(image, "/bin/ostrom", "session:1"),
-            CloudRuntimeRunnerDelivery(source(runtime), "session:1").current(),
+            CloudRuntimeRunnerDelivery(source(runtime), "fallback:1").current(),
         )
     }
 
     @Test
-    fun withoutARunnerImageTheConfiguredOneIsUsed() = runTest {
+    fun withoutARunnerImageTheConfiguredOneIsUsedAndTheSessionImageDefaults() = runTest {
         assertEquals(
-            RunnerDelivery("fallback:1", RunnerDelivery.DEFAULT_RUNNER_BINARY, "fallback:1"),
+            RunnerDelivery("fallback:1", RunnerDelivery.DEFAULT_RUNNER_BINARY, CloudRuntime.DEFAULT_SESSION_IMAGE),
             CloudRuntimeRunnerDelivery(source(CloudRuntime()), "fallback:1").current(),
         )
         assertEquals(
             "fallback:1",
             CloudRuntimeRunnerDelivery(source(CloudRuntime(runnerImage = " ")), "fallback:1").current().runnerImage,
         )
-        assertEquals("fallback:1", CloudRuntimeRunnerDelivery(null, "fallback:1").current().sessionImage)
+        val blank = CloudRuntimeRunnerDelivery(source(CloudRuntime(sessionImage = " ")), "fallback:1").current()
+        assertEquals(CloudRuntime.DEFAULT_SESSION_IMAGE, blank.sessionImage)
+        val noCloud = CloudRuntimeRunnerDelivery(null, "fallback:1").current()
+        assertEquals("fallback:1" to CloudRuntime.DEFAULT_SESSION_IMAGE, noCloud.runnerImage to noCloud.sessionImage)
     }
 
     @Test

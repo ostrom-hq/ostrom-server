@@ -17,10 +17,12 @@ import run.ostrom.server.gates.domain.models.NotTheApproverException
 import run.ostrom.server.gates.domain.models.OnlyPeopleAnswerException
 import run.ostrom.server.gates.domain.models.RequestStatus
 import run.ostrom.server.gates.domain.models.SelfApproval
+import run.ostrom.server.gates.domain.models.SelfApprovalPolicy
 import run.ostrom.server.gates.domain.models.SelfApprovalRefusedException
 import run.ostrom.server.gates.domain.models.StepUp
 import run.ostrom.server.gates.domain.models.StepUpRequiredException
 import run.ostrom.server.gates.domain.repositories.GatesRepository
+import run.ostrom.server.gates.domain.repositories.GatesTransaction
 import run.ostrom.server.gates.domain.services.GateChanges
 import run.ostrom.server.gates.domain.services.GateGitHubAccounts
 import run.ostrom.server.gates.domain.services.GateNotifier
@@ -100,40 +102,62 @@ class AnswerGateUseCaseImpl(
         val bound = actor.phoneCredential?.takeIf { answer == Answer.YES }
             ?.let { unlocks.consume(it, requestId.toString(), clock.now() - StepUp.BOUND_WITHIN) }
         val policy = policies.selfApproval(orgId)
-        val decided = repository.transaction {
-            val request = request(orgId, requestId) ?: throw GateNotFoundException()
-            val gate = lockGate(orgId, request.gateId) ?: throw GateNotFoundException()
-            checkAnswerable(person, request, gate, shownDigest)
-            val requests = requestsOf(orgId, gate.id)
-            val verdict = SelfApproval.check(gate.askedBy, requests.map { it.approverId }, person, answer, policy)
-            val selfApproved = when (verdict) {
-                is SelfApproval.Verdict.Refused -> throw SelfApprovalRefusedException(verdict.others)
-                is SelfApproval.Verdict.Allowed -> verdict.selfApproved
-            }
-            if (SelfApproval.needsLink(gate, answer, policy)) {
-                SelfApproval.linkRefusal(gate, requests.map { it.approverId }, person, gitHub.gitHubIdsOf(person))
-                    ?.let { throw it }
-            }
-            val now = clock.now()
-            StepUp.check(answer, actor.authenticatedAt, now, bound)
-            val answered = answered(requests, request.id, answer, channel, now)
-            val next = gate.copy(
-                status = if (answer == Answer.YES) GateStatus.APPROVED else GateStatus.REJECTED,
-                decidedBy = request.approverId,
-                decidedAt = now,
-                selfApproved = selfApproved,
-            )
-            updateGate(next)
-            updateRequests(answered)
-            announce(OrgEventType.APPROVAL_DECIDED, next, answered)
-            next to answered
-        }
-        val requests = decided.second
-        val gate = receipts.ensureSigned(decided.first)
+        val decided = decide(Answering(actor, person, requestId, answer, shownDigest, channel, policy, bound), null)
+        val requests = decided.requests
+        val gate = receipts.ensureSigned(decided.gate)
         changes.changed(gate.id)
         notifier.decided(gate, requests)
         // An answer decides the gate: it waits for no one.
         return GateView(gate, requests, waitingFor = emptyList())
+    }
+
+    // The GitHub accounts an answerer linked are another module's read: never inside the gate's transaction (CRL-03).
+    // A yes that needs them (the gate's author is a GitHub account no one linked) ends its transaction with nothing
+    // written; they are read, and the answer runs again on the gate as it is then. The phone's unlock was used once,
+    // before the first pass (as before the links moved out): the second pass checks the same answer, and uses none.
+    private suspend fun decide(answering: Answering, gitHubIds: List<Long>?): Outcome.Decided =
+        when (val outcome = repository.transaction(answering.actor.orgId) { attempt(answering, gitHubIds) }) {
+            is Outcome.Decided -> outcome
+            Outcome.NeedsLinks -> decide(answering, gitHub.gitHubIdsOf(answering.person))
+        }
+
+    private fun GatesTransaction.attempt(answering: Answering, gitHubIds: List<Long>?): Outcome {
+        val person = answering.person
+        val answer = answering.answer
+        val (request, gate) = target(answering.actor.orgId, answering.requestId)
+        checkAnswerable(person, request, gate, answering.shownDigest)
+        val requests = requestsOf(gate.orgId, gate.id)
+        val approvers = requests.map { it.approverId }
+        val selfApproved = selfApproved(SelfApproval.check(gate.askedBy, approvers, person, answer, answering.policy))
+        if (SelfApproval.needsLink(gate, answer, answering.policy)) {
+            if (gitHubIds == null) return Outcome.NeedsLinks
+            SelfApproval.linkRefusal(gate, approvers, person, gitHubIds)?.let { throw it }
+        }
+        val now = clock.now()
+        StepUp.check(answer, answering.actor.authenticatedAt, now, answering.bound)
+        val answered = answered(requests, request.id, answer, answering.channel, now)
+        val next = gate.copy(
+            status = if (answer == Answer.YES) GateStatus.APPROVED else GateStatus.REJECTED,
+            decidedBy = request.approverId,
+            decidedAt = now,
+            selfApproved = selfApproved,
+        )
+        updateGate(next)
+        updateRequests(answered)
+        announce(OrgEventType.APPROVAL_DECIDED, next, answered)
+        return Outcome.Decided(next, answered)
+    }
+
+    // The request and its gate, locked for the decision.
+    private fun GatesTransaction.target(orgId: Uuid, requestId: Uuid): Pair<ApprovalRequest, Gate> {
+        val request = request(orgId, requestId) ?: throw GateNotFoundException()
+        val gate = lockGate(orgId, request.gateId) ?: throw GateNotFoundException()
+        return request to gate
+    }
+
+    private fun selfApproved(verdict: SelfApproval.Verdict): Boolean = when (verdict) {
+        is SelfApproval.Verdict.Refused -> throw SelfApprovalRefusedException(verdict.others)
+        is SelfApproval.Verdict.Allowed -> verdict.selfApproved
     }
 
     private fun checkAnswerable(person: String, request: ApprovalRequest, gate: Gate, shownDigest: String) {
@@ -165,4 +189,25 @@ class AnswerGateUseCaseImpl(
             it.copy(status = RequestStatus.CLOSED, answeredAt = now)
         }
     }
+}
+
+/** One answer, as the transaction reads it: who, to which request, what, on what they saw, and the org's policy. */
+private data class Answering(
+    val actor: GateActor,
+    val person: String,
+    val requestId: Uuid,
+    val answer: Answer,
+    val shownDigest: String,
+    val channel: AnswerChannel,
+    val policy: SelfApprovalPolicy,
+    val bound: Boolean?,
+)
+
+/** What an answer's transaction ends with. */
+private sealed interface Outcome {
+    /** The gate is decided: as written, with its requests. */
+    data class Decided(val gate: Gate, val requests: List<ApprovalRequest>) : Outcome
+
+    /** The yes needs the GitHub accounts the answerer linked, read outside the transaction. */
+    data object NeedsLinks : Outcome
 }

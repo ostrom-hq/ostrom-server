@@ -49,6 +49,7 @@ import run.ostrom.server.gates.infrastructure.DefaultGatePolicies
 import run.ostrom.server.gates.infrastructure.GatesMigrations
 import run.ostrom.server.gates.infrastructure.GateSummariesImpl
 import run.ostrom.server.gates.infrastructure.GatesReceiptReaders
+import run.ostrom.server.gates.infrastructure.GatesRepositoryImpl
 import run.ostrom.server.gates.infrastructure.InProcessGateChanges
 import run.ostrom.server.gates.infrastructure.MetricsGateChannel
 import run.ostrom.server.gates.infrastructure.NoCiChecks
@@ -58,7 +59,6 @@ import run.ostrom.server.gates.infrastructure.NoGateCheckProofs
 import run.ostrom.server.gates.infrastructure.NoGateGitHubAccounts
 import run.ostrom.server.gates.infrastructure.NoGateNodes
 import run.ostrom.server.gates.infrastructure.PendingGatesCount
-import run.ostrom.server.gates.infrastructure.PostgresGatesRepository
 import run.ostrom.server.gates.infrastructure.ReceiptsGateSigner
 import run.ostrom.server.gates.infrastructure.Sha256GateDigester
 import run.ostrom.server.gates.infrastructure.UnavailableGateSessions
@@ -88,10 +88,10 @@ object GatesModule : ServerModule {
     override val name: String = "gates"
 
     override val koinModule: Module = module {
-        single { PostgresGatesRepository(get(), get()) }
-        single<GatesRepository> { get<PostgresGatesRepository>() }
+        single { GatesRepositoryImpl(get(), get()) }
+        single<GatesRepository> { get<GatesRepositoryImpl>() }
         // The history of boundary actions, which the rules' replay reads.
-        single<GateHistory> { get<PostgresGatesRepository>() }
+        single<GateHistory> { get<GatesRepositoryImpl>() }
         single<GateDigester> { Sha256GateDigester() }
         single<GateReceiptSigner> { ReceiptsGateSigner(get(), get(), get(), get(), get()) }
         single<EnsureGateReceiptUseCase> { EnsureGateReceiptUseCaseImpl(get(), get(), get()) }

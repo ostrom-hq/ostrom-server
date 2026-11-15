@@ -36,6 +36,7 @@ internal fun isImage(value: String): Boolean = IMAGE.matches(value)
 internal fun runtimeProblem(runtime: CloudRuntime): String? = listOfNotNull(
     "runnerImage is not an image reference.".takeIf { runtime.runnerImage?.let(::isImage) == false },
     "runnerBinary is not an absolute path.".takeIf { !BINARY.matches(runtime.runnerBinary) },
+    "sessionImage is not an image reference.".takeIf { !isImage(runtime.sessionImage) },
     "serverUrl is an https origin session pods may call, without a path, a query or credentials.".takeIf {
         runtime.serverUrl?.let { url -> !isReachableUrl(url) || url.substringAfter("://").any { it in "/?#@" } } == true
     },

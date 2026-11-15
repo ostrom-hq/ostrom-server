@@ -8,17 +8,35 @@ import run.ostrom.server.gates.domain.models.GateMode
 import run.ostrom.server.gates.domain.models.GateStatus
 import run.ostrom.server.gates.domain.models.GateSubject
 import run.ostrom.server.gates.domain.models.RequestStatus
+import run.ostrom.server.gates.domain.repositories.GatesRepository
 import run.ostrom.server.gates.domain.services.GateReceiptSigner
-import run.ostrom.server.gates.infrastructure.GatesQueries
-import run.ostrom.server.gates.infrastructure.PostgresGatesRepository
-import run.ostrom.server.gates.infrastructure.approversSql
+import run.ostrom.server.gates.infrastructure.approvalsPage
+import run.ostrom.server.gates.infrastructure.approvedSessions
+import run.ostrom.server.gates.infrastructure.approversRead
+import run.ostrom.server.gates.infrastructure.approvesSession
+import run.ostrom.server.gates.infrastructure.askersUpdate
+import run.ostrom.server.gates.infrastructure.gateInsert
+import run.ostrom.server.gates.infrastructure.gateRead
+import run.ostrom.server.gates.infrastructure.gateUpdate
+import run.ostrom.server.gates.infrastructure.gatesByIds
+import run.ostrom.server.gates.infrastructure.gatesByKey
+import run.ostrom.server.gates.infrastructure.requestRead
+import run.ostrom.server.gates.infrastructure.requestUpdate
+import run.ostrom.server.gates.infrastructure.requestsOfGate
+import run.ostrom.server.gates.infrastructure.sessionEndInsert
+import run.ostrom.server.gates.infrastructure.sessionEndRead
+import run.ostrom.server.gates.infrastructure.sessionGatesRead
+import run.ostrom.server.gates.infrastructure.sessionLinks
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.testing.benchTest
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.writeString
+import org.jetbrains.exposed.v1.core.statements.Statement
+import org.jetbrains.exposed.v1.core.statements.StatementBuilder
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
+import org.jetbrains.exposed.v1.jdbc.explain
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertFalse
@@ -28,8 +46,9 @@ import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * The gates' request-path reads under `EXPLAIN ANALYZE`, as the serving role (no owner, no superuser: row
- * level security applies), over 50 organizations and 10 000 gates with two approval requests each, 2 000 of the gates
+ * The gates' request-path statements under `EXPLAIN ANALYZE`, as Exposed sends them in `inOrg` (the tenant role, no
+ * owner, no superuser: row level security applies), each write rolled back, over 50 organizations and 10 000 gates
+ * with two approval requests each, 2 000 of the gates
  * in the organization read. Each read goes through an index to the rows it serves: never a scan of a table, never the
  * organization's rows filtered one by one. The plans are written to `build/reports/explain/gates.txt`, uploaded with
  * the CI's reports. It fills its tables row by row through the repository, which took over the minute of a
@@ -51,19 +70,23 @@ class GatesQueryPlansTest {
 
     @Test
     fun theGatesRequestPathReadsOnlyTheRowsItServes() = benchTest(listOf(GatesModule), signer) { server ->
-        val repository = PostgresGatesRepository(server.driver)
+        val repository = server.koin.get<GatesRepository>()
         val ofA = seed(repository, orgA, (0 until GATES_OF_A).toList())
         for ((index, org) in others.withIndex()) {
             seed(repository, org, (GATES_OF_A + index until TOTAL_GATES step others.size).toList())
         }
         // A gate the GitHub check opened has no session: nothing to link.
         val unlinked = gateOf(others.first(), TOTAL_GATES).copy(sessionIds = emptyList())
-        repository.transaction { insertGate(unlinked) }
+        repository.transaction(unlinked.orgId) { insertGate(unlinked) }
         // Statistics are the owner's to gather; the reads run as the serving role, as every test does (#68).
         for (table in listOf("gates_gates", "gates_requests", "gates_sessions", "gates_session_ends")) {
             server.database.owner.execute("VACUUM ANALYZE $table").getOrThrow()
         }
-        val plans = plansOf(server.driver, ofA)
+        // Each statement as the repository sends it, in `inOrg` (the tenant role, org A set), each write rolled back.
+        val database = server.koin.get<JdbcDatabase>()
+        val plans = statementsOf(ofA).mapValues { (_, statement) ->
+            database.inOrg(orgA) { plan(statement).also { rollback() } }
+        }
         val report = plans.entries.joinToString("\n\n") { (name, plan) -> "-- $name\n$plan" }
         SystemFileSystem.createDirectories(Path("build/reports/explain"))
         SystemFileSystem.sink(Path("build/reports/explain/gates.txt")).buffered().use { it.writeString(report) }
@@ -74,66 +97,46 @@ class GatesQueryPlansTest {
         }
     }
 
-    private suspend fun plansOf(serving: Driver, ofA: List<Gate>): Map<String, String> {
+    private fun statementsOf(ofA: List<Gate>): Map<String, StatementBuilder.() -> Statement<*>> {
         val first = ofA.first()
-        val page = ofA.take(QUEUE_PAGE)
-        val inbox = GatesQueries.approvals(approver = true, status = false)
-        val pending = GatesQueries.approvals(approver = true, status = true)
-        val recent = GatesQueries.approvals(approver = false, status = false)
-        val older = GatesQueries.approvals(approver = false, status = false, cursor = true)
+        val page = ofA.take(QUEUE_PAGE).map { it.id }
+        val reviewer = "rev-5@acme.test"
+        val pending = RequestStatus.PENDING
+        val answered = requestOf(first, 0).copy(status = RequestStatus.APPROVED, answeredAt = epoch)
         return linkedMapOf(
-            "gates of an action, under its lock (asking)" to serving.explain(GatesQueries.BY_KEY) {
-                bind("key", keyOf(7)).bind("limit", 20)
+            "gates of an action, under its lock (asking)" to { gatesByKey(orgA, keyOf(7), 20).query },
+            "one gate, locked (answer, reserve, use)" to { gateRead(orgA, first.id, lock = true).query },
+            "requests of a gate (answer, receipt)" to { requestsOfGate(orgA, first.id).query },
+            "one request (answer)" to { requestRead(orgA, requestOf(first, 0).id).query },
+            "pending inbox of an approver" to { approvalsPage(orgA, reviewer, pending, 50, null).query },
+            "inbox of an approver" to { approvalsPage(orgA, reviewer, null, 50, null).query },
+            "newest requests of the org" to { approvalsPage(orgA, null, null, 50, null).query },
+            "next page of the org's requests" to {
+                approvalsPage(orgA, null, null, 50, requestOf(first, 0).id).query
             },
-            "one gate, locked (answer, reserve, use)" to serving.explain(GatesQueries.gate(lock = true)) {
-                bind("id", first.id)
+            "gates of a page of requests" to { gatesByIds(orgA, listOf(first.id, Uuid.random())).query },
+            "approvers of the gates of a yes queue (approversOf)" to { approversRead(orgA, page).query },
+            "gates of a session (session receipt)" to { sessionGatesRead(orgA, sessionOf(7)).query },
+            "end of a session (asking, reserving)" to { sessionEndRead(orgA, sessionOf(7)).query },
+            "an approver of a session's gates (receipts, TeamCode #238)" to {
+                approvesSession(orgA, reviewer, sessionOf(7)).query
             },
-            "requests of a gate (answer, receipt)" to serving.explain(GatesQueries.REQUESTS_OF) {
-                bind("gate", first.id)
+            "the sessions of an approver's gates (receipts list)" to { approvedSessions(orgA, reviewer).query },
+            "a new gate (asking)" to { gateInsert(gateOf(orgA, TOTAL_GATES + 1)) },
+            "a gate's links to its sessions (asking)" to {
+                sessionLinks(first.copy(sessionIds = listOf("claude-new", "claude-other")))
             },
-            "one request (answer)" to serving.explain(GatesQueries.REQUEST) { bind("id", requestOf(first, 0).id) },
-            "pending inbox of an approver" to serving.explain(pending) {
-                bind("approver", "rev-5@acme.test").bind("status", RequestStatus.PENDING.name).bind("limit", 50)
-            },
-            "inbox of an approver" to serving.explain(inbox) { bind("approver", "rev-5@acme.test").bind("limit", 50) },
-            "newest requests of the org" to serving.explain(recent) { bind("limit", 50) },
-            "next page of the org's requests" to serving.explain(older) {
-                bind("limit", 50).bind("before", requestOf(first, 0).id)
-            },
-            "gates of a page of requests" to serving.explain(GatesQueries.gates(2)) {
-                bind("g0", first.id).bind("g1", Uuid.random())
-            },
-            "approvers of the gates of a yes queue (approversOf)" to serving.explain(approversSql(page.size)) {
-                page.foldIndexed(this) { index, statement, gate -> statement.bind("g$index", gate.id) }
-            },
-            "gates of a session (session receipt)" to serving.explain(GatesQueries.OF_SESSION) {
-                bind("session", sessionOf(7))
-            },
-            "end of a session (asking, reserving)" to serving.explain(GatesQueries.SESSION_ENDED) {
-                bind("session", sessionOf(7))
-            },
-            "an approver of a session's gates (receipts, TeamCode #238)" to serving.explain(GatesQueries.APPROVES) {
-                bind("session", sessionOf(7)).bind("approver", "rev-5@acme.test")
-            },
-            "the sessions of an approver's gates (receipts list)" to serving.explain(GatesQueries.APPROVED_SESSIONS) {
-                bind("approver", "rev-5@acme.test")
-            },
+            "a gate's askers (joining)" to { askersUpdate(first.copy(askedBy = listOf("dev-a", "dev-b"))) },
+            "a gate's decision (answer, reserve, use)" to { gateUpdate(first.copy(status = GateStatus.APPROVED)) },
+            "a request's answer (answer)" to { requestUpdate(answered) },
+            "the end of a session (session end)" to { sessionEndInsert(orgA, "claude-new", epoch) },
         )
     }
 
-    /** The plan of [sql] in org A, as the serving role reads it; `:org` is bound, [bind] adds the rest. */
-    private suspend fun Driver.explain(sql: String, bind: Statement.() -> Statement): String = transaction {
-        fetchAll(
-            Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", orgA.toString()),
-        ).getOrThrow()
-        val statement = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql").bind("org", orgA).bind()
-        fetchAll(statement).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
-    }
-
     /** The gates [numbers] of [org], two requests each, in one transaction; returns them. */
-    private suspend fun seed(repository: PostgresGatesRepository, org: Uuid, numbers: List<Int>): List<Gate> {
+    private suspend fun seed(repository: GatesRepository, org: Uuid, numbers: List<Int>): List<Gate> {
         val gates = numbers.map { gateOf(org, it) }
-        repository.transaction {
+        repository.transaction(org) {
             for (gate in gates) {
                 insertGate(gate)
                 insertRequests(listOf(requestOf(gate, 0), requestOf(gate, 1)))
@@ -143,6 +146,12 @@ class GatesQueryPlansTest {
         }
         return gates
     }
+
+    /** The plan of [statement] as Exposed sends it, under `EXPLAIN (ANALYZE, BUFFERS)`: a write runs (rolled back). */
+    private fun JdbcTransaction.plan(statement: StatementBuilder.() -> Statement<*>): String =
+        explain(analyze = true, options = "BUFFERS", body = statement).joinToString("\n") {
+            it.toString().removePrefix("QUERY PLAN=")
+        }
 
     private fun keyOf(n: Int) = "push-main:acme/api:${n % KEYS}"
 

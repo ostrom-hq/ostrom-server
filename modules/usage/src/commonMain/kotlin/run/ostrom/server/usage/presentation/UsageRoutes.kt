@@ -71,6 +71,7 @@ fun Route.usageRoutes(dependencies: UsageRoutesDependencies) = with(dependencies
             val next = if (page.size == limit) page.last().toCursor() else null
             call.respond(UsageEventsPageResponse(page.map { it.toResponse() }, next))
         }
+        usageReconciliationRoutes(dependencies)
     }
     // The live stream stays open as long as its client keeps it: an open connection, counted apart from the server's
     // other calls and from the waits, from before authentication on (P1 memory).

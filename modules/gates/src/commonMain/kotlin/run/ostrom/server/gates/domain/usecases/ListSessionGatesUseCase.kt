@@ -80,15 +80,16 @@ class ListSessionGatesUseCaseImpl(private val repository: GatesRepository) : Lis
         sessionGatesOf(repository.ofSession(orgId, sessionId)) { repository.requestsOfGates(orgId, it) }
 
     override suspend fun close(orgId: Uuid, sessionId: String, endedAt: Instant): List<SessionGate> =
-        repository.transaction {
+        repository.transaction(orgId) {
             lockSession(orgId, sessionId)
             markSessionEnded(orgId, sessionId, endedAt)
             sessionGatesOf(gatesOfSession(orgId, sessionId)) { requestsOfGates(orgId, it) }
         }
 
-    private suspend fun sessionGatesOf(
+    // Inline: the requests are read in the caller's transaction, or by a suspend read outside one.
+    private inline fun sessionGatesOf(
         gates: List<Gate>,
-        requestsOfGates: suspend (List<Uuid>) -> List<ApprovalRequest>,
+        requestsOfGates: (List<Uuid>) -> List<ApprovalRequest>,
     ): List<SessionGate> {
         val decided = gates.filter { it.decidedAt != null }.map { it.id }
         // One read for the answers of every decided gate, never one per gate.

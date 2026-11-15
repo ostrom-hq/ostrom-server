@@ -61,6 +61,7 @@ class CloudRuntimeTest {
 
         assertTrue("runnerImage" in refused(on.copy(runnerImage = "bad image")))
         assertTrue("runnerBinary" in refused(on.copy(runnerBinary = "relative/ostrom")))
+        assertTrue("sessionImage" in refused(on.copy(sessionImage = "bad image")))
         assertTrue("serverUrl" in refused(on.copy(serverUrl = "http://api.acme.dev")))
         assertTrue("serverUrl" in refused(on.copy(serverUrl = "https://api.acme.dev/path")))
         assertTrue("serverUrl" in refused(on.copy(serverUrl = "https://user:pw@api.acme.dev")))
@@ -79,10 +80,17 @@ class CloudRuntimeTest {
         // Optional values unset are accepted, and a blank binary is the default one.
         val saved = runtime.save(
             alice,
-            CloudRuntime(pausedRetentionDays = null, transcriptRetentionDays = null, runnerBinary = " "),
+            CloudRuntime(
+                pausedRetentionDays = null,
+                transcriptRetentionDays = null,
+                runnerBinary = " ",
+                sessionImage = " ",
+            ),
             null,
         )
         assertEquals(CloudRuntime.DEFAULT_RUNNER_BINARY, saved.runnerBinary)
+        // A blank session image is the default one, the CLI's ostrom-session.
+        assertEquals("docker.io/ostromhq/ostrom-session:latest", saved.sessionImage)
     }
 
     @Test

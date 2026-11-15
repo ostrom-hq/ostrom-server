@@ -3,8 +3,8 @@ package run.ostrom.server.gates
 
 import run.ostrom.core.telemetry.metrics.MeterImpl
 import run.ostrom.core.telemetry.metrics.MetricData
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.observability.OstromMetrics
-import io.github.smyrgeorge.sqlx4k.Driver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
@@ -424,6 +424,8 @@ class GatesPostgresTest {
         assertEquals(listOf(first.gate.id, second.gate.id), gates.map { it.id.toString() })
         assertEquals(listOf("rev-b"), gates.first().decisions.map { it.by })
         assertEquals(emptyList(), list(orgB, session), "Another organization's session has none of them")
+        // Its end lists the same gates, the answers read in the transaction that marks it.
+        assertEquals(gates, list.close(orgA, session, Clock.System.now()))
     }
 
     @Test
@@ -592,7 +594,7 @@ class GatesPostgresTest {
             consumedAt = at,
             createdAt = at,
         )
-        repository.transaction { insertGate(gate) }
+        repository.transaction(orgA) { insertGate(gate) }
         assertEquals(gate, repository.get(orgA, gate.id))
         assertEquals(null, repository.get(orgB, gate.id))
 
@@ -605,7 +607,7 @@ class GatesPostgresTest {
             status = GateStatus.PENDING,
             decidedBy = null,
         )
-        repository.transaction { addAskers(joiner) }
+        repository.transaction(orgA) { addAskers(joiner) }
         val joined = gate.copy(
             askedBy = joiner.askedBy,
             askedVia = joiner.askedVia,
@@ -641,7 +643,7 @@ class GatesPostgresTest {
         fun requestsOf(gate: Uuid, count: Int) = (0 until count).map {
             ApprovalRequest(Uuid.random(), gate, orgA, "rev-$it", RequestStatus.PENDING, createdAt = at)
         }
-        repository.transaction {
+        repository.transaction(orgA) {
             insertGate(gateOf(crowded))
             insertGate(gateOf(next))
             insertRequests(requestsOf(crowded, 101) + requestsOf(next, 2))
@@ -689,7 +691,7 @@ class GatesPostgresTest {
             channel = AnswerChannel.SLACK,
             createdAt = at,
         )
-        repository.transaction { insertRequests(listOf(answered)) }
+        repository.transaction(orgA) { insertRequests(listOf(answered)) }
         assertEquals(answered, repository.requestsOf(orgA, gateId).single { it.approverId == "rev-d" })
         assertEquals(answered, repository.approval(orgA, answered.id)?.request)
         assertNull(repository.approval(orgB, answered.id))
@@ -827,7 +829,7 @@ class GatesPostgresTest {
         server.call("agent:b:$session", "/api/v1/gates", push())
         val meter = MeterImpl(Clock.System)
         val koin = koinApplication {
-            modules(module { single { server.koin.get<Driver>() } }, module { single { OstromMetrics(meter) } })
+            modules(module { single { server.koin.get<JdbcDatabase>() } }, module { single { OstromMetrics(meter) } })
         }.koin
         val scope = CoroutineScope(Job())
         fun pending() = (meter.collect().single { it.name == "ostrom.gates.pending" } as MetricData.Gauge).points
@@ -902,9 +904,11 @@ private suspend fun TestServer.assertApprovalsPagedByBefore(approvals: List<Appr
 private val ASK_BUDGET = 50.milliseconds
 private const val ASK_MEASURE = "ask a gate (AskGateUseCase): p95 (best, median) of $ROUNDS rounds"
 
-// The statements of one ask today (Build 41727084508): the role, the organization, the lock, the gates of the key and
-// what it writes. One more is a query per gate or per request, on any runner.
-private const val MAX_ASK_STATEMENTS = 6
+// The statements of one ask today: the tenant role and the organization (`JdbcDatabase.inOrg`, since the gates moved to
+// Exposed: the role switch is the second wall the sqlx4k repository did not take, measured as the one statement more of
+// this port), the session's lock and end, the action's lock, the gates of the key and their requests. One more is a
+// query per gate or per request, on any runner.
+private const val MAX_ASK_STATEMENTS = 7
 
 /** Fails if one ask sends over [MAX_ASK_STATEMENTS] statements: the fewest of three recordings, as a bench keeps. */
 private suspend fun assertAskSendsAHandful(driver: RecordingDriver, ask: suspend () -> Unit) {

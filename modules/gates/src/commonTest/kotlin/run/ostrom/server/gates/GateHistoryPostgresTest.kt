@@ -56,13 +56,13 @@ class GateHistoryPostgresTest {
     @Test
     fun theHistoryReadsTheOrganizationsRecentGatesNewestFirst() = serverTest(listOf(GatesModule), signer) { server ->
         val repository = server.koin.get<GatesRepository>()
-        repository.transaction {
+        repository.transaction(orgA) {
             insertGate(gateOf(orgA, "push-main", 1))
             insertGate(gateOf(orgA, "deploy", 2))
             insertGate(gateOf(orgA, "merge", 3).copy(unlinkedAuthor = 42L))
             insertGate(gateOf(orgA, "old", 24 * 31))
         }
-        repository.transaction { insertGate(gateOf(orgB, "theirs", 1)) }
+        repository.transaction(orgB) { insertGate(gateOf(orgB, "theirs", 1)) }
 
         val history = server.koin.get<GateHistory>()
         val since = at - 30.days

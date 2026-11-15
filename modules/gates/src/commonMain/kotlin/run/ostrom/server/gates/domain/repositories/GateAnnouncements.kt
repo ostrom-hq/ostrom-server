@@ -19,5 +19,5 @@ interface GateAnnouncements {
      * @param gate The gate, as written.
      * @param requests Its requests, as written.
      */
-    suspend fun announce(type: OrgEventType, gate: Gate, requests: List<ApprovalRequest>)
+    fun announce(type: OrgEventType, gate: Gate, requests: List<ApprovalRequest>)
 }
