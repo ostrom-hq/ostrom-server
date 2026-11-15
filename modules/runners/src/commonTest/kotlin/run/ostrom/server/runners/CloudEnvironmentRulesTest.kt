@@ -253,15 +253,23 @@ class CloudEnvironmentRulesTest {
         assertEquals("Setup command 1 (start) failed.$log", message(PreparationStep.SETUP_START))
         assertEquals("Setup command 1 (create) failed.$log", message(PreparationStep.SETUP_CREATE))
         assertEquals("The runner could not prepare the environment.", message(PreparationStep.RUNNER))
+    }
+
+    @Test
+    fun theWorkspaceFailureNamesItsRepositoryWhenItHasAnIndex() {
+        val spec = CloudEnvironmentSpec(repositories = listOf(repo))
+        fun message(index: Int?, exit: Int?) =
+            PreparationFailures.message(PreparationFailure(PreparationStep.WORKSPACE, index, exit), spec, 3)
+        val log = " Details are in /workspace/.ostrom/logs/prepare-e3.log."
+        val refused = " A repository whose .git is not a plain directory is refused."
         assertEquals(
             "Resetting the agent's home and the Git configuration of the workspace after a transfer failed " +
-                "(exit code 3). A repository whose .git is not a plain directory is refused.$log",
-            message(PreparationStep.WORKSPACE, null, 3),
+                "(exit code 3).$refused$log",
+            message(null, 3),
         )
         assertEquals(
-            "Resetting the agent's home and the Git configuration of api after a transfer failed. " +
-                "A repository whose .git is not a plain directory is refused.$log",
-            message(PreparationStep.WORKSPACE, 0),
+            "Resetting the agent's home and the Git configuration of api after a transfer failed.$refused$log",
+            message(0, null),
         )
     }
 
