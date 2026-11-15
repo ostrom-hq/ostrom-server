@@ -82,7 +82,7 @@ data class SaveCloudRuntimeRequest(
     val runnerImage: String? = null,
     /** Where the binary is in it. */
     val runnerBinary: String,
-    /** The image of Docker and registered sessions' containers; absent or blank stores the default. */
+    /** The image of Docker and registered sessions' containers; absent keeps the stored one, blank the default. */
     val sessionImage: String? = null,
     /** The callback origin. */
     val serverUrl: String? = null,

@@ -153,6 +153,14 @@ class CloudAdminRoutesPostgresTest {
         assertEquals(HttpStatusCode.BadRequest, invalid.status)
         val again = http.get("/api/v1/cloud/runtime") { bearerAuth("alice") }.body<CloudRuntimeResponse>()
         assertEquals(saved, again)
+        // A save without the session image (a console from before it) keeps the stored one; a blank one resets it.
+        val without = body.replace(""""sessionImage":" registry.acme.dev/session:7 ",""", "")
+            .replace(seeded.updatedAt!!, saved.updatedAt!!)
+        val kept = http.send("PUT", "/api/v1/cloud/runtime", "alice", without).body<CloudRuntimeResponse>()
+        assertEquals("registry.acme.dev/session:7", kept.sessionImage)
+        val blank = without.replace("{", """{"sessionImage":" ",""").replace(saved.updatedAt!!, kept.updatedAt!!)
+        val reset = http.send("PUT", "/api/v1/cloud/runtime", "alice", blank).body<CloudRuntimeResponse>()
+        assertEquals("docker.io/ostromhq/ostrom-session:latest", reset.sessionImage)
     }
 
     @Test

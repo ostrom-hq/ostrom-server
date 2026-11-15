@@ -265,6 +265,7 @@ jobs:
           { echo "DELIVERY_IMAGE=$DELIVERY_IMAGE"; echo "SESSION_IMAGE=$SESSION_IMAGE"; echo "BASE_IMAGE=$base_image"; } \
             >> "$GITHUB_ENV"
           session=$(docker inspect -f '{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}' "$SESSION_IMAGE")
+          session=${session:-$SESSION_IMAGE}
           echo "- cloud session: runner \`$base_image\` with the CLI built here, session \`$session\`," \
             "driver \`$DRIVER\`, this runner's Docker" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0

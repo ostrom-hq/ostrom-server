@@ -183,6 +183,10 @@ jobs:
           # the cloud runtime's default session image, by its tag (the name the server's plan uses), pulled here first.
           docker pull --quiet "$RUNNER_IMAGE" || { echo "::error::$RUNNER_IMAGE cannot be pulled"; exit 1; }
           docker pull --quiet "$SESSION_IMAGE" || { echo "::error::$SESSION_IMAGE cannot be pulled"; exit 1; }
+          # A console from before ostrom-web#191 pins the runner image as its machines' session image, which the
+          # server's plan no longer names: said here, not as a failed line 6.2.
+          grep -q OSTROM_E2E_SESSION_IMAGE web/e2e-real/machines.ts \
+            || { echo "::error::ostrom-web $WEB_REF predates OSTROM_E2E_SESSION_IMAGE (ostrom-web#191)"; exit 1; }
           runner=$(docker inspect -f '{{index .RepoDigests 0}}' "$RUNNER_IMAGE")
           echo "image=$image" >> "$GITHUB_OUTPUT"
           echo "runner=$runner" >> "$GITHUB_OUTPUT"

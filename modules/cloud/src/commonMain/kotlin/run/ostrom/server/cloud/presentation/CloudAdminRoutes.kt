@@ -48,7 +48,9 @@ fun Route.cloudAdminRoutes(dependencies: CloudAdminRoutesDependencies) = with(de
             val expected = request.updatedAt?.let {
                 Instant.parseOrNull(it) ?: throw InvalidCloudRuntimeException("updatedAt is a date-time.")
             }
-            call.respond(runtime.save(caller, request.toRuntime(), expected).toResponse(publicUrl))
+            // An absent session image keeps the stored one: a console or a script from before it never resets it.
+            val sessionImage = request.sessionImage ?: runtime.get(caller).sessionImage
+            call.respond(runtime.save(caller, request.toRuntime(sessionImage), expected).toResponse(publicUrl))
         }
         get<CloudClustersApi> {
             val list = clusters.list(call.requirePrincipal().cloudAdmin())
@@ -103,11 +105,11 @@ internal fun AuthenticatedPrincipal.cloudAdmin(): CloudAdminCaller = CloudAdminC
     person = mayWrite(WriteAccess.PERSON),
 )
 
-internal fun SaveCloudRuntimeRequest.toRuntime() = CloudRuntime(
+internal fun SaveCloudRuntimeRequest.toRuntime(sessionImage: String) = CloudRuntime(
     enabled = enabled,
     runnerImage = runnerImage,
     runnerBinary = runnerBinary,
-    sessionImage = sessionImage.orEmpty(),
+    sessionImage = sessionImage,
     serverUrl = serverUrl,
     workspaceAccessMode = workspaceAccessMode,
     pausedRetentionDays = pausedRetentionDays,
