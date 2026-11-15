@@ -66,6 +66,7 @@ import run.ostrom.server.receipts.ReceiptsModule
 import run.ostrom.server.receipts.domain.usecases.GetReceiptUseCase
 import run.ostrom.server.testing.Contract
 import run.ostrom.server.testing.TestServer
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.call.body
@@ -267,6 +268,11 @@ class CompilerPostgresTest {
     }
 
     // PARCOURS 3.3: the organization's view left out a gate limited to one repository (`covers(repos, null)`).
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() = compilerTest { server ->
+        server.assertApiCatalogue(CompilerModule)
+    }
+
     @Test
     fun theOrganizationsApproversHaveAGateLimitedToOneRepository() = compilerTest { server ->
         server.call("user:a:lead", "/api/v1/workflows", "POST", release())

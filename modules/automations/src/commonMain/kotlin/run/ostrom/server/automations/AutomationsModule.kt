@@ -60,6 +60,7 @@ import run.ostrom.server.automations.infrastructure.WaitSummariesImpl
 import run.ostrom.server.automations.infrastructure.WaitsRepositoryImpl
 import run.ostrom.server.automations.infrastructure.WebhookSecretsImpl
 import run.ostrom.server.automations.presentation.AutomationsRoutesDependencies
+import run.ostrom.server.automations.presentation.automationsOperations
 import run.ostrom.server.automations.presentation.automationsRoutes
 import run.ostrom.server.automations.presentation.WaitsRoutesDependencies
 import run.ostrom.server.automations.presentation.waitsRoutes
@@ -68,6 +69,7 @@ import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.events.WaitSummaries
+import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.sessions.AgentSessions
 import run.ostrom.server.kernel.sessions.CloudProfileDirectory
@@ -101,6 +103,8 @@ import org.koin.dsl.module
  */
 object AutomationsModule : ServerModule {
     override val name: String = "automations"
+
+    override val apiOperations: ApiCatalog.() -> Unit = { automationsOperations() }
 
     override val koinModule: Module = module {
         single<WaitsRepository> { WaitsRepositoryImpl(get(), get(), getOrNull<SecretCipher>()) }

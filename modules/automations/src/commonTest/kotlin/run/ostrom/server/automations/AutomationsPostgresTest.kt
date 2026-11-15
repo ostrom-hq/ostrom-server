@@ -20,6 +20,7 @@ import run.ostrom.server.automations.infrastructure.FOLLOWED_SQL
 import run.ostrom.server.automations.infrastructure.STARTED_SESSIONS_SQL
 import run.ostrom.server.automations.infrastructure.inTenant
 import run.ostrom.server.kernel.workflows.AutomationUsage
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
@@ -47,6 +48,11 @@ class AutomationsPostgresTest {
             Uuid.random(), automation.id, automation.orgId, RunSource.WEBHOOK, status, 1, key,
             problems = listOf(PayloadProblem("$.a", "required")), createdAt = at, updatedAt = at,
         )
+
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() = serverTest(listOf(AutomationsModule)) { server ->
+        server.assertApiCatalogue(AutomationsModule)
+    }
 
     @Test
     fun automationsAreCreatedWithinTheLimitListedAndChangedAtTheirVersion() = serverTest(listOf(AutomationsModule)) {

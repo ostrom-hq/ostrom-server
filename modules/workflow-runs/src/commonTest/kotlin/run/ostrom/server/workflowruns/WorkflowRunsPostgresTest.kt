@@ -55,6 +55,7 @@ import run.ostrom.server.runners.domain.SessionLimits
 import run.ostrom.server.runners.domain.SessionState
 import run.ostrom.server.sessions.SessionsModule
 import run.ostrom.server.testing.TestServer
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.serverTest
 import run.ostrom.server.workflowruns.domain.repositories.RunAudience
 import run.ostrom.server.workflowruns.domain.repositories.RunQuery
@@ -204,6 +205,11 @@ class WorkflowRunsPostgresTest {
 
     private fun ranByRunner(cloud: CloudSession, epoch: Long = 2, check: String = CHECK) =
         """{"sessionId":"${cloud.id}","epoch":$epoch,"check":$check}"""
+
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() = serverTest(modules) { server ->
+        server.assertApiCatalogue(WorkflowRunsModule)
+    }
 
     @Test
     fun theCloudSessionsRunnerReportsItsChecksAndTheReceiptSaysOstromRanThem() =
