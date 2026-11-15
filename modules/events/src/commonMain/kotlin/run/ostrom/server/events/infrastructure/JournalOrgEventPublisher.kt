@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.events.infrastructure
 
-import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.Transaction
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
@@ -9,6 +8,7 @@ import org.jetbrains.exposed.v1.core.plus
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import org.jetbrains.exposed.v1.jdbc.batchInsert
 import org.jetbrains.exposed.v1.jdbc.upsertReturning
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.withOrganization
 import run.ostrom.server.kernel.events.MAX_EVENT_DATA
 import run.ostrom.server.kernel.events.OrgEventDraft
@@ -24,13 +24,15 @@ import kotlin.uuid.Uuid
  * not yet on Exposed) and the Exposed one ([publishIn] on a `JdbcTransaction`) send the same upsert of the same row:
  * whichever pool a publisher runs on, it waits for the others' commit, and they share one sequence.
  *
- * @param driver The database, for [publish].
+ * [publish] runs the Exposed writer in its own transaction, the serving role with the organization set.
+ *
+ * @param database The serving role's pool, for [publish].
  * @param clock The time of the events.
  */
-class JournalOrgEventPublisher(private val driver: Driver, private val clock: Clock) : OrgEventPublisher {
+class JournalOrgEventPublisher(private val database: JdbcDatabase, private val clock: Clock) : OrgEventPublisher {
     override suspend fun publish(orgId: Uuid, events: List<OrgEventDraft>) {
         if (events.isEmpty()) return
-        driver.withOrganization(orgId) { tx -> append(tx, orgId, events) }
+        database.withOrganization(orgId) { publishIn(this, orgId, events) }
     }
 
     override suspend fun publishIn(transaction: Transaction, orgId: Uuid, events: List<OrgEventDraft>) {

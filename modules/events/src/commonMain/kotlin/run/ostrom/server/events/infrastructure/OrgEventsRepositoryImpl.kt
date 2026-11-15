@@ -1,34 +1,46 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.events.infrastructure
 
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.QueryExecutor
-import io.github.smyrgeorge.sqlx4k.ResultSet
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLongOrNull
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuidOrNull
 import run.ostrom.server.events.domain.EventAudience
 import run.ostrom.server.events.domain.EventPage
-import run.ostrom.server.events.domain.JournalEvent
 import run.ostrom.server.events.domain.OrgEventsRepository
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.withOrganization
+import org.jetbrains.exposed.v1.core.Expression
+import org.jetbrains.exposed.v1.core.ExpressionWithColumnType
+import org.jetbrains.exposed.v1.core.Op
+import org.jetbrains.exposed.v1.core.QueryBuilder
+import org.jetbrains.exposed.v1.core.QueryParameter
+import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.TextColumnType
+import org.jetbrains.exposed.v1.core.UuidColumnType
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greater
+import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.core.isNull
+import org.jetbrains.exposed.v1.core.lessEq
+import org.jetbrains.exposed.v1.core.min
+import org.jetbrains.exposed.v1.core.or
+import org.jetbrains.exposed.v1.jdbc.deleteWhere
+import org.jetbrains.exposed.v1.jdbc.select
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
  * [OrgEventsRepository] on PostgreSQL (the tables of [EventsMigrations]): every read in a transaction confined to its
- * organization, by primary-key or index ranges and bounded; the purge through `events_purge`, the one read across
- * organizations.
+ * organization (the serving role with the organization set, `withOrganization`), by primary-key or index ranges and
+ * bounded; the purge through `events_purge`, the one read across organizations.
  *
- * @param driver The database.
+ * @param database The serving role's pool.
  */
-class OrgEventsRepositoryImpl(private val driver: Driver) : OrgEventsRepository {
-    override suspend fun head(orgId: Uuid): Long = driver.withOrganization(orgId) { tx -> tx.headOf(orgId) }
+class OrgEventsRepositoryImpl(private val database: JdbcDatabase) : OrgEventsRepository {
+    override suspend fun head(orgId: Uuid): Long = database.withOrganization(orgId) { headOf(orgId) }
 
-    override suspend fun oldest(orgId: Uuid): Long? = driver.withOrganization(orgId) { tx ->
-        tx.fetchAll(Statement.create(OLDEST_SQL).bind("org_id", orgId)).getOrThrow().first().get("seq").asLongOrNull()
+    override suspend fun oldest(orgId: Uuid): Long? = database.withOrganization(orgId) {
+        val j = EventsJournal
+        val oldest = j.seq.min()
+        j.select(oldest).where { j.orgId eq orgId }.single()[oldest]
     }
 
     override suspend fun read(
@@ -37,67 +49,65 @@ class OrgEventsRepositoryImpl(private val driver: Driver) : OrgEventsRepository 
         after: Long,
         types: Set<String>?,
         limit: Int,
-    ): EventPage = driver.withOrganization(orgId) { tx ->
+    ): EventPage = database.withOrganization(orgId) {
         // The head first: everything up to it is committed (a publisher holds the cursor row until it commits), and
         // nothing above it is read, so `through` is exact.
-        val head = tx.headOf(orgId)
+        val head = headOf(orgId)
         if (head <= after) return@withOrganization EventPage(emptyList(), after, false)
-        val rows = tx.fetchAll(
-            Statement.create(READ_SQL)
-                .bind("org_id", orgId)
-                .bind("after", after)
-                .bind("head", head)
-                .bind("all_types", types == null)
-                .bind("types", types.orEmpty().sorted().joinToString(","))
-                .bind("whole_org", audience.wholeOrg)
-                .bind("member_id", audience.memberId)
-                .bind("login", audience.login?.lowercase())
-                .bind("limit", limit + 1),
-        ).getOrThrow().map { it.toEvent() }
+        val j = EventsJournal
+        val rows = j.select(j.seq, j.type, j.subject, j.subjectId, j.memberId, j.at, j.data)
+            .where {
+                val typed = if (types == null) Op.TRUE else j.type inList types.sorted()
+                (j.orgId eq orgId) and (j.seq greater after) and (j.seq lessEq head) and typed and seenBy(audience)
+            }
+            .orderBy(j.seq to SortOrder.ASC)
+            .limit(limit + 1)
+            .map { it.toJournalEvent() }
         val page = rows.take(limit)
         if (rows.size > limit) EventPage(page, page.last().seq, true) else EventPage(page, head, false)
     }
 
-    override suspend fun purge(before: Instant, limit: Int): Int = driver.fetchAll(
-        Statement.create("SELECT events_purge(CAST(:before AS TIMESTAMPTZ), CAST(:limit AS INTEGER)) AS n")
-            .bind("before", before)
-            .bind("limit", limit),
-    ).getOrThrow().first().get("n").asLong().toInt()
+    override suspend fun purge(before: Instant, limit: Int): Int = database.query {
+        countOf("events_purge", instantParam(before), intParam(limit)).toInt()
+    }
 
     override suspend fun erase(orgId: Uuid) {
-        driver.withOrganization(orgId) { tx ->
-            tx.execute(Statement.create(ERASE_JOURNAL_SQL).bind("org_id", orgId)).getOrThrow()
-            tx.execute(Statement.create(ERASE_CURSOR_SQL).bind("org_id", orgId)).getOrThrow()
-            tx.execute(Statement.create(ERASE_READERS_SQL).bind("org_id", orgId)).getOrThrow()
+        database.withOrganization(orgId) {
+            EventsJournal.deleteWhere { EventsJournal.orgId eq orgId }
+            EventsCursors.deleteWhere { EventsCursors.orgId eq orgId }
+            EventsReaders.deleteWhere { EventsReaders.orgId eq orgId }
+        }
+    }
+
+    /** The approver of an approval's event, lowercased: `lower(CAST(data AS JSONB) ->> 'approver')`. */
+    private class ApproverOf(private val data: Expression<String>) : ExpressionWithColumnType<String?>() {
+        override val columnType = TextColumnType().apply { nullable = true }
+
+        override fun toQueryBuilder(queryBuilder: QueryBuilder) = queryBuilder {
+            append("lower(CAST(")
+            append(data)
+            append(" AS JSONB) ->> 'approver')")
         }
     }
 
     private companion object {
-        const val HEAD_SQL = "SELECT COALESCE(max(last_seq), 0) AS last_seq FROM events_cursors WHERE org_id = :org_id"
-        const val OLDEST_SQL = "SELECT min(seq) AS seq FROM events_journal WHERE org_id = :org_id"
-        const val READ_SQL =
-            "SELECT seq, type, subject, subject_id, member_id, at, data FROM events_journal " +
-                "WHERE org_id = :org_id AND seq > :after AND seq <= :head " +
-                "AND (CAST(:all_types AS BOOLEAN) OR type = ANY(string_to_array(CAST(:types AS TEXT), ','))) " +
-                "AND (member_id = :member_id OR (member_id IS NULL AND (CAST(:whole_org AS BOOLEAN) OR " +
-                "CASE WHEN type IN ('cloud.approval.requested', 'cloud.approval.decided') " +
-                "THEN lower(CAST(data AS JSONB) ->> 'approver') = CAST(:login AS TEXT) ELSE FALSE END))) " +
-                "ORDER BY seq LIMIT :limit"
-        const val ERASE_JOURNAL_SQL = "DELETE FROM events_journal WHERE org_id = :org_id"
-        const val ERASE_CURSOR_SQL = "DELETE FROM events_cursors WHERE org_id = :org_id"
-        const val ERASE_READERS_SQL = "DELETE FROM events_readers WHERE org_id = :org_id"
+        /** The events an approver sees though they name no member: the approvals asked of, or decided by, them. */
+        val APPROVALS = listOf("cloud.approval.requested", "cloud.approval.decided")
 
-        suspend fun QueryExecutor.headOf(orgId: Uuid): Long =
-            fetchAll(Statement.create(HEAD_SQL).bind("org_id", orgId)).getOrThrow().first().get("last_seq").asLong()
-
-        fun ResultSet.Row.toEvent() = JournalEvent(
-            seq = get("seq").asLong(),
-            type = get("type").asString(),
-            subject = get("subject").asString(),
-            subjectId = get("subject_id").asString(),
-            memberId = get("member_id").asUuidOrNull(),
-            at = get("at").asInstant(),
-            data = get("data").asString(),
-        )
+        /**
+         * Who sees an event: the member it names; one that names none, the whole organization's audience, or the
+         * approver an approval's event names. A missing member or login is bound as NULL, which equals nothing.
+         */
+        fun seenBy(audience: EventAudience): Op<Boolean> {
+            val j = EventsJournal
+            val member = QueryParameter(audience.memberId, UuidColumnType().apply { nullable = true })
+            val login = QueryParameter(audience.login?.lowercase(), TextColumnType().apply { nullable = true })
+            val unnamed = if (audience.wholeOrg) {
+                Op.TRUE
+            } else {
+                (j.type inList APPROVALS) and (ApproverOf(j.data) eq login)
+            }
+            return (j.memberId eq member) or (j.memberId.isNull() and unnamed)
+        }
     }
 }
