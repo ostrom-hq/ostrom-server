@@ -12,6 +12,8 @@ import run.ostrom.server.secrets.domain.CreateSecretUseCaseImpl
 import run.ostrom.server.secrets.domain.DeleteSecretUseCase
 import run.ostrom.server.secrets.domain.DeleteSecretUseCaseImpl
 import run.ostrom.server.secrets.domain.EnvironmentRepository
+import run.ostrom.server.secrets.domain.EnvironmentValueCheck
+import run.ostrom.server.secrets.domain.EnvironmentValueCheckImpl
 import run.ostrom.server.secrets.domain.ManageEnvironmentAssignmentsUseCase
 import run.ostrom.server.secrets.domain.ManageEnvironmentAssignmentsUseCaseImpl
 import run.ostrom.server.secrets.domain.ManageEnvironmentVariantsUseCase
@@ -79,6 +81,7 @@ object SecretsModule : ServerModule {
             PersonalEnvironmentVariantsUseCaseImpl(get(), get(), get(), get())
         }
         single<ResolveEnvironmentUseCase> { ResolveEnvironmentUseCaseImpl(get(), get(), members()) }
+        single<EnvironmentValueCheck> { EnvironmentValueCheckImpl(get(), get()) }
         single {
             EnvironmentRoutesDependencies(
                 getOrNull<CallerResolver>() ?: OrgPrincipalCallerResolver(get()),

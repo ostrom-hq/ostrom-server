@@ -14,6 +14,7 @@ import run.ostrom.server.secrets.domain.EnvironmentAssignment
 import run.ostrom.server.secrets.domain.EnvironmentBinding
 import run.ostrom.server.secrets.domain.EnvironmentExclusion
 import run.ostrom.server.secrets.domain.EnvironmentRepository
+import run.ostrom.server.secrets.domain.EnvironmentValueCheckImpl
 import run.ostrom.server.secrets.domain.EnvironmentVariant
 import run.ostrom.server.secrets.domain.EnvironmentVariantNotFoundException
 import run.ostrom.server.secrets.domain.EnvironmentVariantUpdate
@@ -26,11 +27,14 @@ import run.ostrom.server.secrets.domain.UpdateVariantOutcome
 import run.ostrom.server.secrets.domain.VariantChange
 import run.ostrom.server.secrets.domain.VariantExistsException
 import run.ostrom.server.secrets.domain.VariantLimitException
+import run.ostrom.server.secrets.domain.environmentContext
 import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -88,6 +92,35 @@ class EnvironmentUseCasesTest {
         assertEquals(0, result.assigned)
     }
 
+    @Test
+    fun theValueCheckSaysWhetherAStoredValueEqualsAnother() = runTest {
+        val orgId = TestCallers.orgA
+        val member = Uuid.random()
+        val shared = cipher.seal("v-1".encodeToByteArray(), environmentContext(orgId, variant.id))
+        val mine = cipher.seal("m-1".encodeToByteArray(), environmentContext(orgId, variant.id, member))
+        val values = listOf(
+            AssignedEnvironmentValue("OTHER", Uuid.random(), EnvironmentBinding.PER_MEMBER, mine),
+            AssignedEnvironmentValue("TOKEN", variant.id, EnvironmentBinding.SHARED, shared),
+            AssignedEnvironmentValue("TOKEN", variant.id, EnvironmentBinding.PER_MEMBER, mine),
+        )
+        val storage = Storage(stored = StoredEnvironmentVariant(variant, shared), values = values)
+        val check = EnvironmentValueCheckImpl(storage, cipher)
+        assertTrue(check.matches(orgId, variant.id, null, SecretValue("v-1")))
+        assertFalse(check.matches(orgId, variant.id, null, SecretValue("v-2")))
+        assertTrue(check.matches(orgId, variant.id, member, SecretValue("m-1")))
+        assertFalse(check.matches(orgId, variant.id, member, SecretValue("m-2")))
+        // A value sealed for another member never opens for this one.
+        assertFalse(check.matches(orgId, variant.id, Uuid.random(), SecretValue("m-1")))
+        assertFalse(check.matches(orgId, Uuid.random(), member, SecretValue("m-1")))
+        val empty = EnvironmentValueCheckImpl(Storage(stored = StoredEnvironmentVariant(variant, null)), cipher)
+        assertFalse(empty.matches(orgId, variant.id, null, SecretValue("v-1")))
+        assertFalse(EnvironmentValueCheckImpl(Storage(), cipher).matches(orgId, variant.id, null, SecretValue("v-1")))
+        val foreign = cipher.seal("v-1".encodeToByteArray(), "another context")
+        val sealedElsewhere = Storage(stored = StoredEnvironmentVariant(variant, foreign))
+        val elsewhere = EnvironmentValueCheckImpl(sealedElsewhere, cipher)
+        assertFalse(elsewhere.matches(orgId, variant.id, null, SecretValue("v-1")))
+    }
+
     private fun variants(repository: EnvironmentRepository) =
         ManageEnvironmentVariantsUseCaseImpl(repository, cipher, members, DiscardingOrgAuditTrail(), clock)
 
@@ -97,6 +130,7 @@ class EnvironmentUseCasesTest {
         private val created: CreateVariantOutcome = CreateVariantOutcome.CREATED,
         private val stored: StoredEnvironmentVariant? = null,
         private val updated: UpdateVariantOutcome = UpdateVariantOutcome.NotFound,
+        private val values: List<AssignedEnvironmentValue> = emptyList(),
     ) : EnvironmentRepository {
         var bulkMembers: List<Uuid>? = null
 
@@ -145,7 +179,7 @@ class EnvironmentUseCasesTest {
 
         override suspend fun exclusions(orgId: Uuid, memberId: Uuid?): List<EnvironmentExclusion> = unused()
 
-        override suspend fun assignedValues(orgId: Uuid, memberId: Uuid): List<AssignedEnvironmentValue> = unused()
+        override suspend fun assignedValues(orgId: Uuid, memberId: Uuid): List<AssignedEnvironmentValue> = values
 
         private fun unused(): Nothing = error("Not used by this test.")
     }
