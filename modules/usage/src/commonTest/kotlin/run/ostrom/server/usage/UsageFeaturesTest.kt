@@ -10,6 +10,6 @@ class UsageFeaturesTest {
     @Test
     fun itsFeaturesNeedNoConfiguration() = runTest {
         val koin = koinApplication {}.koin
-        assertEquals(setOf("usage.v1"), UsageModule.features(koin))
+        assertEquals(setOf("usage.v1", "capacity.usagereconciliation.v1"), UsageModule.features(koin))
     }
 }

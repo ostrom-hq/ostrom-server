@@ -223,6 +223,16 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "GET /api/v1/usage" to Case.Target(),
     "GET /api/v1/usage/summary" to Case.Target(),
     "GET /api/v1/usage/live" to Case.Target(stream = true),
+    // The usage review (capacity.usagereconciliation.v1): an owner's or an admin's. Only the gateway makes holds, so a
+    // hold of A is named by a fresh id; the review's walls are UsageReconciliationPostgresTest's.
+    "GET /api/v1/usage/pending" to Case.Target(admin = true),
+    "GET /api/v1/usage/reconciliations" to Case.Target(admin = true),
+    "GET /api/v1/usage/reservations/{id}" to Case.Target(mapOf("id" to Param.Fresh), admin = true),
+    "POST /api/v1/usage/reservations/{id}/reconcile" to Case.Target(
+        mapOf("id" to Param.Fresh),
+        body = """{"expectedMicros": 1, "micros": 0, "source": "PROVIDER_RECORD", "reference": "r", "reason": "r"}""",
+        admin = true,
+    ),
     // The organization's event feed (events.v1): from the oldest kept event, so A's would show.
     "GET /api/v1/events" to Case.Target(stream = true, query = "after=0"),
     // The organization's outgoing webhooks (webhooks.v1): an owner's or an admin's, reads included.
