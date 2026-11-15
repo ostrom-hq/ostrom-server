@@ -13,6 +13,8 @@ import run.ostrom.server.identity.domain.AuditLogImpl
 import run.ostrom.server.identity.domain.AuditRepository
 import run.ostrom.server.identity.domain.AuditVerifier
 import run.ostrom.server.identity.domain.AuditVerifierImpl
+import run.ostrom.server.identity.domain.AuthSessionsOfUserUseCase
+import run.ostrom.server.identity.domain.AuthSessionsOfUserUseCaseImpl
 import run.ostrom.server.identity.domain.CompleteMobileSignInUseCase
 import run.ostrom.server.identity.domain.CompleteMobileSignInUseCaseImpl
 import run.ostrom.server.identity.domain.CompleteOAuthSignInUseCase
@@ -124,8 +126,6 @@ import run.ostrom.server.identity.domain.NoMemberDirectory
 import run.ostrom.server.identity.domain.UsersRepository
 import run.ostrom.server.identity.domain.VerifyMagicLinkUseCase
 import run.ostrom.server.identity.domain.VerifyMagicLinkUseCaseImpl
-import run.ostrom.server.identity.domain.WebSessionsOfUserUseCase
-import run.ostrom.server.identity.domain.WebSessionsOfUserUseCaseImpl
 import run.ostrom.server.identity.domain.WebSessionsRepository
 import run.ostrom.server.identity.infrastructure.ApiTokensRepositoryImpl
 import run.ostrom.server.identity.infrastructure.AuditRepositoryImpl
@@ -293,7 +293,7 @@ object IdentityModule : ServerModule {
         single<GetProfileUseCase> { GetProfileUseCaseImpl(get()) }
         single<StartWebSessionUseCase> { StartWebSessionUseCaseImpl(get(), get(), get(), get()) }
         single<EndWebSessionUseCase> { EndWebSessionUseCaseImpl(get(), get(), get()) }
-        single<WebSessionsOfUserUseCase> { WebSessionsOfUserUseCaseImpl(get(), get(), get()) }
+        single<AuthSessionsOfUserUseCase> { AuthSessionsOfUserUseCaseImpl(get(), get(), get(), get(), get()) }
         single<ListAuditEventsUseCase> { ListAuditEventsUseCaseImpl(get()) }
         single<CreatePersonalTokenUseCase> { CreatePersonalTokenUseCaseImpl(get(), get(), get(), get(), get()) }
         single<ListTokensUseCase> { ListTokensUseCaseImpl(get(), get()) }

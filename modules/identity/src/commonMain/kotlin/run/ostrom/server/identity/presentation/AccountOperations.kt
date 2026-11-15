@@ -171,7 +171,11 @@ private fun ApiCatalog.signOutOperations() {
         operationId = "listAuthSessions"
         tag(TAG)
         summary = "Signed-in sessions of the caller."
-        description = "A browser session, or the person's own CLI sign-in. `current` marks the one asking."
+        description = "Asked from a browser session, or the person's own CLI sign-in. Lists the person's live " +
+            "sign-ins, the last used first, as TeamCode's sessions: their browser sessions (`name` `Web console`, " +
+            "no `deviceId`) and the tokens the CLI (`ostrom login`) and the phone app signed in with (`name` the " +
+            "registered device's, else the token's; `deviceId` the CLI's registered device). `current` marks the one " +
+            "asking."
         responses {
             ok<AuthSessionsResponse>("The live sessions.")
         }
@@ -180,8 +184,9 @@ private fun ApiCatalog.signOutOperations() {
         operationId = "revokeAuthSession"
         tag(TAG)
         summary = "Revoke a signed-in session."
-        description = "A browser session, or the person's own CLI sign-in. Ending the session that makes the " +
-            "request is signing out."
+        description = "Asked from a browser session, or the person's own CLI sign-in. Ends one of the person's " +
+            "sign-ins: a browser session, or a CLI or phone token, which stops working at once. Ending the session " +
+            "that makes the request is signing out."
         parameters {
             pathId("id", "The session.")
         }

@@ -425,13 +425,20 @@ class IdentityRoutesPostgresTest {
         val items = listed.body<AuthSessionsResponse>().items
         assertEquals(setOf(here.session.id.toString(), elsewhere.session.id.toString()), items.map { it.id }.toSet())
         assertEquals(listOf(here.session.id.toString()), items.filter { it.current }.map { it.id })
-        // The CLI's own sign-in lists and ends them as TeamCode's `auth sessions` does (14/11/2026)...
+        assertTrue(items.all { it.name == "Web console" && it.deviceId == null }, "a browser has no device")
+        // The CLI's own sign-in lists and ends them as TeamCode's `auth sessions` does (14/11/2026), its own token
+        // among them (TeamCode's sessions are every sign-in, 15/11/2026)...
         val laptop = server.koin.get<IssueCliTokenUseCase>()(ada.id, "laptop")
         val byCli = server.client.get("/api/v1/auth/sessions") { bearerAuth(laptop.secret) }
         assertEquals(HttpStatusCode.OK, byCli.status)
         val cliItems = byCli.body<AuthSessionsResponse>().items
-        assertEquals(setOf(here.session.id.toString(), elsewhere.session.id.toString()), cliItems.map { it.id }.toSet())
-        assertTrue(cliItems.none { it.current }, "none of them is the CLI's own")
+        val laptopId = laptop.token.id.toString()
+        assertEquals(
+            setOf(here.session.id.toString(), elsewhere.session.id.toString(), laptopId),
+            cliItems.map { it.id }.toSet(),
+        )
+        assertEquals(listOf(laptopId), cliItems.filter { it.current }.map { it.id }, "the CLI's own is current")
+        assertEquals("laptop", cliItems.single { it.id == laptopId }.name)
         val third = server.koin.get<StartWebSessionUseCase>()(ada.id)
         val endedByCli = server.client.delete("/api/v1/auth/sessions/${third.session.id}") { bearerAuth(laptop.secret) }
         assertEquals(HttpStatusCode.NoContent, endedByCli.status)

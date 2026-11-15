@@ -10,14 +10,11 @@ import run.ostrom.server.identity.domain.IdentityProvider
 import run.ostrom.server.identity.domain.IdentityTakenException
 import run.ostrom.server.identity.domain.LinkIdentityUseCaseImpl
 import run.ostrom.server.identity.domain.ResolveUserUseCaseImpl
-import run.ostrom.server.identity.domain.SESSION_LIFETIME
 import run.ostrom.server.identity.domain.StartWebSessionUseCaseImpl
 import run.ostrom.server.identity.domain.UserEmail
 import run.ostrom.server.identity.domain.UserNotFoundException
 import run.ostrom.server.identity.domain.VerifiedIdentity
 import run.ostrom.server.identity.domain.WebSession
-import run.ostrom.server.identity.domain.WebSessionNotFoundException
-import run.ostrom.server.identity.domain.WebSessionsOfUserUseCaseImpl
 import run.ostrom.server.identity.domain.loginOf
 import run.ostrom.server.identity.domain.nowMillis
 import run.ostrom.server.identity.domain.vouchesFor
@@ -30,7 +27,6 @@ import run.ostrom.server.identity.fakes.SettableClock
 import run.ostrom.server.identity.fakes.openSignUp
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
-import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -312,30 +308,6 @@ class AccountUseCasesTest {
         assertEquals(1, end.everywhere(userId))
         assertEquals("sessions.revoked", audit.entries.last().action)
         assertEquals(mapOf("count" to "1"), audit.entries.last().details)
-    }
-
-    @Test
-    fun aPersonListsAndEndsOnlyTheirOwnLiveBrowserSessions() = runTest {
-        val sessions = InMemoryWebSessionsRepository()
-        val start = StartWebSessionUseCaseImpl(sessions, CountingSecretGenerator(), FakeHasher(), clock)
-        val own = WebSessionsOfUserUseCaseImpl(sessions, audit, clock)
-        val ada = Uuid.random()
-        val first = start(ada).session
-        clock.now += 1.minutes
-        val second = start(ada).session
-        val bobs = start(Uuid.random()).session
-        val ended = start(ada).session.also { sessions.revoke(it.id, clock.now) }
-
-        assertEquals(listOf(second, first), own.list(ada), "Live sessions only, the last used first")
-        assertFailsWith<WebSessionNotFoundException>("Another person's session") { own.revoke(ada, bobs.id) }
-        assertFailsWith<WebSessionNotFoundException>("An ended session") { own.revoke(ada, ended.id) }
-        own.revoke(ada, first.id)
-        assertEquals(listOf(second), own.list(ada))
-        val recorded = audit.entries.last()
-        assertEquals("session.revoked" to first.id.toString(), recorded.action to recorded.targetId)
-        clock.now += SESSION_LIFETIME
-        assertEquals(emptyList(), own.list(ada), "An expired session is not listed")
-        assertFailsWith<WebSessionNotFoundException>("An expired session") { own.revoke(ada, second.id) }
     }
 
     @Test
