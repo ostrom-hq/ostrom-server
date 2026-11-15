@@ -34,6 +34,7 @@ import run.ostrom.server.sharing.domain.QuotaWindowRepository
 import run.ostrom.server.sharing.domain.SharedAccountRepository
 import run.ostrom.server.sharing.domain.SharingOrgs
 import run.ostrom.server.testing.TestServer
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.serverTest
 import run.ostrom.server.usage.UsageModule
 import run.ostrom.server.usage.domain.UsageEvent
@@ -147,6 +148,11 @@ class PoolSizePostgresTest {
         assertEquals(7_200_000, weekly.remainingMicros)
         assertEquals(1_000_000, report.outsideWeeklyMicros)
         return share
+    }
+
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() = serverTest(modules, overrides) { server ->
+        server.assertApiCatalogue(BudgetsModule)
     }
 
     @Test

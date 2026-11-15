@@ -38,6 +38,7 @@ import run.ostrom.server.sessions.presentation.SessionResponse
 import run.ostrom.server.sessions.presentation.SessionScopes
 import run.ostrom.server.sessions.presentation.SessionsPage
 import run.ostrom.server.testing.TestServer
+import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.call.body
@@ -146,6 +147,11 @@ class SessionsPostgresTest {
     private suspend fun TestServer.start(token: String, id: String, repo: String = "acme/api"): SessionDto =
         call(token, "/api/v1/sessions", """{"id":"$id","agent":"claude-code","repo":"$repo","dev":"mallory"}""")
             .body<SessionResponse>().session
+
+    @Test
+    fun theCatalogueDescribesEachRouteOnce() = sessionsTest { server ->
+        server.assertApiCatalogue(SessionsModule)
+    }
 
     @Test
     fun aSessionLivesEndsSignedAndTakesNoMoreGates() = sessionsTest { server ->

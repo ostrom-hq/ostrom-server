@@ -36,6 +36,7 @@ import run.ostrom.server.budgets.infrastructure.BudgetsRepositoryImpl
 import run.ostrom.server.budgets.infrastructure.PoolSizeRepositoryImpl
 import run.ostrom.server.budgets.presentation.BudgetsRoutesDependencies
 import run.ostrom.server.budgets.presentation.PoolSizeRoutesDependencies
+import run.ostrom.server.budgets.presentation.budgetsOperations
 import run.ostrom.server.budgets.presentation.budgetsRoutes
 import run.ostrom.server.budgets.presentation.poolSizeRoutes
 import run.ostrom.server.gateway.domain.PacingSettingsRepository
@@ -47,6 +48,7 @@ import run.ostrom.server.kernel.database.ScheduledJob
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.database.repeatDue
 import run.ostrom.server.kernel.database.scheduledWork
+import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.workflows.WorkflowRemovals
@@ -72,6 +74,8 @@ import kotlin.uuid.Uuid
  */
 object BudgetsModule : ServerModule {
     override val name: String = "budgets"
+
+    override val apiOperations: ApiCatalog.() -> Unit = { budgetsOperations() }
 
     override val koinModule: Module = module {
         single<BudgetOverridesRepository> { BudgetOverridesRepositoryImpl(get<JdbcDatabase>()) }
