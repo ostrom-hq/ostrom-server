@@ -11,6 +11,7 @@ import run.ostrom.server.kernel.auth.SignedInDevices
 import run.ostrom.server.kernel.auth.TokenAuthenticator
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.config.MapConfigSource
+import run.ostrom.server.kernel.http.docs.API_OPENAPI_PATH
 import run.ostrom.server.kernel.settings.InstanceSettings
 import run.ostrom.server.runners.domain.RemoteSessionRules
 import run.ostrom.server.runners.fakes.ALICE
@@ -49,6 +50,9 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -182,6 +186,27 @@ class DeviceDaemonRoutesPostgresTest {
             assertEquals(HttpStatusCode.NoContent, stopped.status)
             assertNull(http.folders().daemon)
         }
+
+    @Test
+    fun theDaemonRoutesAreDescribedWhereTheyAreMounted() = serverTest(listOf(RunnersModule), daemon) { server ->
+        val paths = Json.parseToJsonElement(server.client.get(API_OPENAPI_PATH).bodyAsText()).jsonObject
+            .getValue("paths").jsonObject
+        val described = listOf(
+            "/api/v1/devices/current/daemon/poll" to "post",
+            "/api/v1/devices/current/daemon" to "delete",
+            "/api/v1/devices/current/daemon/sessions/{id}/refuse" to "post",
+            "/api/v1/devices/current/daemon/listings/{id}" to "post",
+            "/api/v1/devices/current/folders" to "put",
+            "/api/v1/devices/{id}/folders" to "get",
+        ).map { (path, method) ->
+            paths.getValue(path).jsonObject.getValue(method).jsonObject.getValue("operationId").jsonPrimitive.content
+        }
+        val expected = listOf(
+            "pollDeviceDaemon", "stopDeviceDaemon", "refuseDaemonOrder", "answerDaemonListing", "publishDeviceFolders",
+            "listDeviceFolders",
+        )
+        assertEquals(expected, described)
+    }
 
     @Test
     fun theDaemonAnswersOnlyTheListingsOfItsOwnDevice() = serverTest(listOf(RunnersModule), daemon) { server ->
