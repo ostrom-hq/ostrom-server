@@ -10,6 +10,7 @@ import run.ostrom.server.kernel.http.docs.notFound
 import run.ostrom.server.kernel.http.docs.ok
 import run.ostrom.server.kernel.http.docs.organizationHeader
 import run.ostrom.server.kernel.http.docs.pathId
+import run.ostrom.server.kernel.http.docs.queryText
 import io.ktor.http.HttpStatusCode
 import io.ktor.openapi.Responses
 
@@ -118,13 +119,22 @@ private fun ApiCatalog.cloudProfileOperations() {
         summary = "The organization's cloud profiles."
         description = "A member of the organization: an owner or an admin sees every profile, a member the ones " +
             "assigned to them (TeamCode's `cloud_profiles`). A profile names the cluster and namespace a " +
-            "session runs in and the session image the team chose: Ostrom imposes none."
+            "session runs in and the session image the team chose: Ostrom imposes none. With " +
+            "`runners.cloud.profiles.member.v1` (TeamCode's `cloud.profiles.member.v1`), `member` (an id or a " +
+            "login) lists the profiles that member can use, every profile for an owner or an admin."
         parameters {
             organizationHeader()
+            queryText("member", "The member, by id or login, whose profiles are listed; the caller when absent.")
         }
         responses {
             ok<CloudProfileListResponse>("The profiles, by name.")
+            badRequest("`member` sent more than once (`invalid_query`).")
+            error(HttpStatusCode.Forbidden, "Another member named by a caller who is not an owner or an admin.")
             notFound("The organization is not one the caller belongs to.")
+            error(
+                HttpStatusCode.UnprocessableEntity,
+                "The member named is not an active member of the organization (`invalid_effective_member`).",
+            )
         }
     }
     post("/api/v1/cloud/profiles") {

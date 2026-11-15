@@ -272,6 +272,19 @@ class CloudAdminRoutesPostgresTest {
         assertEquals(listOf(second), bobs.profiles)
         val theirs = http.get("/api/v1/cloud/profiles") { bearerAuth("carol") }.body<CloudProfileListResponse>()
         assertTrue(theirs.profiles.isEmpty())
+        // `runners.cloud.profiles.member.v1`: an admin reads bob's, bob only his own, once.
+        val forBob = http.get("/api/v1/cloud/profiles?member=$BOB") { bearerAuth("alice") }
+        assertEquals(listOf(second), forBob.body<CloudProfileListResponse>().profiles)
+        val own = http.get("/api/v1/cloud/profiles?member=$BOB") { bearerAuth("bob") }
+        assertEquals(listOf(second), own.body<CloudProfileListResponse>().profiles)
+        val forbidden = http.get("/api/v1/cloud/profiles?member=$ALICE") { bearerAuth("bob") }
+        assertEquals(HttpStatusCode.Forbidden, forbidden.status)
+        val stranger = http.get("/api/v1/cloud/profiles?member=$CAROL") { bearerAuth("alice") }
+        assertEquals(HttpStatusCode.UnprocessableEntity, stranger.status)
+        assertTrue("invalid_effective_member" in stranger.bodyAsText())
+        val twice = http.get("/api/v1/cloud/profiles?member=$BOB&member=$BOB") { bearerAuth("alice") }
+        assertEquals(HttpStatusCode.BadRequest, twice.status)
+        assertTrue("invalid_query" in twice.bodyAsText())
         assertEquals(HttpStatusCode.NotFound, http.send("PUT", path, "carol", profile(clusterId, 2)).status)
         assertEquals(
             HttpStatusCode.NotFound,

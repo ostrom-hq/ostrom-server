@@ -6,6 +6,7 @@ import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
@@ -20,6 +21,7 @@ import run.ostrom.core.api.Idempotency
 import run.ostrom.core.api.OnBehalfOf
 import run.ostrom.server.kernel.audit.OrgAuditRecord
 import run.ostrom.server.kernel.audit.OrgAuditTrail
+import run.ostrom.server.kernel.audit.TransactionalOrgAuditTrail
 import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.kernel.auth.OrgRole
@@ -31,6 +33,7 @@ import run.ostrom.server.runners.fakes.ORG_A
 import run.ostrom.server.runners.fakes.testIdentities
 import run.ostrom.server.runners.infrastructure.inTenant
 import run.ostrom.server.runners.presentation.CloudSessionResponse
+import run.ostrom.server.runners.presentation.CloudSessionsResponse
 import run.ostrom.server.runners.presentation.CreateCloudSessionRequest
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
@@ -42,13 +45,23 @@ import kotlin.uuid.Uuid
 
 /**
  * Against a real PostgreSQL: `Ostrom-On-Behalf-Of` on the cloud session writes (`runners.cloud.onbehalf.v1`, TeamCode's
- * `TeamCode-On-Behalf-Of`). Alice and bob are members of org A, dana its admin; carol is org B's owner.
+ * `TeamCode-On-Behalf-Of`), and on the model and effort writes (`runners.cloud.onbehalf.writes.v1`). Alice and bob are
+ * members of org A, dana its admin; carol is org B's owner.
  */
 class CloudSessionsOnBehalfPostgresTest {
     private val audit = mutableListOf<OrgAuditRecord>()
+
+    /** Makes the audit entries written in a session write's transaction fail, as a broken audit log does. */
+    private var journalFails = false
     private val overrides = module {
         includes(testIdentities)
         single<OrgAuditTrail> { OrgAuditTrail { audit += it } }
+        single<TransactionalOrgAuditTrail> {
+            TransactionalOrgAuditTrail { _, record ->
+                check(!journalFails) { "The audit log is unavailable." }
+                audit += record
+            }
+        }
         single<MemberDirectory> {
             object : MemberDirectory {
                 private val roles = mapOf(ALICE to OrgRole.MEMBER, BOB to OrgRole.MEMBER, DANA to OrgRole.ADMIN)
@@ -223,5 +236,80 @@ class CloudSessionsOnBehalfPostgresTest {
         }
         assertEquals(HttpStatusCode.OK, own.status)
         assertNull(audit.firstOrNull { it.event.startsWith("cloud.session.permission_bypass") })
+    }
+
+    @Test
+    fun aSessionWriteWhoseJournalCannotBeWrittenDoesNotHappen() = onBehalfTest { server ->
+        val id = server.create("bob").body<CloudSessionResponse>().id
+        journalFails = true
+        assertEquals(HttpStatusCode.InternalServerError, server.create("dana-cli", "bob").status)
+        assertEquals(HttpStatusCode.InternalServerError, server.write("pause", "dana-cli", id, "bob").status)
+        journalFails = false
+        val listed = server.client.get("/api/v1/cloud/sessions") { bearerAuth("bob") }.body<CloudSessionsResponse>()
+        assertEquals(listOf(id), listed.items.map { it.id }, "the creation was undone")
+        assertEquals("running", listed.items.single().desiredStatus, "the pause was undone")
+
+        assertEquals(HttpStatusCode.Accepted, server.write("pause", "dana-cli", id, "bob").status)
+        journalFails = true
+        assertEquals(HttpStatusCode.InternalServerError, server.write("resume", "dana-cli", id, "bob").status)
+        assertEquals(HttpStatusCode.InternalServerError, server.write("delete", "dana-cli", id, "bob").status)
+        journalFails = false
+        val read = server.client.get("/api/v1/cloud/sessions/$id") { bearerAuth("bob") }.body<CloudSessionResponse>()
+        assertEquals("paused", read.desiredStatus, "neither the resume nor the deletion happened")
+        val paused = audit.single { it.event == "cloud.session.paused" }
+        assertEquals("dana", paused.actor.subjectId)
+        assertEquals(
+            mapOf("effective_member_id" to BOB.toString(), "credential_id" to "pat-dana", "owner" to BOB.toString()),
+            paused.details,
+        )
+    }
+
+    @Test
+    fun anAdministratorChangesAMembersModelAndEffort() = onBehalfTest { server ->
+        val id = server.create("bob").body<CloudSessionResponse>().id
+        suspend fun option(kind: String, token: String, onBehalfOf: String, value: String = "opus") =
+            server.client.put("/api/v1/cloud/sessions/$id/$kind") {
+                bearerAuth(token)
+                header(OnBehalfOf.HEADER, onBehalfOf)
+                contentType(ContentType.Application.Json)
+                setBody("""{"$kind":"$value"}""")
+            }
+
+        val forbidden = option("model", "alice", "bob")
+        assertEquals(HttpStatusCode.Forbidden, forbidden.status)
+        assertTrue(OnBehalfOf.FORBIDDEN in forbidden.bodyAsText())
+        val invalid = option("effort", "dana-cli", "ghost", "high")
+        assertEquals(HttpStatusCode.UnprocessableEntity, invalid.status)
+        assertTrue(OnBehalfOf.INVALID_MEMBER in invalid.bodyAsText())
+        assertEquals("opus", option("model", "dana-cli", "bob").body<CloudSessionResponse>().model)
+        assertEquals("high", option("effort", "dana-cli", BOB.toString(), "high").body<CloudSessionResponse>().effort)
+
+        val lines = audit.filter { it.event.endsWith("_changed") }
+        assertEquals(listOf("cloud.session.model_changed", "cloud.session.effort_changed"), lines.map { it.event })
+        val details = mapOf(
+            "effective_member_id" to BOB.toString(),
+            "credential_id" to "pat-dana",
+            "owner" to BOB.toString(),
+        )
+        assertTrue(lines.all { it.actor.subjectId == "dana" && it.details == details })
+    }
+
+    @Test
+    fun theListingIsTheCallersOwnWhateverTheirRole() = onBehalfTest { server ->
+        val id = server.create("bob").body<CloudSessionResponse>().id
+        suspend fun list(token: String, vararg owners: String) = server.client.get("/api/v1/cloud/sessions") {
+            bearerAuth(token)
+            owners.forEach { parameter("owner", it) }
+        }
+
+        assertEquals(listOf(id), list("bob", BOB.toString()).body<CloudSessionsResponse>().items.map { it.id })
+        for ((token, owner) in listOf("bob" to ALICE.toString(), "dana" to BOB.toString(), "dana" to "all")) {
+            val refused = list(token, owner)
+            assertEquals(HttpStatusCode.Forbidden, refused.status, "$token $owner")
+            assertTrue("Only your own sessions are listed." in refused.bodyAsText())
+        }
+        val twice = list("bob", BOB.toString(), BOB.toString())
+        assertEquals(HttpStatusCode.BadRequest, twice.status)
+        assertTrue("invalid_query" in twice.bodyAsText())
     }
 }

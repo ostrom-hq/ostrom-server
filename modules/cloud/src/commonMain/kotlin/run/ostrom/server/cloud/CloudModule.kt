@@ -30,6 +30,7 @@ import run.ostrom.server.cloud.presentation.CloudAdminRoutesDependencies
 import run.ostrom.server.cloud.presentation.cloudAdminRoutes
 import run.ostrom.server.cloud.presentation.cloudOperations
 import run.ostrom.server.kernel.auth.MemberDirectory
+import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.http.docs.ApiCatalog
@@ -71,7 +72,8 @@ object CloudModule : ServerModule {
         single<CloudProfilesUseCase> {
             // The storage classes where sessions run on Kubernetes (the runners module's).
             val storage = getOrNull<WorkspaceStorageClasses>()
-            CloudProfilesUseCaseImpl(get(), get(), get(), getOrNull<MemberDirectory>() ?: NoMembers, storage)
+            val members = getOrNull<MemberDirectory>() ?: NoMembers
+            CloudProfilesUseCaseImpl(get(), get(), get(), members, storage, getOrNull<MemberLogins>())
         }
         single<CloudSettingsRepository> { CloudSettingsRepositoryImpl(get()) }
         single { CloudSettingsUseCaseImpl(get(), get()) } binds

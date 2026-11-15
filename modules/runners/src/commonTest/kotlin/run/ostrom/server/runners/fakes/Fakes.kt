@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners.fakes
 
+import run.ostrom.server.kernel.audit.OrgAuditRecord
 import run.ostrom.server.runners.domain.AgentKind
 import run.ostrom.server.runners.domain.CloudPlan
 import run.ostrom.server.runners.domain.CloudPlanProvider
@@ -151,24 +152,33 @@ class InMemoryCloudSessionsRepository : CloudSessionsRepository {
         sessions[session.id] = session
     }
 
-    override suspend fun createWithinCap(session: CloudSession, maxRunning: Int): Boolean {
+    /** The audit entries written with the writes, as the database's transaction does. */
+    val journal = mutableListOf<OrgAuditRecord>()
+
+    override suspend fun createWithinCap(session: CloudSession, maxRunning: Int, journal: OrgAuditRecord?): Boolean {
         if (holding(session.orgId, null) >= maxRunning) return false
         sessions[session.id] = session
         next[session.id] = session.createdAt
+        journal?.let(this.journal::add)
         return true
     }
 
     /** The idempotency records, by organization, member and key. */
     val createKeys = mutableMapOf<Triple<Uuid, String, String>, Pair<CreateKey, Uuid>>()
 
-    override suspend fun createKeyed(session: CloudSession, maxRunning: Int, key: CreateKey): KeyedCreateOutcome {
+    override suspend fun createKeyed(
+        session: CloudSession,
+        maxRunning: Int,
+        key: CreateKey,
+        journal: OrgAuditRecord?,
+    ): KeyedCreateOutcome {
         val scope = Triple(session.orgId, key.memberId ?: session.ownerId, key.key)
         val existing = createKeys[scope]
         if (existing != null && existing.first.expiresAt > session.createdAt) {
             if (existing.first.requestDigest != key.requestDigest) return KeyedCreateOutcome.Conflict
             return sessions[existing.second]?.let { KeyedCreateOutcome.Replayed(it) } ?: KeyedCreateOutcome.Conflict
         }
-        if (!createWithinCap(session, maxRunning)) return KeyedCreateOutcome.AtCap
+        if (!createWithinCap(session, maxRunning, journal)) return KeyedCreateOutcome.AtCap
         createKeys[scope] = key to session.id
         return KeyedCreateOutcome.Created
     }
@@ -202,12 +212,14 @@ class InMemoryCloudSessionsRepository : CloudSessionsRepository {
         id: Uuid,
         desiredState: DesiredState,
         now: Instant,
+        journal: OrgAuditRecord?,
     ): CloudSession? {
         val current = get(orgId, id) ?: return null
         if (current.state.isFinal) return current
         val updated = current.copy(desiredState = desiredState, generation = current.generation + 1, updatedAt = now)
         sessions[id] = updated
         next[id] = now
+        journal?.let(this.journal::add)
         return updated
     }
 
@@ -224,7 +236,13 @@ class InMemoryCloudSessionsRepository : CloudSessionsRepository {
         return updated
     }
 
-    override suspend fun resumeWithinCap(orgId: Uuid, id: Uuid, maxRunning: Int, now: Instant): ResumeOutcome {
+    override suspend fun resumeWithinCap(
+        orgId: Uuid,
+        id: Uuid,
+        maxRunning: Int,
+        now: Instant,
+        journal: OrgAuditRecord?,
+    ): ResumeOutcome {
         val current = get(orgId, id) ?: return ResumeOutcome.NotFound
         val capped = current.kind == SessionKind.CLOUD && !current.state.holdsExecution
         if (capped && holding(orgId, id) >= maxRunning) return ResumeOutcome.AtCap
@@ -238,6 +256,7 @@ class InMemoryCloudSessionsRepository : CloudSessionsRepository {
         )
         sessions[id] = updated
         next[id] = now
+        journal?.let(this.journal::add)
         return ResumeOutcome.Resumed(updated)
     }
 

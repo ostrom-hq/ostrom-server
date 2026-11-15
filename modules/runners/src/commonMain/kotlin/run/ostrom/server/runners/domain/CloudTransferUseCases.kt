@@ -3,7 +3,6 @@ package run.ostrom.server.runners.domain
 
 import run.ostrom.server.kernel.audit.OrgAuditRecord
 import run.ostrom.server.kernel.audit.OrgAuditTrail
-import run.ostrom.server.kernel.audit.auditDetails
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.errors.Pages
 import kotlin.time.Clock
@@ -156,14 +155,15 @@ class CloudTransfersUseCaseImpl(
             sessionId = session.id,
             fromMemberId = session.ownerId,
             toMemberId = toMemberId,
-            initiatedBy = caller.memberId,
+            // The person who made the call; the session's owner is [CloudTransfer.fromMemberId].
+            initiatedBy = caller.initiatorId,
             state = if (caller.admin) TransferState.ACCEPTED else TransferState.OFFERED,
             resume = request.resume,
             version = 1,
             createdAt = now,
             updatedAt = now,
             expiresAt = if (caller.admin) null else now + CloudTransfer.OFFER_VALIDITY,
-            decidedBy = if (caller.admin) caller.memberId else null,
+            decidedBy = if (caller.admin) caller.initiatorId else null,
             decidedAt = if (caller.admin) now else null,
             idempotencyKey = idempotency.key,
             requestDigest = idempotency.requestDigest,
@@ -203,7 +203,7 @@ class CloudTransfersUseCaseImpl(
             val accepted = transfer.copy(
                 state = TransferState.ACCEPTED,
                 resume = resume ?: transfer.resume,
-                decidedBy = caller.memberId,
+                decidedBy = caller.initiatorId,
                 decidedAt = now,
                 updatedAt = now,
                 version = transfer.version + 1,
@@ -326,7 +326,7 @@ class CloudTransfersUseCaseImpl(
         problem: SessionFailure?,
     ) = transfer.copy(
         state = state,
-        decidedBy = caller.memberId,
+        decidedBy = caller.initiatorId,
         decidedAt = now,
         failure = problem,
         updatedAt = now,
@@ -341,7 +341,7 @@ class CloudTransfersUseCaseImpl(
                 event,
                 SUBJECT,
                 t.sessionId.toString(),
-                auditDetails("transfer" to t.id, "from" to t.fromMemberId, "to" to t.toMemberId),
+                caller.onBehalfDetails("transfer" to t.id, "from" to t.fromMemberId, "to" to t.toMemberId),
             ),
         )
 

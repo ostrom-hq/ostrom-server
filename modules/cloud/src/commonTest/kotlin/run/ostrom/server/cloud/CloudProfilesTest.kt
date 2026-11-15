@@ -9,12 +9,16 @@ import run.ostrom.server.cloud.domain.CloudProfileSpec
 import run.ostrom.server.cloud.domain.CloudProfilesUseCaseImpl
 import run.ostrom.server.cloud.domain.CloudResources
 import run.ostrom.server.cloud.domain.InvalidCloudProfileException
+import run.ostrom.server.cloud.domain.InvalidEffectiveMemberException
+import run.ostrom.server.cloud.domain.ProfilesMemberForbiddenException
 import run.ostrom.server.cloud.domain.StorageClassLookup
 import run.ostrom.server.cloud.domain.StorageClassMissingException
 import run.ostrom.server.cloud.domain.StorageClassRetainsVolumesException
 import run.ostrom.server.cloud.domain.StoredCloudCluster
 import run.ostrom.server.cloud.domain.WorkspaceStorageClasses
 import run.ostrom.server.kernel.auth.MemberDirectory
+import run.ostrom.server.kernel.auth.MemberLogins
+import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.secrets.domain.AdminRequiredException
 import run.ostrom.server.secrets.domain.Caller
 import run.ostrom.server.secrets.domain.MemberRole
@@ -78,6 +82,48 @@ class CloudProfilesTest {
         profiles.update(admin, first.id, input.copy(version = 2))
         assertEquals(listOf(3), profiles.list(member).map { it.version })
         assertEquals(emptyList(), profiles.list(Caller(ORG_B, ALICE, MemberRole.OWNER)))
+    }
+
+    /** `runners.cloud.profiles.member.v1`: an administrator reads the profiles a member can create sessions from. */
+    @Test
+    fun anAdministratorListsAnotherMembersProfilesByIdOrLogin() = runTest {
+        connect()
+        val carol = Uuid.parse("00000000-0000-0000-0000-00000000ca01")
+        val gone = Uuid.parse("00000000-0000-0000-0000-00000000de1e")
+        val directory = object : MemberDirectory {
+            override suspend fun isActiveMember(orgId: Uuid, memberId: String): Boolean =
+                orgId == ORG_A && memberId != gone.toString()
+
+            override suspend fun roleOf(orgId: Uuid, memberId: String): OrgRole? =
+                if (memberId == carol.toString()) OrgRole.OWNER else OrgRole.MEMBER
+        }
+        val logins = object : MemberLogins {
+            private val ids = mapOf("alice" to ALICE, "bob" to BOB, "carol" to carol)
+
+            override suspend fun idsOf(orgId: Uuid, logins: Collection<String>): Map<String, Uuid> =
+                ids.filterKeys { it in logins }
+
+            override suspend fun loginsOf(orgId: Uuid, memberIds: Collection<Uuid>): Map<Uuid, String> = emptyMap()
+        }
+        val named = CloudProfilesUseCaseImpl(repository, clusters, clock, directory, logins = logins)
+        val bobs = named.create(admin, input)
+        val others = named.create(admin, input.copy(name = "Other", assignedMemberIds = emptySet()))
+
+        // The caller themselves, by id or login, as without the parameter.
+        assertEquals(listOf(bobs), named.list(member, BOB.toString()))
+        assertEquals(listOf(bobs), named.list(member, "bob"))
+        assertEquals(setOf(bobs, others), named.list(admin, "alice").toSet())
+        // Another member: the profiles assigned to them, every one for an owner or an admin.
+        assertEquals(listOf(bobs), named.list(admin, "bob"))
+        assertEquals(setOf(bobs, others), named.list(admin, carol.toString()).toSet())
+        // A member never names someone else, known or not.
+        assertFailsWith<ProfilesMemberForbiddenException> { named.list(member, "alice") }
+        assertFailsWith<ProfilesMemberForbiddenException> { named.list(member, "ghost") }
+        // Nobody by that login, a member who left: not a member to list for.
+        assertFailsWith<InvalidEffectiveMemberException> { named.list(admin, "ghost") }
+        assertFailsWith<InvalidEffectiveMemberException> { named.list(admin, gone.toString()) }
+        // Without the orgs module's logins, a login names nobody.
+        assertFailsWith<InvalidEffectiveMemberException> { profiles.list(admin, "bob") }
     }
 
     @Test

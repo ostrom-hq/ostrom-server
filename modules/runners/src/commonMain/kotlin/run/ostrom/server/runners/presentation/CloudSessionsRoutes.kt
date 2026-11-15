@@ -13,6 +13,7 @@ import run.ostrom.server.runners.domain.CloudSessionNotFoundException
 import run.ostrom.server.runners.domain.GitHubOwnerOnlyException
 import run.ostrom.server.runners.domain.CreateCloudSessionPayload
 import run.ostrom.server.runners.domain.InvalidCloudSessionRequestException
+import run.ostrom.server.runners.domain.InvalidQueryException
 import run.ostrom.server.runners.domain.RepositorySpec
 import run.ostrom.server.runners.domain.RunnerEnvironmentUseCase
 import run.ostrom.server.runners.domain.RunnerExecutionRequest
@@ -46,7 +47,8 @@ fun Route.cloudSessionsRoutes(dependencies: CloudSessionsRoutesDependencies) = w
         get<CloudSessionsApi> { params ->
             val caller = orgResolver.callerOf(call.requirePrincipal(), CLOUD_READ)
             val kinds = kinds(params.kind)
-            val sessions = listCloudSessions(caller, params.before?.let { parseId(it) }, params.limit, kinds)
+            val owner = atMostOnce("owner", params.owner)
+            val sessions = listCloudSessions(caller, params.before?.let { parseId(it) }, params.limit, kinds, owner)
             val limit = params.limit ?: DEFAULT_LIMIT
             call.respond(
                 CloudSessionsResponse(
@@ -180,6 +182,19 @@ private fun Route.preparationRoutes(dependencies: CloudSessionsRoutesDependencie
 }
 
 /** A heartbeat is a few fields: 4 KiB is plenty (S2-46); a token request and an access change, fewer still. */
+/**
+ * The value of a query parameter read once (TeamCode's `single`).
+ *
+ * @param name The parameter.
+ * @param values Its values.
+ *
+ * @return The value, or null when absent.
+ *
+ * @throws InvalidQueryException When it was sent several times.
+ */
+internal fun atMostOnce(name: String, values: List<String>): String? =
+    if (values.size > 1) throw InvalidQueryException(name) else values.singleOrNull()
+
 private const val HEARTBEAT_BODY_LIMIT = 4L * 1024
 private const val ACCESS_BODY_LIMIT = 1024L
 

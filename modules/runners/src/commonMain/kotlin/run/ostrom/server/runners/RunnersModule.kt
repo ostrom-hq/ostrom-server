@@ -258,7 +258,7 @@ object RunnersModule : ServerModule {
             }
             InferenceWiring(store)
         }
-        single { CloudSessionsRepositoryImpl(get(), get<InferenceWiring>().written) }
+        single { CloudSessionsRepositoryImpl(get(), get<InferenceWiring>().written, get()) }
         single<CloudSessionsRepository> { get<CloudSessionsRepositoryImpl>() }
         single<CloudAgentSessions> { RunnersCloudAgentSessions(get(), getOrNull<MemberLogins>()) }
         // The notification router titles a notification with its cloud session's name.
@@ -295,11 +295,11 @@ object RunnersModule : ServerModule {
             }
         }
         single<CreateCloudSessionUseCase> {
-            MeteredCreateCloudSession(CreateCloudSessionUseCaseImpl(get(), get(), get(), get(), get(), get()), get())
+            MeteredCreateCloudSession(CreateCloudSessionUseCaseImpl(get(), get(), get(), get(), get()), get())
         }
         single<GetCloudSessionUseCase> { GetCloudSessionUseCaseImpl(get(), get()) }
         single<ListCloudSessionsUseCase> { ListCloudSessionsUseCaseImpl(get()) }
-        single<ChangeCloudSessionUseCase> { ChangeCloudSessionUseCaseImpl(get(), get(), get(), get(), get()) }
+        single<ChangeCloudSessionUseCase> { ChangeCloudSessionUseCaseImpl(get(), get(), get(), get()) }
         // Ostrom-On-Behalf-Of names a member by id or login, which the orgs module knows: without it, it is ignored.
         single<ResolveCloudActorUseCase> {
             val members = getOrNull<MemberDirectory>()
@@ -371,6 +371,7 @@ object RunnersModule : ServerModule {
                 TransferWiring(
                     CloudTransfersRoutesDependencies(
                         CloudTransfersUseCaseImpl(get(), transfers, recipients, policy, get(), get()),
+                        get(),
                         get(),
                     ),
                     CompleteCloudTransferUseCase(
@@ -523,12 +524,16 @@ object RunnersModule : ServerModule {
         // The members' values, once the secrets module resolves them.
         val variables = koin.getOrNull<ResolveEnvironmentUseCase>() != null
         val members = koin.getOrNull<MemberDirectory>() != null
+        val onBehalf = koin.getOrNull<TransferWiring>()?.routes != null
+        val kubernetes = koin.get<RunnersConfig>().driver == KUBERNETES
         return setOfNotNull(
             ServerFeatures.RUNNERS,
             ServerFeatures.RUNNERS_CLOUD,
             ServerFeatures.RUNNERS_CLOUD_AGENT,
             // A creation's Idempotency-Key, on every cloud runtime.
             ServerFeatures.RUNNERS_CLOUD_IDEMPOTENCY,
+            // `owner` on the listing: the caller's own sessions only, administrators included.
+            ServerFeatures.RUNNERS_CLOUD_SESSIONS_OWNER,
             // The recipe, the Git identity and the owner's values (none without the secrets module), once the orgs
             // module says who is an active member: without it, no session would prepare.
             ServerFeatures.RUNNERS_CLOUD_ENVIRONMENT.takeIf { members },
@@ -539,12 +544,16 @@ object RunnersModule : ServerModule {
             // Giving a session to another member, once the orgs module names the members.
             ServerFeatures.RUNNERS_CLOUD_TRANSFER.takeIf { koin.getOrNull<TransferWiring>()?.routes != null },
             // A write on behalf of another member, once the orgs module names the members (as transfers do).
-            ServerFeatures.RUNNERS_CLOUD_ON_BEHALF.takeIf { koin.getOrNull<TransferWiring>()?.routes != null },
-            // Sessions on the console's clusters and the organizations' profiles.
-            ServerFeatures.RUNNERS_CLOUD_PROFILES.takeIf { koin.get<RunnersConfig>().driver == KUBERNETES },
+            ServerFeatures.RUNNERS_CLOUD_ON_BEHALF.takeIf { onBehalf },
+            // The header on the model, the effort and the transfer writes too, and the session's audit entries in the
+            // transaction of their write.
+            ServerFeatures.RUNNERS_CLOUD_ON_BEHALF_WRITES.takeIf { onBehalf },
+            // Sessions on the console's clusters and the organizations' profiles, and a member's profiles.
+            ServerFeatures.RUNNERS_CLOUD_PROFILES.takeIf { kubernetes },
+            ServerFeatures.RUNNERS_CLOUD_PROFILES_MEMBER.takeIf { kubernetes },
             // Proven workspace deletion, the storage class check and the garbage collection are Kubernetes's; the
             // expiry of paused sessions holds on every runtime.
-            ServerFeatures.RUNNERS_CLOUD_RETENTION.takeIf { koin.get<RunnersConfig>().driver == KUBERNETES },
+            ServerFeatures.RUNNERS_CLOUD_RETENTION.takeIf { kubernetes },
             // Remote sessions are conversation sessions on the device of their owner's sign-in: announced with the
             // conversation, once the identity module knows the devices.
             ServerFeatures.RUNNERS_CLOUD_REMOTE.takeIf { announced && koin.getOrNull<SignedInDevices>() != null },

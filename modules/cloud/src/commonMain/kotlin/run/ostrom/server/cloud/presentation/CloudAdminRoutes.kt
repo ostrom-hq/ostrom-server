@@ -10,6 +10,7 @@ import run.ostrom.server.cloud.domain.CloudProfileInput
 import run.ostrom.server.cloud.domain.CloudProfileNotFoundException
 import run.ostrom.server.cloud.domain.CloudRuntime
 import run.ostrom.server.cloud.domain.InvalidCloudRuntimeException
+import run.ostrom.server.cloud.domain.InvalidQueryException
 import run.ostrom.server.kernel.audit.OrgAuditRecord
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.WriteAccess
@@ -73,7 +74,10 @@ fun Route.cloudAdminRoutes(dependencies: CloudAdminRoutesDependencies) = with(de
             val caller = call.requireCaller(callers, CLOUD_READ)
             // A team's profiles are its people's, as TeamCode's: never a key's, whatever its scopes.
             call.requirePrincipal().requireWrite(WriteAccess.PERSON)
-            call.respond(CloudProfileListResponse(profiles.list(caller).map { it.toResponse() }))
+            val member = call.request.queryParameters.getAll("member")?.let {
+                it.singleOrNull() ?: throw InvalidQueryException("member")
+            }
+            call.respond(CloudProfileListResponse(profiles.list(caller, member).map { it.toResponse() }))
         }
         post<CloudProfilesApi> {
             val caller = call.requireCaller(callers, CLOUD_WRITE)

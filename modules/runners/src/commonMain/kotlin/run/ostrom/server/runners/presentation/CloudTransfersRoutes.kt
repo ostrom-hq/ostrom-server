@@ -20,11 +20,14 @@ import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import run.ostrom.server.kernel.auth.authenticated
 import run.ostrom.server.kernel.auth.requirePrincipal
 import run.ostrom.server.kernel.http.bodyLimit
+import run.ostrom.server.runners.domain.Caller
 import run.ostrom.server.runners.domain.CloudTransfer
 import run.ostrom.server.runners.domain.CloudTransfersUseCase
 import run.ostrom.server.runners.domain.IdempotencyKeyRequiredException
 import run.ostrom.server.runners.domain.InvalidCloudSessionRequestException
 import run.ostrom.server.runners.domain.InvalidTransferException
+import run.ostrom.server.runners.domain.ResolveCloudActorUseCase
+import run.ostrom.server.runners.domain.ResolveCloudActorUseCaseImpl
 import run.ostrom.server.runners.domain.TransferDirection
 import run.ostrom.server.runners.domain.TransferForbiddenException
 import run.ostrom.server.runners.domain.TransferIdempotency
@@ -39,15 +42,19 @@ import kotlin.uuid.Uuid
  *
  * @property transfers The use cases.
  * @property orgResolver The member a request acts for.
+ * @property resolveActor The rules of `Ostrom-On-Behalf-Of` on the writes (`runners.cloud.onbehalf.writes.v1`).
  */
 data class CloudTransfersRoutesDependencies(
     val transfers: CloudTransfersUseCase,
     val orgResolver: PrincipalOrgResolver,
+    val resolveActor: ResolveCloudActorUseCase = ResolveCloudActorUseCaseImpl(null),
 )
 
 /**
  * The ownership transfer routes (`runners.cloud.transfer.v1`): asking, listing, reading, accepting, declining and
- * cancelling. Writes are for a person signed in: an agent or a service key never gives a session away.
+ * cancelling. Writes are for a person signed in: an agent or a service key never gives a session away. An
+ * administrator may act for the member `Ostrom-On-Behalf-Of` names (`runners.cloud.onbehalf.writes.v1`, TeamCode's
+ * `actor()`): the transfer is checked against that member, and records the administrator as who asked or decided.
  *
  * @param dependencies The use cases.
  */
@@ -56,20 +63,17 @@ fun Route.cloudTransfersRoutes(dependencies: CloudTransfersRoutesDependencies) =
         bodyLimit(BODY_LIMIT) {
             post<CloudSessionTransferApi> { params -> offer(call, params) }
             post<CloudTransfersApi.Id.Accept> { params ->
-                val principal = call.requireInteractive()
-                val caller = orgResolver.callerOf(principal, CLOUD_WRITE)
+                val (caller, principal) = call.transferActor(dependencies)
                 val resume = call.optionalBody<AcceptCloudTransferRequest>()?.resume
                 val accepted = transfers.accept(caller, principal, transferId(params.parent.id), resume)
                 call.respond(HttpStatusCode.Accepted, accepted.toResponse())
             }
             post<CloudTransfersApi.Id.Decline> { params ->
-                val principal = call.requireInteractive()
-                val caller = orgResolver.callerOf(principal, CLOUD_WRITE)
+                val (caller, principal) = call.transferActor(dependencies)
                 call.respond(transfers.decline(caller, principal, transferId(params.parent.id)).toResponse())
             }
             post<CloudTransfersApi.Id.Cancel> { params ->
-                val principal = call.requireInteractive()
-                val caller = orgResolver.callerOf(principal, CLOUD_WRITE)
+                val (caller, principal) = call.transferActor(dependencies)
                 call.respond(transfers.cancel(caller, principal, transferId(params.parent.id)).toResponse())
             }
         }
@@ -109,6 +113,17 @@ private fun ApplicationCall.requireInteractive(): AuthenticatedPrincipal = requi
     }
 }
 
+/**
+ * The caller of a transfer write, a person, acting for the member `Ostrom-On-Behalf-Of` names when they administer
+ * the organization, and the credential they presented.
+ */
+private suspend fun ApplicationCall.transferActor(
+    dependencies: CloudTransfersRoutesDependencies,
+): Pair<Caller, AuthenticatedPrincipal> {
+    val principal = requireInteractive()
+    return cloudActor(dependencies.orgResolver, dependencies.resolveActor) to principal
+}
+
 private fun ApplicationCall.idempotencyKey(): String {
     val key = request.header(IDEMPOTENCY_KEY)?.trim()
     if (key == null || !KEY.matches(key)) throw IdempotencyKeyRequiredException()
@@ -126,8 +141,7 @@ private fun requireMemberReference(reference: String) {
 private fun transferId(raw: String): Uuid = Uuid.parseOrNull(raw) ?: throw TransferNotFoundException()
 
 private suspend fun CloudTransfersRoutesDependencies.offer(call: ApplicationCall, params: CloudSessionTransferApi) {
-    val principal = call.requireInteractive()
-    val caller = orgResolver.callerOf(principal, CLOUD_WRITE)
+    val (caller, principal) = call.transferActor(this)
     val key = call.idempotencyKey()
     val request = call.receive<CreateCloudTransferRequest>()
     val sessionId = Uuid.parseOrNull(params.id) ?: throw TransferNotFoundException()
