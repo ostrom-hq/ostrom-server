@@ -47,17 +47,21 @@ class PostgresStartedRunsRepository(
         startedAt: Instant,
         graph: RunGraph,
         audit: RunAudit,
-        key: String,
+        key: String?,
         maxUnfinished: Int,
     ): KeyedAdd = driver.withOrganization(orgId) { tx ->
-        // One starter's keyed starts wait for each other: the look-up, the count and the insert decide together.
+        // One starter's starts wait for each other: the look-up, the count and the insert decide together.
         tx.fetchAll(
             Statement.create(StartedRunQueries.LOCK_STARTER).bind("key", "workflow-runs:$orgId:${run.startedBy}"),
         ).getOrThrow()
-        val existing = tx.fetchAll(
-            Statement.create(StartedRunQueries.KEYED).bind("org_id", orgId).bind("started_by", run.startedBy)
-                .bind("key", key),
-        ).getOrThrow().firstOrNull()
+        val existing = if (key == null) {
+            null
+        } else {
+            tx.fetchAll(
+                Statement.create(StartedRunQueries.KEYED).bind("org_id", orgId).bind("started_by", run.startedBy)
+                    .bind("key", key),
+            ).getOrThrow().firstOrNull()
+        }
         val unfinished = tx.fetchAll(
             Statement.create(StartedRunQueries.UNFINISHED).bind("org_id", orgId).bind("started_by", run.startedBy)
                 .bind("limit", maxUnfinished),
@@ -68,12 +72,17 @@ class PostgresStartedRunsRepository(
             )
             unfinished >= maxUnfinished -> KeyedAdd.AtLimit
             else -> {
+                val insert = if (key == null) {
+                    Statement.create(StartedRunQueries.INSERT)
+                } else {
+                    Statement.create(StartedRunQueries.INSERT_KEYED).bind("key", key)
+                }
                 tx.execute(
-                    Statement.create(StartedRunQueries.INSERT_KEYED).bind("org_id", orgId).bind("id", run.id)
+                    insert.bind("org_id", orgId).bind("id", run.id)
                         .bind("workflow_id", run.workflowId).bind("status", run.status.value)
                         .bind("started_at", startedAt).bind("due_at", startedAt)
                         .bind("body", OstromJson.encodeToString(WorkflowRun.serializer(), run))
-                        .bind("graph", OstromJson.encodeToString(RunGraph.serializer(), graph)).bind("key", key),
+                        .bind("graph", OstromJson.encodeToString(RunGraph.serializer(), graph)),
                 ).getOrThrow()
                 this.audit.recordRun(tx, orgId, run.id, audit)
                 KeyedAdd.Added(run)

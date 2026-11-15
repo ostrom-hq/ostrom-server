@@ -56,17 +56,17 @@ class StartRunTest {
             startedAt: Instant,
             graph: RunGraph,
             audit: RunAudit,
-            key: String,
+            key: String?,
             maxUnfinished: Int,
         ): KeyedAdd {
-            val existing = keys[run.startedBy to key]
+            val existing = key?.let { keys[run.startedBy to it] }
             val unfinished = stored.count { it.second.startedBy == run.startedBy }
             return when {
                 existing != null -> KeyedAdd.Existing(existing)
                 unfinished >= maxUnfinished -> KeyedAdd.AtLimit
                 else -> {
                     add(orgId, run, startedAt, graph, audit)
-                    keys[run.startedBy to key] = run
+                    if (key != null) keys[run.startedBy to key] = run
                     KeyedAdd.Added(run)
                 }
             }
@@ -109,7 +109,7 @@ class StartRunTest {
     private val idea = RunWorkflow("idea", "Idea", 1, WorkflowStatus.PROPOSED, emptyList())
     private val runs = InMemoryStartedRuns()
     private val clock = FixedClock()
-    private val start = StartWorkflowRunUseCaseImpl(Workflows(ship, idea), runs, runs, clock)
+    private val start = StartWorkflowRunUseCaseImpl(Workflows(ship, idea), runs, clock)
     private val list = ListWorkflowRunsUseCaseImpl(Workflows(ship, idea), runs)
 
     private fun person(role: OrgRole?) = GateActor("ada", ORG, ActorKind.USER, personId = "ada", role = role)
@@ -224,6 +224,16 @@ class StartRunTest {
     }
 
     @Test
+    fun aStartWithoutAKeyCountsTowardsTheSameCap() = runTest {
+        val owner = person(OrgRole.OWNER)
+        repeat(MAX_UNFINISHED - 1) { start(owner, "ship", mapOf("branch" to "main")) }
+        start.startKeyed(owner, "ship", mapOf("branch" to "main"), null, "last")
+        val limit = assertFailsWith<RunLimitException> { start(owner, "ship", mapOf("branch" to "main")) }
+        assertEquals("run_limit", limit.type)
+        assertEquals(MAX_UNFINISHED, runs.stored.size, "A start past the cap stores nothing")
+    }
+
+    @Test
     fun aKeyedStartIsCheckedLikeAnyStartBeforeTheKeyIsLookedUp() = runTest {
         for (role in listOf(OrgRole.MEMBER, OrgRole.APPROVER, null)) {
             assertFailsWith<StartRunForbiddenException> {
@@ -243,7 +253,7 @@ class StartRunTest {
         val directory = CloudProfileDirectory { orgId ->
             if (orgId == ORG) listOf(NamedCloudProfile(profile, "backend")) else emptyList()
         }
-        val checked = StartWorkflowRunUseCaseImpl(Workflows(ship, idea), runs, runs, clock, directory)
+        val checked = StartWorkflowRunUseCaseImpl(Workflows(ship, idea), runs, clock, directory)
         val owner = person(OrgRole.OWNER)
         val main = mapOf("branch" to "main")
         assertEquals(profile.toString(), checked(owner, "ship", main, null, profile.toString()).profileId)

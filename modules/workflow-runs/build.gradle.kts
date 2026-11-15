@@ -17,6 +17,8 @@ kotlin {
             implementation(project(":modules:runners"))
             implementation(project(":modules:identity"))
             implementation(project(":modules:automations"))
+            // A step delivers once its session's todo is done (todo_open).
+            implementation(project(":modules:todos"))
             implementation(libs.ostrom.api)
         }
         commonTest.dependencies {
