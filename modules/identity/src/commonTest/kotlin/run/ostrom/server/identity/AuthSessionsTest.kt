@@ -20,6 +20,7 @@ import run.ostrom.server.identity.fakes.InMemoryWebSessionsRepository
 import run.ostrom.server.identity.fakes.RecordingAuditLog
 import run.ostrom.server.identity.fakes.SettableClock
 import run.ostrom.server.identity.presentation.toAuthSessionResponse
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -124,6 +125,15 @@ class AuthSessionsTest {
         assertFailsWith<WebSessionNotFoundException>("Another person's token") { own.revoke(ada, bobs.id) }
         assertFailsWith<WebSessionNotFoundException>("Already ended") { own.revoke(ada, cli.id) }
         assertFailsWith<WebSessionNotFoundException>("Unknown") { own.revoke(ada, Uuid.random()) }
+        val expiring = token(TokenKind.CLI, "expiring").copy(expiresAt = clock.now + 1.minutes)
+        tokens.create(expiring, "h(${expiring.id})")
+        val forever = token(TokenKind.MOBILE, "later").copy(expiresAt = clock.now + 1.hours)
+        tokens.create(forever, "h(${forever.id})")
+        clock.now += 1.minutes
+        assertEquals(listOf(forever.id), own.list(ada).map { it.id }, "An expired token is not listed")
+        assertFailsWith<WebSessionNotFoundException>("Nor ended") { own.revoke(ada, expiring.id) }
+        assertEquals(null, tokens.get(ada, expiring.id)?.revokedAt)
+        own.revoke(ada, forever.id)
         assertEquals(emptyList(), own.list(ada))
     }
 }

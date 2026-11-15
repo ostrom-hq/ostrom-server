@@ -20,10 +20,9 @@ private val SIGN_IN_TOKEN_KINDS: Set<TokenKind> = setOf(TokenKind.CLI, TokenKind
  * signed in with.
  *
  * @property id The browser session's id, or the token's.
- * @property name The device's name for a token of a registered device, the token's name for any other token,
- *   [WEB_SESSION_NAME] for a browser session.
- * @property deviceId The registered device (`devices.v1`) a CLI token belongs to; null for a browser session and any
- *   other token.
+ * @property name The device's name for a token of a registered device (the CLI's, `devices.v1`), the token's name for
+ *   any other token, [WEB_SESSION_NAME] for a browser session.
+ * @property deviceId The registered device a token belongs to; null for a browser session and a token of none.
  * @property createdAt When it started.
  * @property lastSeenAt When it was last used (precise to five minutes); its start when it never was.
  */
@@ -84,7 +83,8 @@ class AuthSessionsOfUserUseCaseImpl(
         }
         val signIns = tokens.listLive(userId, SIGN_IN_TOKEN_KINDS, now)
         val deviceIds = signIns.mapNotNullTo(mutableSetOf()) { it.deviceId }
-        val names = if (deviceIds.isEmpty()) emptyMap() else devices.getAll(deviceIds).associate { it.id to it.name }
+        // The person's own devices only, as TeamCode's names: a device of someone else never names a line here.
+        val names = if (deviceIds.isEmpty()) emptyMap() else devices.list(userId).associate { it.id to it.name }
         val held = signIns.map { token ->
             val name = token.deviceId?.let(names::get) ?: token.name
             AuthSession(token.id, name, token.deviceId, token.createdAt, token.lastUsedAt ?: token.createdAt)
@@ -99,7 +99,8 @@ class AuthSessionsOfUserUseCaseImpl(
             return
         }
         // The kind is checked first, so no other token of the person is ended here.
-        val token = tokens.get(userId, sessionId)
+        // Only a live sign-in is ended, as only a live one is listed: an expired token is already over.
+        val token = tokens.get(userId, sessionId)?.takeIf { it.expiresAt == null || it.expiresAt > now }
         if (token == null || token.kind !in SIGN_IN_TOKEN_KINDS || !tokens.revoke(userId, sessionId, now)) {
             throw WebSessionNotFoundException()
         }

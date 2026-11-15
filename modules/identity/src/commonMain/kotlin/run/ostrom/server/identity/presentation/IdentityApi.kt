@@ -423,7 +423,7 @@ data class TokensResponse(val tokens: List<TokenResponse>)
  * @property id The session id (a browser session's, or the token's).
  * @property name `Web console` for a browser session; the device's name for a CLI token of a registered device; the
  *   token's name otherwise.
- * @property deviceId The registered device (`devices.v1`) of a CLI token; absent for a browser session.
+ * @property deviceId The registered device (`devices.v1`) of a token; absent for a browser session.
  * @property createdAt When it started (ISO 8601).
  * @property lastSeenAt When it was last used (ISO 8601, precise to five minutes); its start when it never was.
  * @property current Whether it is the session making the request.

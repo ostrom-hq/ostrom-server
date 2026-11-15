@@ -174,7 +174,7 @@ private fun ApiCatalog.signOutOperations() {
         description = "Asked from a browser session, or the person's own CLI sign-in. Lists the person's live " +
             "sign-ins, the last used first, as TeamCode's sessions: their browser sessions (`name` `Web console`, " +
             "no `deviceId`) and the tokens the CLI (`ostrom login`) and the phone app signed in with (`name` the " +
-            "registered device's, else the token's; `deviceId` the CLI's registered device). `current` marks the one " +
+            "registered device's, else the token's; `deviceId` its registered device). `current` marks the one " +
             "asking."
         responses {
             ok<AuthSessionsResponse>("The live sessions.")
