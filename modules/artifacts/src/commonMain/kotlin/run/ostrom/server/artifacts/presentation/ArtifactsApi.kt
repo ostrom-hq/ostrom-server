@@ -68,14 +68,14 @@ class ArtifactsApi(
         @Resource("members")
         class Members(val parent: Id) {
             /**
-             * `PUT` and `DELETE /api/v1/artifacts/{id}/members/{login}`.
+             * `PUT` and `DELETE /api/v1/artifacts/{id}/members/{memberId}`.
              *
              * @property parent The members.
-             * @property login The member's id.
+             * @property memberId The member's id.
              */
             @Serializable
-            @Resource("{login}")
-            class Member(val parent: Members, val login: String)
+            @Resource("{memberId}")
+            class Member(val parent: Members, val memberId: String)
         }
 
         /**

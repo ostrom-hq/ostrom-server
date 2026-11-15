@@ -129,12 +129,12 @@ fun Route.artifactsRoutes(dependencies: ArtifactsRoutesDependencies) = with(depe
         }
         put<ArtifactsApi.Id.Members.Member> { params ->
             val caller = orgResolver.artifactCallerOf(call.requirePrincipal(), ARTIFACTS_WRITE)
-            manage.share(caller, artifactId(params.parent.parent.id), params.login, share = true)
+            manage.share(caller, artifactId(params.parent.parent.id), params.memberId, share = true)
             call.respond(HttpStatusCode.NoContent)
         }
         delete<ArtifactsApi.Id.Members.Member> { params ->
             val caller = orgResolver.artifactCallerOf(call.requirePrincipal(), ARTIFACTS_WRITE)
-            manage.share(caller, artifactId(params.parent.parent.id), params.login, share = false)
+            manage.share(caller, artifactId(params.parent.parent.id), params.memberId, share = false)
             call.respond(HttpStatusCode.NoContent)
         }
         post<ArtifactsApi.Id.Tickets> { params ->
