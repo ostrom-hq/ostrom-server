@@ -164,7 +164,8 @@ private fun ApiCatalog.budgetRevocationOperations() {
         summary = "Revoke a temporary daily budget (`capacity.budgetoverrides.v1`)."
         description = "The member's own limits apply again at once; calls in flight finish. Revoking one already " +
             "revoked answers it as it is (the first revocation is kept) and never revokes another grant. Audited " +
-            "(`budget_override.revoked`). Same authority as `createBudgetOverride`."
+            "(`budget_override.revoked`). Same authority as `createBudgetOverride`: owners and admins, a person " +
+            "signed in less than 5 minutes ago (403 `step_up_required` otherwise)."
         parameters {
             organizationHeader()
             pathId("login", LOGIN)
