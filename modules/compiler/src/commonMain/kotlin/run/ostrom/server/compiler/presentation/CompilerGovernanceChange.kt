@@ -96,7 +96,9 @@ class CompilerGovernanceChange(
             body?.let { put(BODY, it) }
         }
 
-        private fun JsonObject.id(): String = payloadPart { getValue(ID).jsonPrimitive.content }
+        private fun JsonObject.id(): String = payloadPart {
+            (getValue(ID) as JsonPrimitive).takeIf { it.isString }?.content ?: error("The workflow id is not a text.")
+        }
 
         private fun JsonObject.document(): JsonObject = payloadPart { body().jsonObject }
 
@@ -106,25 +108,24 @@ class CompilerGovernanceChange(
             payloadPart { OstromJson.decodeFromJsonElement(SaveWorkflowRequest.serializer(), body()) }
 
         // A held payload that cannot be read (a part missing or of another shape) is a refused change, never a 500:
-        // the confirmation closes as failed with this reason.
-        @Suppress("TooGenericExceptionCaught")
+        // the confirmation closes as failed. The reason does not repeat the payload (a decoder quotes its input).
         private inline fun <T> payloadPart(read: () -> T): T = try {
             read()
-        } catch (e: OstromException) {
-            throw e
-        } catch (e: IllegalArgumentException) {
-            throw invalid(e)
-        } catch (e: NoSuchElementException) {
-            throw invalid(e)
+        } catch (_: IllegalArgumentException) {
+            throw unreadable()
+        } catch (_: NoSuchElementException) {
+            throw unreadable()
+        } catch (_: ClassCastException) {
+            throw unreadable()
+        } catch (_: IllegalStateException) {
+            throw unreadable()
         }
 
-        private fun invalid(cause: Exception) = OstromException(
+        private fun unreadable() = OstromException(
             ErrorKind.INVALID_REQUEST,
-            "Invalid workflow: the held change cannot be read (${cause.message.toString().take(MAX_REASON)}).",
+            "Invalid workflow: the held change cannot be read.",
             type = "invalid_workflow",
         )
-
-        private const val MAX_REASON = 200
     }
 }
 

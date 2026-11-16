@@ -42,7 +42,7 @@ import kotlin.uuid.Uuid
  * `required` and `maxLength`), held for the console and confirmed there: the save is made, never a 500.
  */
 class HeldWorkflowSavePostgresTest {
-    /** A person who owns a new organization with one rule: the organization, the rule's id and the CLI's token. */
+    /** A person who owns a new organization: the organization, their console session and the CLI's admin token. */
     private class Owner(val orgId: Uuid, val session: StartedSession, val cliToken: String)
 
     private suspend fun TestServer.owner(login: String): Owner {
@@ -87,7 +87,7 @@ class HeldWorkflowSavePostgresTest {
     }
 
     // The workflow as the CLI's typed client writes it back: every default and null explicit.
-    private fun workflow(name: String, status: String, input: String, extra: String = "", version: String = "null") =
+    private fun workflow(name: String, status: String, input: String, version: String = "null") =
         """
         {"id": "deploy", "name": "$name", "domain": "deploy", "description": null, "version": $version, "repos": null,
          "nodes": [
@@ -95,11 +95,11 @@ class HeldWorkflowSavePostgresTest {
            {"id": "yes", "kind": "gate", "label": "A second person says yes"}],
          "edges": [{"from": "push", "to": "yes", "label": null, "on": null}, {"from": "yes", "to": null}],
          "start": "push", "inputs": $input, "sessionMode": null, "limits": null, "sources": [],
-         "status": "$status", "foundAt": "2026-10-30T08:00:00.000Z", "updatedAt": null, "updatedBy": null$extra}
+         "status": "$status", "foundAt": "2026-10-30T08:00:00.000Z", "updatedAt": null, "updatedBy": null}
     """.trimIndent()
 
-    private suspend fun TestServer.heldSaveIsConfirmed(input: String, extra: String = "") {
-        val ada = owner("ada${input.hashCode().toUInt()}")
+    private suspend fun TestServer.heldSaveIsConfirmed(login: String, input: String) {
+        val ada = owner(login)
         val created = client.post("/api/v1/workflows") {
             session(ada.session)
             json(MINIMAL)
@@ -107,7 +107,7 @@ class HeldWorkflowSavePostgresTest {
         assertEquals(HttpStatusCode.Created, created.status, created.bodyAsText())
         val held = client.put("/api/v1/workflows/deploy") {
             bearerAuth(ada.cliToken)
-            json("""{"workflow": ${workflow("Fixer", "accepted", input, extra, "1")}, "expectedVersion": 1}""")
+            json("""{"workflow": ${workflow("Fixer", "accepted", input, "1")}, "expectedVersion": 1}""")
         }
         assertEquals(HttpStatusCode.Accepted, held.status, held.bodyAsText())
         val id = held.json().getValue("confirmationId").jsonPrimitive.content
@@ -127,12 +127,15 @@ class HeldWorkflowSavePostgresTest {
     @Test
     fun aHeldSaveWithTheModelsDefaultsIsConfirmed() = serverTest(serverModules()) { server ->
         server.heldSaveIsConfirmed(
+            "ada",
             """[{"id": "branch", "label": "Branch", "required": false, "default": null, "maxLength": 4096}]""",
         )
     }
 
     @Test
-    fun aHeldSaveWithNoInputsIsConfirmed() = serverTest(serverModules()) { server -> server.heldSaveIsConfirmed("[]") }
+    fun aHeldSaveWithNoInputsIsConfirmed() = serverTest(serverModules()) { server ->
+        server.heldSaveIsConfirmed("bob", "[]")
+    }
 
     private suspend fun HttpResponse.json(): JsonObject = Json.parseToJsonElement(bodyAsText()).jsonObject
 

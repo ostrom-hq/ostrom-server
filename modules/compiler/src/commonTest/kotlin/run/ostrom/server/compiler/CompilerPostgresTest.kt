@@ -3,9 +3,9 @@ package run.ostrom.server.compiler
 
 import run.ostrom.core.api.models.GateAction
 import run.ostrom.core.api.models.NodeRun
-import run.ostrom.core.api.models.WorkflowInput
 import run.ostrom.core.api.models.PackageEnvelope
 import run.ostrom.core.api.models.Workflow
+import run.ostrom.core.api.models.WorkflowInput
 import run.ostrom.core.api.models.WorkflowNodeKind.AGENT
 import run.ostrom.core.api.models.WorkflowNodeKind.CHECK
 import run.ostrom.core.api.models.WorkflowNodeKind.GATE
@@ -55,9 +55,9 @@ import run.ostrom.server.kernel.auth.GovernanceChange
 import run.ostrom.server.kernel.auth.GovernanceConfirmationPending
 import run.ostrom.server.kernel.auth.GovernanceConfirmations
 import run.ostrom.server.kernel.auth.GovernanceConfirmer
-import run.ostrom.server.kernel.auth.GovernanceWrite
 import run.ostrom.server.kernel.auth.GovernanceRequest
 import run.ostrom.server.kernel.auth.GovernanceScopes
+import run.ostrom.server.kernel.auth.GovernanceWrite
 import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.kernel.auth.OrgPrincipal
