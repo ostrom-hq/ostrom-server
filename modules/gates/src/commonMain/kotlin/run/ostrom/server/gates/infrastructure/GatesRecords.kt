@@ -61,6 +61,7 @@ internal fun UpdateBuilder<*>.setGate(gate: Gate) {
     this[g.consumedAt] = gate.consumedAt
     this[g.releasedAt] = gate.releasedAt
     this[g.createdAt] = gate.createdAt
+    this[g.note] = gate.note
 }
 
 /** The columns a gate is read with: every one of [GatesGates]. */
@@ -97,6 +98,7 @@ internal fun ResultRow.toGate(): Gate {
         releasedAt = this[g.releasedAt],
         createdAt = this[g.createdAt],
         unlinkedAuthor = this[g.unlinkedAuthor],
+        note = this[g.note],
     )
 }
 

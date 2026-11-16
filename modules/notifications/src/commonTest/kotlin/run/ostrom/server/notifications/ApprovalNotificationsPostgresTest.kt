@@ -297,6 +297,7 @@ class ApprovalNotificationsPostgresTest {
             Answer.NO,
             asked.gate.shownDigest,
             AnswerChannel.CONSOLE,
+            null,
         )
 
         assertEquals(0, deliver(), "Nothing attempted")

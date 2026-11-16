@@ -37,6 +37,7 @@ internal object GatesGates : Table("gates_gates") {
     val releasedAt = instant("released_at").nullable()
     val createdAt = instant("created_at")
     val unlinkedAuthor = long("unlinked_author").nullable()
+    val note = text("note").nullable()
 
     override val primaryKey = PrimaryKey(id)
 }

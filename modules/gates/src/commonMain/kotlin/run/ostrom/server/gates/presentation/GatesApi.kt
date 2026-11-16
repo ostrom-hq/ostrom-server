@@ -226,6 +226,8 @@ data class GateRef(
  * @property askedVia The paths that asked (`hook`, `ci`, `mcp`).
  * @property selfApproved True when the only approver, who asked, said yes.
  * @property push The push.
+ * @property note What the approver told the agent with their answer, once answered with one: the waiting session
+ *   reads it with the decision.
  */
 @OptIn(ExperimentalSerializationApi::class)
 @KeepGeneratedSerializer
@@ -257,6 +259,7 @@ data class GateRequest(
     val askedVia: List<String>? = null,
     val selfApproved: Boolean? = null,
     val push: GatePush? = null,
+    val note: String? = null,
 ) {
     /** Writes the fields the contract declares required and nullable as `null` when null. */
     object Answer : NullsKept<GateRequest>(generatedSerializer(), "gate")
@@ -317,10 +320,16 @@ data class Approval(
  *
  * @property answer `approve` or `reject`.
  * @property shownDigest The digest of what the approver was shown.
- * @property comment A note.
+ * @property comment The note under its first name, read when [note] is absent; kept until every client sends [note].
+ * @property note What the approver tells the agent with the answer: sent to its session, written on the receipt.
  */
 @Serializable
-data class AnswerApprovalRequest(val answer: ApprovalAnswer, val shownDigest: String, val comment: String? = null)
+data class AnswerApprovalRequest(
+    val answer: ApprovalAnswer,
+    val shownDigest: String,
+    val comment: String? = null,
+    val note: String? = null,
+)
 
 /** Yes or no (contract `ApprovalAnswer`). */
 @Serializable

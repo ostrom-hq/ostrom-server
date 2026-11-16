@@ -184,4 +184,12 @@ val GatesMigrations: List<SchemaMigration> = listOf(
         GRANT SELECT, INSERT ON gates_sessions, gates_session_ends TO $TENANT_ROLE
         """.trimIndent(),
     ),
+    // The note an approver sends with their answer (`AnswerApprovalRequest.note`): kept with the decision, read by the
+    // sessions waiting on the gate and signed on its receipt. Bounded as the answer bounds it (MAX_NOTE), written out:
+    // a migration never changes.
+    SchemaMigration(
+        11,
+        "gates_answer_note",
+        "ALTER TABLE gates_gates ADD COLUMN note TEXT CHECK (char_length(note) <= 4000)",
+    ),
 )

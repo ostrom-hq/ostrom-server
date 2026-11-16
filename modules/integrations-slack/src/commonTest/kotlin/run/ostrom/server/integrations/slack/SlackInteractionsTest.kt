@@ -23,6 +23,7 @@ import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.OstromException
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Instant
@@ -63,9 +64,11 @@ class SlackInteractionsTest {
                 answer: Answer,
                 shownDigest: String,
                 channel: AnswerChannel,
+                note: String?,
             ): GateView {
                 refusal?.let { throw it }
                 assertEquals(gate.shownDigest to AnswerChannel.SLACK, shownDigest to channel)
+                assertNull(note, "A Slack button sends no note")
                 answered += actor to answer
                 return GateView(gate, emptyList(), emptyList())
             }

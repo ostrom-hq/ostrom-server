@@ -130,8 +130,17 @@ class MissingPullRequestException : OstromException(
         "yes was asked. Merge with `gh pr merge <number>`, and update the launcher if it is the one that sent this.",
 )
 
-/** A field of the request is out of bounds (too long, malformed SHA, too many refs). */
+/** The note sent with an answer is longer than [MAX_NOTE] characters. */
+class NoteTooLongException : OstromException(
+    ErrorKind.INVALID_REQUEST,
+    "The note is longer than $MAX_NOTE characters.",
+    "note_too_long",
+)
 
+/** The longest note an approver sends with an answer, in characters: TeamCode's bound on a permission answer's text. */
+const val MAX_NOTE: Int = 4_000
+
+/** A field of the request is out of bounds (too long, malformed SHA, too many refs). */
 class InvalidGateRequestException(reason: String) : OstromException(ErrorKind.INVALID_REQUEST, reason)
 
 /**

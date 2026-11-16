@@ -51,6 +51,7 @@ internal fun ApprovalScreen.toViewResponse(): ApprovalViewResponse {
         pr = gate.subject.pullRequest?.let { GatePullRequest(it.number.toString(), it.headSha, it.base) },
         askedVia = gate.askedVia.map { it.name.lowercase() }.sorted(),
         you = rights.toCallerView(),
+        note = gate.note,
     )
 }
 

@@ -11,7 +11,9 @@ import run.ostrom.server.gates.domain.models.GateAlreadyDecidedException
 import run.ostrom.server.gates.domain.models.GateChangedException
 import run.ostrom.server.gates.domain.models.GateNotFoundException
 import run.ostrom.server.gates.domain.models.GateStatus
+import run.ostrom.server.gates.domain.models.MAX_NOTE
 import run.ostrom.server.gates.domain.models.NotTheApproverException
+import run.ostrom.server.gates.domain.models.NoteTooLongException
 import run.ostrom.server.gates.domain.models.OnlyPeopleAnswerException
 import run.ostrom.server.gates.domain.models.RequestStatus
 import run.ostrom.server.gates.domain.models.SelfApprovalPolicy
@@ -54,6 +56,7 @@ class AnswerGateUseCaseTest {
             Answer.YES,
             view.gate.shownDigest,
             AnswerChannel.CONSOLE,
+            null,
         )
         for (stale in listOf(null, bench.clock.now - StepUp.WITHIN - 1.seconds)) {
             val refused = assertFailsWith<StepUpRequiredException> { yes(stale) }
@@ -64,7 +67,7 @@ class AnswerGateUseCaseTest {
 
         val other = bench.open(bench.pushRequest(sha = "b".repeat(40)))
         val no = other.requests.first { it.approverId == "rev-b" }.id
-        val refused = bench.answer(user("rev-b"), no, Answer.NO, other.gate.shownDigest, AnswerChannel.CONSOLE)
+        val refused = bench.answer(user("rev-b"), no, Answer.NO, other.gate.shownDigest, AnswerChannel.CONSOLE, null)
         assertEquals(GateStatus.REJECTED, refused.gate.status, "saying no never needs a fresh sign-in")
     }
 
@@ -76,7 +79,7 @@ class AnswerGateUseCaseTest {
         val request = view.requests.first { it.approverId == "rev-b" }.id
         val phone = user("rev-b").copy(authenticatedAt = bench.clock.now, phoneCredential = "osm-1")
         suspend fun yes(shown: String = view.gate.shownDigest) =
-            bench.answer(phone, request, Answer.YES, shown, AnswerChannel.CONSOLE)
+            bench.answer(phone, request, Answer.YES, shown, AnswerChannel.CONSOLE, null)
 
         bench.unlocks.unlock("osm-1", Uuid.random().toString())
         val refused = assertFailsWith<BoundUnlockRequiredException> { yes() }
@@ -102,7 +105,7 @@ class AnswerGateUseCaseTest {
         val view = bench.open(bench.pushRequest())
         val request = view.requests.first { it.approverId == "rev-b" }.id
         val phone = user("rev-b").copy(authenticatedAt = bench.clock.now, phoneCredential = "osm-1")
-        val answered = bench.answer(phone, request, Answer.NO, view.gate.shownDigest, AnswerChannel.CONSOLE)
+        val answered = bench.answer(phone, request, Answer.NO, view.gate.shownDigest, AnswerChannel.CONSOLE, null)
         assertEquals(GateStatus.REJECTED, answered.gate.status)
         assertTrue(bench.unlocks.asked.isEmpty(), "a no keeps the five minutes of the unlock")
     }
@@ -203,7 +206,7 @@ class AnswerGateUseCaseTest {
         val view = bench.open(bench.pushRequest())
         assertFailsWith<GateNotFoundException> { bench.answer(view, "rev-b", actor = user("rev-b", OTHER_ORG)) }
         assertFailsWith<GateNotFoundException> {
-            bench.answer(user("rev-b"), Uuid.random(), Answer.YES, view.gate.shownDigest, AnswerChannel.CONSOLE)
+            bench.answer(user("rev-b"), Uuid.random(), Answer.YES, view.gate.shownDigest, AnswerChannel.CONSOLE, null)
         }
         bench.repository.vanishOnLock = view.gate.id
         assertFailsWith<GateNotFoundException> { bench.answer(view, "rev-b") }
@@ -223,7 +226,8 @@ class AnswerGateUseCaseTest {
         val bench = GateBench()
         val view = bench.open(bench.pushRequest())
         assertFailsWith<GateChangedException> {
-            bench.answer(user("rev-b"), view.requests.last().id, Answer.YES, "something else", AnswerChannel.SLACK)
+            val request = view.requests.last().id
+            bench.answer(user("rev-b"), request, Answer.YES, "something else", AnswerChannel.SLACK, null)
         }
         assertEquals(GateStatus.PENDING, bench.repository.gates.getValue(view.gate.id).status)
     }
@@ -294,6 +298,32 @@ class AnswerGateUseCaseTest {
         bench.signer.failure = null
         val read = bench.get(user("rev-b"), view.gate.id)
         assertEquals("rcpt_${view.gate.id}", read.gate.receiptId)
+    }
+
+    @Test
+    fun theNoteGoesWithTheDecisionAndABlankOneIsNone() = runTest {
+        val bench = GateBench()
+        val refused = bench.answer(bench.open(bench.pushRequest()), "rev-b", Answer.NO, note = "Rebase on main first.")
+        assertEquals("Rebase on main first.", refused.gate.note)
+        assertEquals("Rebase on main first.", bench.repository.gates.getValue(refused.gate.id).note, "stored with it")
+        val blank = bench.open(bench.pushRequest(sha = run.ostrom.server.gates.fakes.SHA_B))
+        assertNull(bench.answer(blank, "rev-b", note = " \n ").gate.note, "a blank note is no note")
+        val none = bench.open(bench.pushRequest(sha = "c".repeat(40)))
+        assertNull(bench.answer(none, "rev-b").gate.note)
+    }
+
+    @Test
+    fun aNoteLongerThanTheBoundIsRefusedBeforeAnythingIsDecided() = runTest {
+        val bench = GateBench()
+        val view = bench.open(bench.pushRequest())
+        val refused = assertFailsWith<NoteTooLongException> {
+            bench.answer(view, "rev-b", note = "x".repeat(MAX_NOTE + 1))
+        }
+        assertEquals(ErrorKind.INVALID_REQUEST, refused.kind)
+        assertEquals("note_too_long", refused.type)
+        assertEquals(GateStatus.PENDING, bench.repository.gates.getValue(view.gate.id).status)
+        val longest = "x".repeat(MAX_NOTE)
+        assertEquals(longest, bench.answer(view, "rev-b", note = longest).gate.note, "the bound itself passes")
     }
 
     @Test

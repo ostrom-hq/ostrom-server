@@ -13,7 +13,9 @@ import run.ostrom.server.gates.domain.models.GateChangedException
 import run.ostrom.server.gates.domain.models.GateNotFoundException
 import run.ostrom.server.gates.domain.models.GateStatus
 import run.ostrom.server.gates.domain.models.GateView
+import run.ostrom.server.gates.domain.models.MAX_NOTE
 import run.ostrom.server.gates.domain.models.NotTheApproverException
+import run.ostrom.server.gates.domain.models.NoteTooLongException
 import run.ostrom.server.gates.domain.models.OnlyPeopleAnswerException
 import run.ostrom.server.gates.domain.models.RequestStatus
 import run.ostrom.server.gates.domain.models.SelfApproval
@@ -44,6 +46,8 @@ interface AnswerGateUseCase {
      * @param answer Yes or no.
      * @param shownDigest The digest of what the approver was shown; a yes on anything else is refused.
      * @param channel Where the answer was given.
+     * @param note What the approver tells the agent with the answer, or null: kept on the gate, sent to the sessions
+     *   that wait on it and written on the receipt. A blank note is no note.
      * @return The gate as it is after the answer, with its receipt when signing succeeded.
      * @throws OnlyPeopleAnswerException When the caller is a device, agent or service.
      * @throws GateNotFoundException When the request does not exist in the caller's organization.
@@ -53,13 +57,16 @@ interface AnswerGateUseCase {
      * @throws GateChangedException When what the gate covers is not what the approver was shown.
      * @throws StepUpRequiredException When the person's sign-in is unknown or too old for a yes.
      * @throws BoundUnlockRequiredException When a yes from the app comes without its unlock bound to this request.
+     * @throws NoteTooLongException When the note is longer than [MAX_NOTE] characters.
      */
+    @Suppress("LongParameterList") // Who, which request, the answer, what was shown, where, and the note to the agent.
     suspend operator fun invoke(
         actor: GateActor,
         requestId: Uuid,
         answer: Answer,
         shownDigest: String,
         channel: AnswerChannel,
+        note: String?,
     ): GateView
 }
 
@@ -86,23 +93,28 @@ class AnswerGateUseCaseImpl(
     private val gitHub: GateGitHubAccounts,
     private val unlocks: PhoneUnlockProofs,
 ) : AnswerGateUseCase {
+    @Suppress("LongParameterList") // The interface's: who, which request, the answer, what was shown, where, the note.
     override suspend fun invoke(
         actor: GateActor,
         requestId: Uuid,
         answer: Answer,
         shownDigest: String,
         channel: AnswerChannel,
+        note: String?,
     ): GateView {
         // S2-15: the answerer is the credential's person, never its id.
         val person = actor.personId
         if (actor.kind != ActorKind.USER || person == null) throw OnlyPeopleAnswerException()
+        val said = note?.takeIf { it.isNotBlank() }
+        if (said != null && said.length > MAX_NOTE) throw NoteTooLongException()
         val orgId = actor.orgId
         // The app's unlock for this request is used by the first yes sent with it, whatever that yes's outcome, and
         // outside the gate's transaction, so that a refused yes cannot hand it back.
         val bound = actor.phoneCredential?.takeIf { answer == Answer.YES }
             ?.let { unlocks.consume(it, requestId.toString(), clock.now() - StepUp.BOUND_WITHIN) }
         val policy = policies.selfApproval(orgId)
-        val decided = decide(Answering(actor, person, requestId, answer, shownDigest, channel, policy, bound), null)
+        val answering = Answering(actor, person, requestId, answer, shownDigest, channel, said, policy, bound)
+        val decided = decide(answering, null)
         val requests = decided.requests
         val gate = receipts.ensureSigned(decided.gate)
         changes.changed(gate.id)
@@ -141,6 +153,7 @@ class AnswerGateUseCaseImpl(
             decidedBy = request.approverId,
             decidedAt = now,
             selfApproved = selfApproved,
+            note = answering.note,
         )
         updateGate(next)
         updateRequests(answered)
@@ -191,7 +204,10 @@ class AnswerGateUseCaseImpl(
     }
 }
 
-/** One answer, as the transaction reads it: who, to which request, what, on what they saw, and the org's policy. */
+/**
+ * One answer, as the transaction reads it: who, to which request, what, on what they saw, what they tell the agent, and
+ * the org's policy.
+ */
 private data class Answering(
     val actor: GateActor,
     val person: String,
@@ -199,6 +215,7 @@ private data class Answering(
     val answer: Answer,
     val shownDigest: String,
     val channel: AnswerChannel,
+    val note: String?,
     val policy: SelfApprovalPolicy,
     val bound: Boolean?,
 )

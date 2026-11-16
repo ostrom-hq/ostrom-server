@@ -15,6 +15,8 @@ kotlin {
         }
         commonTest.dependencies {
             implementation(project(":testing"))
+            // The real receipts sign and verify a note (ApprovalNotePostgresTest): they need the instance keys.
+            implementation(project(":modules:instance"))
         }
     }
 }
