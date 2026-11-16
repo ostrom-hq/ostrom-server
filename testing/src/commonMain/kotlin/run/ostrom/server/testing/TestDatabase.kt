@@ -102,9 +102,11 @@ class TestDatabase @Suppress("LongParameterList") private constructor( // Each r
      * @return The values, in the query's order; a SQL null as null.
      */
     suspend fun superuserTexts(sql: String): List<String?> = superuserJdbc.query {
+        val texts = mutableListOf<String?>()
         exec(sql, explicitStatementType = StatementType.SELECT) { rows ->
-            buildList { while (rows.next()) add(rows.getString(1)) }
-        }.orEmpty()
+            while (rows.next()) texts.add(rows.getString(1))
+        }
+        texts
     }
 
     /** The name of the owner role, which owns the database, its schema and its tables. */
