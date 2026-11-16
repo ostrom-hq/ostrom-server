@@ -5,6 +5,7 @@ import run.ostrom.server.sessions.infrastructure.SessionsSessions
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.confineToOrganization
 import run.ostrom.server.kernel.database.databaseNow
+import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.update
@@ -58,7 +59,6 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -432,7 +432,7 @@ class SessionsPostgresTest {
         }
         // The old sweep setting opens nothing any more (RLS audit R4): only sessions_stale reads across organizations.
         assertEquals(listOf(0L, 0L, 0L, 0L), seen, "No setting opens another organization, nothing is written")
-        val insert = try {
+        val refused = assertFailsWith<ExposedSQLException>("A row of another organization cannot be written") {
             database.query {
                 confineToOrganization(orgB)
                 t.insert {
@@ -445,13 +445,8 @@ class SessionsPostgresTest {
                     it[startedAt] = databaseNow()
                 }
             }
-            Result.success(Unit)
-        } catch (error: CancellationException) {
-            throw error
-        } catch (expected: Exception) {
-            Result.failure(expected)
         }
-        assertTrue(insert.isFailure, "A row of another organization cannot be written")
+        assertTrue("row-level security" in refused.message.orEmpty(), refused.message)
         assertEquals("lyes", server.koin.get<SessionsRepository>().get(orgA, "s-1")?.dev)
     }
 

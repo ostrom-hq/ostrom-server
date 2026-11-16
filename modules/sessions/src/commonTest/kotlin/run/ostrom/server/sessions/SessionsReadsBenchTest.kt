@@ -59,7 +59,6 @@ class SessionsReadsBenchTest {
         }
     }
 
-    // No `::` cast and no colon at all in the seeds: the driver would read `:x` as a named parameter.
     private fun sessionsOf(org: Uuid) =
         "INSERT INTO sessions_sessions (org_id, id, root_id, segment, launch_id, agent, dev, repo, started_at, " +
             "ended_at, last_seen_at, cost_usd) SELECT CAST('$org' AS uuid), 's' || i, 's' || i, 0, 'lch' || i, " +
