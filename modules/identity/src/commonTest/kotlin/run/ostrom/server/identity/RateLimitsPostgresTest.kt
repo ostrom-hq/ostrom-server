@@ -7,10 +7,10 @@ import run.ostrom.server.identity.infrastructure.Sha256SecretHasher
 import run.ostrom.server.identity.infrastructure.attempt
 import run.ostrom.server.identity.infrastructure.windowsOver
 import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.databaseNowPlus
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import org.jetbrains.exposed.v1.core.statements.Statement
 import org.jetbrains.exposed.v1.core.statements.StatementBuilder
 import kotlinx.coroutines.async
@@ -21,6 +21,12 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
+import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.selectAll
+import org.jetbrains.exposed.v1.jdbc.update
 
 /**
  * The sign-in rate limits across replicas on real PostgreSQL (TC-REP-2): two limiters over one database, as two
@@ -31,7 +37,11 @@ class RateLimitsPostgresTest {
     private fun TestServer.replica() = RateLimiterImpl(koin.get<JdbcDatabase>(), Sha256SecretHasher())
 
     private suspend fun TestServer.count(sql: String): Long =
-        database.superuser.fetchAll(sql).getOrThrow().single().get("n").asLong()
+        database.superuserJdbc.query { exec(sql) { rs -> rs.next(); rs.getLong("n") } }!!
+
+    private val t = IdentityRateLimits
+
+    private fun JdbcTransaction.keyHashes() = t.select(t.keyHash).map { it[t.keyHash] }
 
     @Test
     fun twoReplicasCountingAtOnceAdmitTheLimitOnceNotOnceEach() = serverTest(listOf(IdentityModule)) { server ->
@@ -51,14 +61,12 @@ class RateLimitsPostgresTest {
         val key = "magic-link-to:someone@example.com"
         assertTrue(a.tryAcquire(key, 1, 15.minutes))
         assertFalse(b.tryAcquire(key, 1, 15.minutes), "The other replica sees the window")
-        val stored = server.database.superuser.fetchAll("SELECT key_hash FROM identity_rate_limits")
-            .getOrThrow().single().get("key_hash").asString()
+        val stored = server.database.superuserJdbc.query { keyHashes() }.single()
         assertEquals(Sha256SecretHasher().hash(key), stored)
         assertFalse("example.com" in stored, "No e-mail address in the table")
 
         // Fifteen minutes later by the database's clock, whatever the replicas' clocks say.
-        server.database.superuser.execute("UPDATE identity_rate_limits SET ends_at = now() - INTERVAL '1 second'")
-            .getOrThrow()
+        server.database.superuserJdbc.query { t.update { it[t.endsAt] = databaseNowPlus(-(1.seconds)) } }
         assertTrue(b.tryAcquire(key, 1, 15.minutes), "A new window opens once the last one is over")
         assertFalse(a.tryAcquire(key, 1, 15.minutes), "And counts from one again")
         val ends = server.count(
@@ -72,28 +80,26 @@ class RateLimitsPostgresTest {
     fun theWindowsOverArePurgedAndTheLiveOnesKept() = serverTest(listOf(IdentityModule)) { server ->
         val limiter = server.replica()
         listOf("a", "b", "c").forEach { limiter.tryAcquire(it, 1, 10.minutes) }
-        server.database.superuser.execute(
-            "UPDATE identity_rate_limits SET ends_at = now() - INTERVAL '1 minute' " +
-                "WHERE key_hash IN ('${Sha256SecretHasher().hash("a")}', '${Sha256SecretHasher().hash("b")}')",
-        ).getOrThrow()
+        val over = listOf("a", "b").map { Sha256SecretHasher().hash(it) }
+        server.database.superuserJdbc.query {
+            t.update({ t.keyHash inList over }) { it[t.endsAt] = databaseNowPlus(-(1.minutes)) }
+        }
 
         assertEquals(2L, limiter.purgeExpired())
-        assertEquals(1L, server.count("SELECT count(*) AS n FROM identity_rate_limits"))
+        assertEquals(1L, server.database.superuserJdbc.query { t.selectAll().count() })
         assertFalse(limiter.tryAcquire("c", 1, 10.minutes), "The live window still counts")
     }
 
     @Test
     fun anAttemptAndThePurgeScanNoTable() = serverTest(listOf(IdentityModule)) { server ->
         // Fixtures only: a filled table, mostly live windows, and its statistics.
-        val fixtures = server.database.superuser
-        fixtures.execute(
+        server.database.superuserOutsideTransaction(
             "INSERT INTO identity_rate_limits (key_hash, attempts, ends_at) SELECT md5('k' || i), 1, " +
                 "now() + (i % 600) * INTERVAL '1 second' + INTERVAL '1 minute' FROM generate_series(1, 50000) AS i",
-        ).getOrThrow()
-        fixtures.execute("VACUUM ANALYZE identity_rate_limits").getOrThrow()
+            "VACUUM ANALYZE identity_rate_limits",
+        )
 
-        val counted = fixtures.fetchAll("SELECT key_hash FROM identity_rate_limits LIMIT 1").getOrThrow()
-            .single().get("key_hash").asString()
+        val counted = server.database.superuserJdbc.query { t.select(t.keyHash).limit(1).single()[t.keyHash] }
         val first = Sha256SecretHasher().hash("device-start:198.51.100.1")
         val attempts: Map<String, StatementBuilder.() -> Statement<*>> = mapOf(
             "a first attempt" to { attempt(first, 600L) },

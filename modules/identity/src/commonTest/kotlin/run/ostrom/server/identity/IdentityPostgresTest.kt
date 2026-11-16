@@ -20,13 +20,15 @@ import run.ostrom.server.identity.domain.UsersRepository
 import run.ostrom.server.identity.domain.VerifiedIdentity
 import run.ostrom.server.identity.domain.WebSession
 import run.ostrom.server.identity.domain.WebSessionsRepository
-import run.ostrom.server.kernel.database.inOrg
+import run.ostrom.server.identity.infrastructure.IdentityAuditEvents
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.select
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -35,6 +37,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -290,21 +293,26 @@ class IdentityPostgresTest {
         audit.record(AuditEntry(null, null, "account", "t", "3"))
 
         // No WHERE clause at all: row-level security alone keeps the other organization's rows out.
-        val seen = server.driver.inOrg(orgA) {
-            fetchAll("SELECT action FROM identity_audit_events").getOrThrow().map { it.get("action").asString() }
-        }
+        val database = server.koin.get<JdbcDatabase>()
+        val t = IdentityAuditEvents
+        val seen = database.inOrg(orgA) { t.select(t.action).map { it[t.action] } }
         assertEquals(listOf("a"), seen)
         assertFailsWith<Exception>("Writing a row of another organization is refused") {
-            server.driver.inOrg(orgA) {
-                execute(
-                    Statement.create(
-                        "INSERT INTO identity_audit_events (id, chain, sequence, org_id, action, target_type, " +
-                            "target_id, " +
-                            "details, occurred_at, hash, signature, key_id) VALUES (:id, :chain, 99, :org, " +
-                                "'x', 't', '1', '{}', " +
-                            "now(), 'h', 's', 'k')",
-                    ).bind("id", Uuid.random()).bind("chain", orgB.toString()).bind("org", orgB),
-                ).getOrThrow()
+            database.inOrg(orgA) {
+                t.insert {
+                    it[id] = Uuid.random()
+                    it[chain] = orgB.toString()
+                    it[sequence] = 99L
+                    it[this.orgId] = orgB
+                    it[action] = "x"
+                    it[targetType] = "t"
+                    it[targetId] = "1"
+                    it[details] = "{}"
+                    it[occurredAt] = Clock.System.now()
+                    it[hash] = "h"
+                    it[signature] = "s"
+                    it[keyId] = "k"
+                }
             }
         }
     }

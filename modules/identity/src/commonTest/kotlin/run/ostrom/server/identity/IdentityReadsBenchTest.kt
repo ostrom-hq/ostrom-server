@@ -69,14 +69,14 @@ class IdentityReadsBenchTest {
             user.id to org
         }
         val ada = people.first().first
-        val fixtures = server.database.superuser
+        val fixtures = server.database
         people.forEach { (user, org) ->
-            fixtures.execute(auditOf(org, ada)).getOrThrow()
-            fixtures.execute(tokensOf(user, org, "AGENT", AGENT_TOKENS_PER_PERSON)).getOrThrow()
+            fixtures.superuserOutsideTransaction(auditOf(org, ada))
+            fixtures.superuserOutsideTransaction(tokensOf(user, org, "AGENT", AGENT_TOKENS_PER_PERSON))
         }
-        fixtures.execute(tokensOf(ada, acme, "CLI", 3)).getOrThrow()
-        fixtures.execute("VACUUM ANALYZE identity_audit_events").getOrThrow()
-        fixtures.execute("VACUUM ANALYZE identity_api_tokens").getOrThrow()
+        fixtures.superuserOutsideTransaction(tokensOf(ada, acme, "CLI", 3))
+        fixtures.superuserOutsideTransaction("VACUUM ANALYZE identity_audit_events")
+        fixtures.superuserOutsideTransaction("VACUUM ANALYZE identity_api_tokens")
         val session = server.koin.get<StartWebSessionUseCase>()(ada)
 
         // Path, what the call returns, and the index its plan must name (IdentityMigrations version 12) when the

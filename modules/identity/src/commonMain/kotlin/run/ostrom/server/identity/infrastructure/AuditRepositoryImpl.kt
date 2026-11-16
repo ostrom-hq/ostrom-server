@@ -8,9 +8,6 @@ import run.ostrom.server.identity.domain.ChainedAuditEvent
 import run.ostrom.server.identity.domain.OrgAuditQuery
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.lockUntilCommit
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.Transaction
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
@@ -43,9 +40,9 @@ private const val ACCOUNT_CHAIN = "account"
  * confines it to that organization; the account-level chain (`account`) has no organization and is reached outside
  * any ([JdbcDatabase.query]).
  *
- * Other modules append to an organization's chain inside their own sqlx4k transaction ([TransactionalAuditLog],
- * [Transaction.appendAudit]); both writers take the same advisory lock on the chain and read its head the same way,
- * so a chain written by both stays one chain.
+ * Other modules append to an organization's chain inside their own transaction ([TransactionalAuditLog]); both
+ * writers take the same advisory lock on the chain and read its head the same way, so a chain written by both stays
+ * one chain.
  *
  * @param database The JDBC pool.
  */
@@ -219,10 +216,9 @@ internal fun JdbcTransaction.headOf(chain: String, orgId: Uuid?): AuditHead? {
 }
 
 /**
- * Appends [event] to [chain] if it is chained to the chain's head, inside this Exposed transaction, as
- * [Transaction.appendAudit] does in a sqlx4k one: the same advisory lock on the chain ([lockUntilCommit]) until the
- * transaction ends, the same read of its head, so two writers on either pool never give two events the same sequence
- * nor fork the chain.
+ * Appends [event] to [chain] if it is chained to the chain's head, inside this transaction: the chain's advisory lock
+ * ([lockUntilCommit]) until the transaction ends, then the read of its head, so two writers never give two events the
+ * same sequence nor fork the chain.
  *
  * @param chain An organization's id, or the account-level chain.
  * @param orgId The chain's organization, null for the account-level chain.
@@ -258,47 +254,4 @@ internal fun JdbcTransaction.insertEvent(chain: String, event: AuditEvent) {
         it[signature] = event.signature
         it[keyId] = event.keyId
     }
-}
-
-/**
- * Appends an event to [chain] inside this sqlx4k transaction: kept if and only if the transaction commits. Serializes
- * the appends of one chain until the transaction ends. For the modules still on sqlx4k ([TransactionalAuditLog]),
- * until they move to Exposed; it locks and reads the chain as the Exposed writer of [AuditRepositoryImpl] does.
- *
- * @param chain An organization's id, or the account-level chain.
- * @param build Builds the event from the previous event's hash (null for the first) and the next sequence.
- */
-internal suspend fun Transaction.appendAudit(
-    chain: String,
-    build: suspend (previousHash: String?, sequence: Long) -> AuditEvent,
-): AuditEvent {
-    // Serializes the appends of one chain until the transaction ends: no two events get the same sequence.
-    lockUntilCommit(chain)
-    val last = fetchAll(
-        Statement.create(
-            "SELECT sequence, hash FROM identity_audit_events WHERE chain = :chain ORDER BY sequence " +
-                "DESC LIMIT 1",
-        ).bind("chain", chain),
-    ).getOrThrow().firstOrNull()
-    val event = if (last == null) {
-        build(null, 1L)
-    } else {
-        build(last.get("hash").asString(), last.get("sequence").asLong() + 1)
-    }
-    execute(
-        Statement.create(
-            "INSERT INTO identity_audit_events (id, chain, sequence, org_id, actor_id, action, " +
-                "target_type, target_id, " +
-                "details, occurred_at, previous_hash, hash, signature, key_id) VALUES (:id, :chain, " +
-                ":sequence, :org, " +
-                ":actor, :action, :type, :target, :details, :at, :previous, :hash, :signature, :key)",
-        ).bind("id", event.id).bind("chain", chain).bind("sequence", event.sequence)
-            .bind("org", event.entry.orgId)
-            .bind("actor", event.entry.actorId).bind("action", event.entry.action)
-            .bind("type", event.entry.targetType).bind("target", event.entry.targetId)
-            .bind("details", DETAILS_JSON.encodeToString(DETAILS, event.entry.details))
-            .bind("at", event.occurredAt).bind("previous", event.previousHash).bind("hash", event.hash)
-            .bind("signature", event.signature).bind("key", event.keyId),
-    ).getOrThrow()
-    return event
 }

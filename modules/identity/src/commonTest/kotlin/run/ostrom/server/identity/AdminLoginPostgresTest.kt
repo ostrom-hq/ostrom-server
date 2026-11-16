@@ -10,6 +10,7 @@ import run.ostrom.server.identity.domain.StartWebSessionUseCase
 import run.ostrom.server.identity.domain.StartedSession
 import run.ostrom.server.identity.domain.User
 import run.ostrom.server.identity.domain.VerifiedIdentity
+import run.ostrom.server.identity.infrastructure.IdentityWebSessions
 import run.ostrom.server.identity.presentation.AnswerDeviceRequest
 import run.ostrom.server.identity.presentation.AuthTokenResponse
 import run.ostrom.server.identity.presentation.DeviceAuthorizationResponse
@@ -30,6 +31,7 @@ import run.ostrom.server.kernel.auth.authenticated
 import run.ostrom.server.kernel.auth.governs
 import run.ostrom.server.kernel.auth.holdForConfirmation
 import run.ostrom.server.kernel.auth.requirePrincipal
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
@@ -42,6 +44,8 @@ import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.jdbc.update
 import io.ktor.http.contentType
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
@@ -208,8 +212,10 @@ class AdminLoginPostgresTest {
     fun approvingAnAdminLoginNeedsASignInOfLessThanFiveMinutes() = adminTest { server ->
         val (admin, stale) = server.signIn("5", OrgRole.ADMIN)
         // Signed in six minutes ago.
-        val aged = "UPDATE identity_web_sessions SET created_at = created_at - interval '6 minutes'"
-        server.driver.execute("$aged WHERE user_id = '${admin.id}'").getOrThrow()
+        val sessions = IdentityWebSessions
+        server.koin.get<JdbcDatabase>().query {
+            sessions.update({ sessions.userId eq admin.id }) { it[createdAt] = Clock.System.now() - 6.minutes }
+        }
         val codes = server.start(ADMIN_SCOPES.toList()).body<DeviceCodeResponse>()
         val refused = server.client.post("/api/v1/auth/device/answer") {
             browserSession(stale.secret, stale.csrfToken)

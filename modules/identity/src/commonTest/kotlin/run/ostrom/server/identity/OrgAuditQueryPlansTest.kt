@@ -35,10 +35,10 @@ class OrgAuditQueryPlansTest {
     @Test
     fun theAuditPageAndItsLinksReadTheChainsIndex() = serverTest(listOf(IdentityModule)) { server ->
         // Fixtures only: the lines of two organizations at once and the statistics, which no request writes.
-        val fixtures = server.database.superuser
-        fixtures.execute(seed(orgB, 20_000)).getOrThrow()
-        fixtures.execute(seed(orgA, 5_000)).getOrThrow()
-        fixtures.execute("VACUUM ANALYZE identity_audit_events").getOrThrow()
+        val fixtures = server.database
+        fixtures.superuserOutsideTransaction(seed(orgB, 20_000))
+        fixtures.superuserOutsideTransaction(seed(orgA, 5_000))
+        fixtures.superuserOutsideTransaction("VACUUM ANALYZE identity_audit_events")
 
         val database = server.koin.get<JdbcDatabase>()
         val plans = linkedMapOf(
