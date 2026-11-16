@@ -253,6 +253,14 @@ class CloudSessionsPostgresTest {
         assertIs<StartOutcome.Started>(
             repository.startWithinCap(waitingNewer, waitingNewer.started(), Int.MAX_VALUE, null),
         )
+        assertEquals(
+            StartOutcome.Conflict,
+            repository.startWithinCap(waitingNewer, waitingNewer.started(), Int.MAX_VALUE, null),
+        )
+        // An automation's start has its own cap: alice's two executions do not hold it.
+        val run = session(createdAt = t0).copy(automationId = Uuid.random())
+        assertTrue(repository.createWithinCap(run, 100))
+        assertIs<StartOutcome.Started>(repository.startWithinCap(run, run.started(), 1, null))
     }
 
     @Test

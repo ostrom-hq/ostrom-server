@@ -421,14 +421,9 @@ class ReconcileCloudSessionUseCaseImpl(
 
     /** The owner runs as many sessions as allowed: the start waits, keeping its place in the owner's queue. */
     private suspend fun waitingCapacity(session: CloudSession, now: Instant): Instant? {
-        if (session.phase == CloudSession.WAITING_CAPACITY && session.capacityWaitingSince != null) {
-            return now + CAPACITY_DELAY
-        }
-        val waiting = session.copy(
-            phase = CloudSession.WAITING_CAPACITY,
-            capacityWaitingSince = session.capacityWaitingSince ?: now,
-            updatedAt = now,
-        )
+        // Its place was written with the phase, once: every start clears both.
+        if (session.phase == CloudSession.WAITING_CAPACITY) return now + CAPACITY_DELAY
+        val waiting = session.copy(phase = CloudSession.WAITING_CAPACITY, capacityWaitingSince = now, updatedAt = now)
         return write(waiting, now + CAPACITY_DELAY)
     }
 
@@ -828,7 +823,7 @@ class ReconcileCloudSessionUseCaseImpl(
         )
 
         /** How often a start that waits for its owner's running cap tries again (TeamCode's `CAPACITY_MILLIS`). */
-        internal val CAPACITY_DELAY: Duration = 5.seconds
+        private val CAPACITY_DELAY: Duration = 5.seconds
 
         /** A start must report ready within this time, image pull and repository clone included. */
         private val START_TIMEOUT: Duration = 15.minutes
