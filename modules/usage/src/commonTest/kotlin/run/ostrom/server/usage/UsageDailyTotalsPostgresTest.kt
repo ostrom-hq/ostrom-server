@@ -109,8 +109,8 @@ class UsageDailyTotalsPostgresTest {
         val zero = server.count("SELECT COUNT(*) AS n FROM usage_daily WHERE cost_micros <= 0")
         assertEquals(0L, zero, "A total that reaches zero is dropped")
 
-        val owner = server.database.superuserJdbc
-        owner.query {
+        val superuser = server.database.superuserJdbc
+        superuser.query {
             UsageEvents.update({ UsageEvents.costMicros % 2L eq 1L }) {
                 it[costMicros] = costMicros + 3L
                 it[sessionId] = "moved"
@@ -118,7 +118,7 @@ class UsageDailyTotalsPostgresTest {
         }
         server.assertTotalsAreTheLedgers("an update by another role than the organization's")
 
-        owner.query {
+        superuser.query {
             UsageEvents.update({ (UsageEvents.sessionId eq "moved") and (UsageEvents.orgId eq TestCallers.orgA) }) {
                 it[costMicros] = 0L
             }
@@ -126,7 +126,7 @@ class UsageDailyTotalsPostgresTest {
         server.assertTotalsAreTheLedgers("an update that brings calls to zero")
 
         // The backfill as version 7 runs it: by the router, under the ledger's forced policies.
-        owner.query { exec("DELETE FROM usage_daily") }
+        superuser.query { exec("DELETE FROM usage_daily") }
         server.database.ownerJdbc.query {
             exec("SET LOCAL ROLE ostrom_router")
             exec(DAILY_TOTALS_OF_THE_LEDGER)
@@ -141,7 +141,7 @@ class UsageDailyTotalsPostgresTest {
         }
         assertEquals(1L, seenByB, "An organization reads only its own totals")
 
-        owner.query { exec("TRUNCATE usage_events") }
+        superuser.query { exec("TRUNCATE usage_events") }
         val left = server.count("SELECT COUNT(*) AS n FROM usage_daily")
         assertEquals(0L, left, "A truncated ledger has no totals")
     }

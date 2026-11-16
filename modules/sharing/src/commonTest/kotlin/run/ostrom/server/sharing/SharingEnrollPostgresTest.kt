@@ -6,7 +6,6 @@ import org.jetbrains.exposed.v1.jdbc.select
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.InstantColumnType
 import org.jetbrains.exposed.v1.core.UuidColumnType
-import org.jetbrains.exposed.v1.core.TextColumnType
 import run.ostrom.server.identity.IdentityModule
 import run.ostrom.server.identity.domain.IdentityProvider
 import run.ostrom.server.identity.domain.ResolveUserUseCase
