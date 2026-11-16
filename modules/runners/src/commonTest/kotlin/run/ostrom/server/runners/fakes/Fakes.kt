@@ -23,6 +23,7 @@ import run.ostrom.server.runners.domain.SessionRef
 import run.ostrom.server.runners.domain.SessionKind
 import run.ostrom.server.runners.domain.RemoteSessionRules
 import run.ostrom.server.runners.domain.SessionState
+import run.ostrom.server.runners.domain.SessionStateMachine
 import run.ostrom.server.runners.domain.StartOutcome
 import kotlin.time.Clock
 import kotlin.time.Instant
@@ -278,6 +279,28 @@ class InMemoryCloudSessionsRepository : CloudSessionsRepository {
         next[id] = now
         journal?.let(this.journal::add)
         return ResumeOutcome.Resumed(updated)
+    }
+
+    override suspend fun reopen(orgId: Uuid, id: Uuid, now: Instant, journal: OrgAuditRecord?): CloudSession? {
+        // As the SQL: only a remote session its device refused.
+        val current = get(orgId, id)?.takeIf(SessionStateMachine::reopenable) ?: return null
+        val updated = current.copy(
+            state = SessionState.PAUSED,
+            desiredState = DesiredState.RUNNING,
+            phase = null,
+            failure = null,
+            terminatedAt = null,
+            terminatedReason = null,
+            expiresAt = null,
+            pausedAt = now,
+            pausingSince = null,
+            generation = current.generation + 1,
+            updatedAt = now,
+        )
+        sessions[id] = updated
+        next[id] = now
+        journal?.let(this.journal::add)
+        return updated
     }
 
     override suspend fun startWithinCap(

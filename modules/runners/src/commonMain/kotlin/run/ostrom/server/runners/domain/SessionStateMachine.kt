@@ -38,6 +38,20 @@ object SessionStateMachine {
     fun canMove(from: SessionState, to: SessionState): Boolean = from == to || to in allowed.getValue(from)
 
     /**
+     * The one way back out of `terminated` (TeamCode #282's `reopenable`): a remote session its device refused
+     * ([RemoteSessionRules.HOST_REFUSED]) never ran, and its conversation is still on the device, so its owner may
+     * reopen it (`paused`, wanted `running`, then hosted like any resumed one). Nothing else leaves `terminated`: a
+     * session the member deleted, or that expired, stays ended.
+     *
+     * @param session The session.
+     *
+     * @return True when a resume reopens it.
+     */
+    fun reopenable(session: CloudSession): Boolean =
+        session.state == TERMINATED && session.kind == SessionKind.REMOTE &&
+            session.terminatedReason == RemoteSessionRules.HOST_REFUSED
+
+    /**
      * Whether a remote session may move from one state to another: as any session, and its host started again
      * replaces its running execution (RUNNING to RESUMING, [HostRemoteSessionUseCase]). A pod's session never does.
      *

@@ -443,7 +443,9 @@ interface ChangeCloudSessionUseCase {
     suspend fun pause(caller: Caller, id: Uuid): CloudSession
 
     /**
-     * Asks for a resume, within the plan: a new execution starts on the kept workspace.
+     * Asks for a resume, within the plan: a new execution starts on the kept workspace. A remote session its device
+     * refused ([SessionStateMachine.reopenable]) is reopened instead: `paused`, wanted `running`, journaled as
+     * `cloud.session.reopened`, and its device's queue hands it out again (TeamCode #282).
      *
      * @param caller The member.
      * @param id The session.
@@ -499,6 +501,16 @@ class ChangeCloudSessionUseCaseImpl(
 
     override suspend fun resume(caller: Caller, id: Uuid): CloudSession {
         val session = repository.ownedBy(caller, id)
+        // A session the device refused is reopened by resuming it (TeamCode #282): it never ran, and its conversation
+        // is still on the device. One reopened or deleted meanwhile goes through the resume below.
+        if (!SessionStateMachine.reopenable(session)) return resumeOpen(caller, id, session)
+        val journal = caller.journal(session, "cloud.session.reopened")
+        return repository.reopen(caller.orgId, id, clock.now(), journal)
+            ?: resumeOpen(caller, id, repository.ownedBy(caller, id))
+    }
+
+    @Suppress("ThrowsCount") // The resume's refusals, one each, as before the reopen was split out.
+    private suspend fun resumeOpen(caller: Caller, id: Uuid, session: CloudSession): CloudSession {
         if (session.state.isFinal || session.desiredState == DesiredState.TERMINATED) {
             throw CloudSessionStateException("This session is over.")
         }

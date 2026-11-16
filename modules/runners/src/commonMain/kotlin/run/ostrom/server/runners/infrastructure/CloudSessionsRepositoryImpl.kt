@@ -192,6 +192,15 @@ class CloudSessionsRepositoryImpl(
         ResumeOutcome.Resumed(toSession(updated))
     }
 
+    override suspend fun reopen(orgId: Uuid, id: Uuid, now: Instant, journal: OrgAuditRecord?): CloudSession? =
+        recording(orgId, journal) { record ->
+            // The row decides, not the read before it: a session reopened or deleted meanwhile is left as it is.
+            val updated = returned { sessionReopened(orgId, id, now) }.firstOrNull() ?: return@recording null
+            write { sessionLookAt(id, now) }
+            record()
+            toSession(updated)
+        }?.also { written.written(it) }
+
     override suspend fun startWithinCap(
         current: CloudSession,
         next: CloudSession,
@@ -541,6 +550,35 @@ internal fun StatementBuilder.sessionResumed(orgId: Uuid, id: Uuid, now: Instant
         },
     ) {
         it[desiredState] = DesiredState.RUNNING.wire
+        it[generation] = s.generation + 1L
+        it[updatedAt] = now
+    }
+}
+
+/**
+ * A remote session its device refused, reopened (`SessionStateMachine.reopenable`): paused, wanted running, with
+ * nothing left of its end. Only that very row: terminated, remote, ended as `host_refused`.
+ */
+internal fun StatementBuilder.sessionReopened(orgId: Uuid, id: Uuid, now: Instant): ReturningStatement {
+    val s = RunnersSessionsTable
+    return s.updateReturning(
+        s.columns,
+        where = {
+            (s.id eq id) and (s.orgId eq orgId) and (s.state eq SessionState.TERMINATED.wire) and
+                (s.kind eq SessionKind.REMOTE.wire) and (s.terminatedReason eq RemoteSessionRules.HOST_REFUSED)
+        },
+    ) {
+        it[state] = PAUSED
+        it[desiredState] = DesiredState.RUNNING.wire
+        it[phase] = null
+        it[failureCode] = null
+        it[failureMessage] = null
+        it[failureRetryable] = false
+        it[terminatedAt] = null
+        it[terminatedReason] = null
+        it[expiresAt] = null
+        it[pausedAt] = now
+        it[pausingSince] = null
         it[generation] = s.generation + 1L
         it[updatedAt] = now
     }

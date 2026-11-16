@@ -200,7 +200,9 @@ private fun ApiCatalog.cloudSessionResume() {
         tag(TAG)
         summary = "Resume a paused cloud session, within the plan's running cap and hours."
         description = "The reconciler starts a new execution on the kept workspace. A session an accepted transfer " +
-            "is moving only resumes through that transfer. $WAITING_CAPACITY $ORG_RESOLUTION"
+            "is moving only resumes through that transfer. A remote session its device refused (`terminated`, " +
+            "`host_refused`) is reopened by resuming it: `paused`, wanted `running`, and its device's queue hands it " +
+            "out again; any other ended session answers 409 `conflict`. $WAITING_CAPACITY $ORG_RESOLUTION"
         parameters {
             onBehalfHeader()
             organizationHeader()

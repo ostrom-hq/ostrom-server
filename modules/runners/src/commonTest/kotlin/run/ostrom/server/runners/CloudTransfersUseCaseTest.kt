@@ -256,6 +256,27 @@ class CloudTransfersUseCaseTest {
     }
 
     @Test
+    fun aRetainedCapOfZeroIsNoLimitAtTheRequestAndAtTheAcceptance() = runTest {
+        // TeamCode #285: its request check compared the raw setting, so 0 refused every transfer. Here the caps come
+        // from the instance's runtime as the server wires them, with maxRetainedSessionsPerMember = 0.
+        val runtime = object : run.ostrom.server.cloud.domain.CloudRuntimeSource {
+            override suspend fun current() =
+                run.ostrom.server.cloud.domain.CloudRuntime(maxRetainedSessionsPerMember = 0)
+        }
+        val lifted = CloudTransfersUseCaseImpl(
+            sessions, transfers, recipients, policy, OrgAuditTrail { audit += it }, clock,
+            run.ostrom.server.runners.infrastructure.CloudRuntimeMemberSessionCaps(runtime),
+        )
+        // Bob already keeps a session: with a raw 0 he would be "at" the cap.
+        running(owner = "bob").copy(state = SessionState.PAUSED).also(sessions::put)
+        val own = running(owner = "carol")
+        val requested = lifted.request(carol, principal, own.id, TransferRequest("bob", false), key).transfer
+        assertEquals(TransferState.ACCEPTED, requested.state)
+        val offered = lifted.request(alice, principal, running().id, TransferRequest("bob", false), key.copy("k-2"))
+        assertEquals(TransferState.ACCEPTED, lifted.accept(bob, principal, offered.transfer.id, null).state)
+    }
+
+    @Test
     fun anExpiredOfferCannotBeAcceptedAndNobodyAcceptsAnotherMembersOffer() = runTest {
         val offered = offer()
         clock.now += CloudTransfer.OFFER_VALIDITY + 1.days

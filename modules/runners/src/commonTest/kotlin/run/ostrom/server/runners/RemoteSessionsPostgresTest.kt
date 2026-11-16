@@ -18,6 +18,7 @@ import run.ostrom.server.runners.domain.DesiredState
 import run.ostrom.server.runners.domain.PermissionBypass
 import run.ostrom.server.runners.domain.RemoteHost
 import run.ostrom.server.runners.domain.RemoteSessionRules
+import run.ostrom.server.runners.domain.SessionFailure
 import run.ostrom.server.runners.domain.SessionKind
 import run.ostrom.server.runners.domain.SessionMode
 import run.ostrom.server.runners.domain.ResumeOutcome
@@ -61,6 +62,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
 /**
@@ -283,6 +285,38 @@ class RemoteSessionsPostgresTest {
             }
             assertEquals(SessionKind.CLOUD, repository.get(ORG_A, paused.id)?.kind)
         }
+
+    @Test
+    fun theRepositoryReopensOnlyARemoteSessionItsDeviceRefused() = serverTest(listOf(RunnersModule), remote) { server ->
+        val repository = server.koin.get<CloudSessionsRepository>()
+        fun ended(reason: String, kind: SessionKind = SessionKind.REMOTE) = session(createdAt = t0).copy(
+            kind = kind,
+            mode = SessionMode.CONVERSATION,
+            host = RemoteHost(LAPTOP, "ostrom", RemoteSessionRules.ASK),
+            state = SessionState.TERMINATED,
+            desiredState = DesiredState.TERMINATED,
+            terminatedAt = t0,
+            terminatedReason = reason,
+            failure = SessionFailure(RemoteSessionRules.HOST_REFUSED, "The device refused to start this session."),
+        )
+        val refused = ended(RemoteSessionRules.HOST_REFUSED)
+        val deleted = ended("deleted")
+        val pod = ended(RemoteSessionRules.HOST_REFUSED, SessionKind.CLOUD)
+        for (s in listOf(refused, deleted, pod)) assertTrue(repository.createWithinCap(s, 10))
+        val later = t0 + 1.seconds
+
+        val reopened = assertNotNull(repository.reopen(ORG_A, refused.id, later, null))
+        assertEquals(
+            listOf<Any?>(SessionState.PAUSED, DesiredState.RUNNING, null, null, null, null, later),
+            with(reopened) { listOf(state, desiredState, phase, failure, terminatedAt, terminatedReason, pausedAt) },
+        )
+        // Once only, in its own organization, and nothing else leaves `terminated`.
+        assertNull(repository.reopen(ORG_A, refused.id, later, null))
+        assertNull(repository.reopen(ORG_B, refused.id, later, null))
+        assertNull(repository.reopen(ORG_A, deleted.id, later, null))
+        assertNull(repository.reopen(ORG_A, pod.id, later, null))
+        assertEquals(SessionState.TERMINATED, repository.get(ORG_A, deleted.id)?.state)
+    }
 
     private companion object {
         /** The test identities' authenticator, which [remote] extends. */

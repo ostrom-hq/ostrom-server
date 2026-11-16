@@ -19,6 +19,7 @@ import run.ostrom.server.runners.domain.RepositoryCloudUsageMeter
 import run.ostrom.server.runners.domain.SessionFailure
 import run.ostrom.server.runners.domain.SessionProfile
 import run.ostrom.server.runners.domain.SessionProfiles
+import run.ostrom.server.runners.domain.DesiredState
 import run.ostrom.server.runners.domain.SessionState
 import run.ostrom.server.runners.fakes.FixedPlans
 import run.ostrom.server.runners.fakes.InMemoryCloudSessionsRepository
@@ -151,6 +152,19 @@ class OnBehalfSessionUseCasesTest {
         )
         assertTrue(audit.all { it.details["effective_member_id"] == "bob" && it.details["owner"] == "bob" })
         assertTrue(audit.all { it.actor == principal && it.subjectId == running.id.toString() })
+    }
+
+    @Test
+    fun aReopenedSessionIsJournaledAsReopened() = runTest {
+        val refused = session(state = SessionState.TERMINATED, desired = DesiredState.TERMINATED, ownerId = "bob").copy(
+            kind = run.ostrom.server.runners.domain.SessionKind.REMOTE,
+            terminatedReason = run.ostrom.server.runners.domain.RemoteSessionRules.HOST_REFUSED,
+        ).also(repository::put)
+
+        change.resume(dana(), refused.id)
+
+        assertEquals(listOf("cloud.session.reopened"), audit.map { it.event })
+        assertEquals("bob", audit.single().details["owner"])
     }
 
     @Test
