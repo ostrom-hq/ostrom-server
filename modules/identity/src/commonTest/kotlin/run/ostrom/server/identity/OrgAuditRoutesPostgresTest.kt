@@ -164,10 +164,10 @@ class OrgAuditRoutesPostgresTest {
     }
 
     /** Changes the table as only its owner or a superuser can: the append-only trigger disabled, then enabled again. */
-    private suspend fun TestServer.tamper(sql: String) = database.superuser.transaction {
-        execute("ALTER TABLE identity_audit_events DISABLE TRIGGER USER").getOrThrow()
-        execute(sql).getOrThrow()
-        execute("ALTER TABLE identity_audit_events ENABLE TRIGGER USER").getOrThrow()
+    private suspend fun TestServer.tamper(sql: String) = database.superuserJdbc.query {
+        exec("ALTER TABLE identity_audit_events DISABLE TRIGGER USER")
+        exec(sql)
+        exec("ALTER TABLE identity_audit_events ENABLE TRIGGER USER")
     }
 
     /** Checks [line] as a client would: the canonical form rebuilt from the line, its hash and its signature. */

@@ -34,15 +34,15 @@ class ServiceKeysQueryPlansTest {
     @Test
     fun theServiceKeyListReadsItsIndex() = serverTest(listOf(IdentityModule)) { server ->
         // Fixtures only: rows of two organizations at once and the statistics, which no request writes.
-        val fixtures = server.database.superuser
-        fixtures.execute(
+        val fixtures = server.database
+        fixtures.superuserOutsideTransaction(
             "INSERT INTO identity_users (id, login, display_name, created_at) " +
                 "VALUES (CAST('$user' AS uuid), 'seed', 'Seed', now())",
-        ).getOrThrow()
-        fixtures.execute(seed(orgB, "AGENT", 20_000, "b")).getOrThrow()
-        fixtures.execute(seed(orgA, "AGENT", 5_000, "a")).getOrThrow()
-        fixtures.execute(seed(orgA, "SERVICE", 40, "s")).getOrThrow()
-        fixtures.execute("VACUUM ANALYZE identity_api_tokens").getOrThrow()
+        )
+        fixtures.superuserOutsideTransaction(seed(orgB, "AGENT", 20_000, "b"))
+        fixtures.superuserOutsideTransaction(seed(orgA, "AGENT", 5_000, "a"))
+        fixtures.superuserOutsideTransaction(seed(orgA, "SERVICE", 40, "s"))
+        fixtures.superuserOutsideTransaction("VACUUM ANALYZE identity_api_tokens")
 
         val plan = server.koin.get<JdbcDatabase>().withOrganization(orgA) {
             plan { liveServiceKeys(orgA, Clock.System.now(), 100) }

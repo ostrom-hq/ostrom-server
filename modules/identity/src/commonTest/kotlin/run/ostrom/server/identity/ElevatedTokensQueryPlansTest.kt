@@ -41,15 +41,15 @@ class ElevatedTokensQueryPlansTest {
     @Test
     fun theListsOfElevatedTokensReadAnIndex() = serverTest(listOf(IdentityModule)) { server ->
         // Fixtures only: rows of two organizations at once and the statistics, which no request writes.
-        val fixtures = server.database.superuser
-        fixtures.execute(person(user, "seed")).getOrThrow()
-        fixtures.execute(person(admin, "admin")).getOrThrow()
-        fixtures.execute(seed(orgB, user, "AGENT", 20_000, "b")).getOrThrow()
-        fixtures.execute(seed(orgA, user, "AGENT", 5_000, "a")).getOrThrow()
-        fixtures.execute(seed(orgA, user, "SERVICE", 40, "s")).getOrThrow()
-        fixtures.execute(seed(orgA, admin, "ADMIN", 40, "e")).getOrThrow()
-        fixtures.execute(seed(orgB, admin, "ADMIN", 400, "f")).getOrThrow()
-        fixtures.execute("VACUUM ANALYZE identity_api_tokens").getOrThrow()
+        val fixtures = server.database
+        fixtures.superuserOutsideTransaction(person(user, "seed"))
+        fixtures.superuserOutsideTransaction(person(admin, "admin"))
+        fixtures.superuserOutsideTransaction(seed(orgB, user, "AGENT", 20_000, "b"))
+        fixtures.superuserOutsideTransaction(seed(orgA, user, "AGENT", 5_000, "a"))
+        fixtures.superuserOutsideTransaction(seed(orgA, user, "SERVICE", 40, "s"))
+        fixtures.superuserOutsideTransaction(seed(orgA, admin, "ADMIN", 40, "e"))
+        fixtures.superuserOutsideTransaction(seed(orgB, admin, "ADMIN", 400, "f"))
+        fixtures.superuserOutsideTransaction("VACUUM ANALYZE identity_api_tokens")
 
         val everyMembers = server.plan(null)
         assertFalse("Seq Scan on identity_api_tokens" in everyMembers, "The list scans the table:\n$everyMembers")
