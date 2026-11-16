@@ -74,6 +74,21 @@ class TestDatabase @Suppress("LongParameterList") private constructor( // Each r
     /** [superuser] on JDBC, for a test on Exposed: opened at its first use, closed with the database. */
     val superuserJdbc: JdbcDatabase by superuserPool
 
+    /**
+     * Runs each of [statements] as the superuser, outside any transaction (autocommit): for what PostgreSQL refuses in
+     * one, `VACUUM` first, before a query plan or a bench is measured.
+     *
+     * @param statements The statements, run one after the other.
+     */
+    suspend fun superuserOutsideTransaction(vararg statements: String) {
+        superuserJdbc.query {
+            // Back to a transaction afterwards, which the block's end commits, empty.
+            connection.autoCommit = true
+            statements.forEach { exec(it) }
+            connection.autoCommit = false
+        }
+    }
+
     /** The name of the owner role, which owns the database, its schema and its tables. */
     val ownerRole: String get() = ownerRoleName(id)
 

@@ -69,6 +69,9 @@ class TestDatabaseTest {
             val owner = database.ownerJdbc.query { currentUser() }
             val superuser = database.superuserJdbc.query { currentUser() }
             assertEquals(database.ownerRole to database.superuserConfig.username, owner to superuser)
+            // VACUUM is refused in a transaction block: run outside one, it passes, and the pool still works after.
+            database.superuserOutsideTransaction("CREATE TABLE vacuumed (n int)", "VACUUM ANALYZE vacuumed")
+            assertEquals(superuser, database.superuserJdbc.query { currentUser() })
         } finally {
             database.close()
         }
