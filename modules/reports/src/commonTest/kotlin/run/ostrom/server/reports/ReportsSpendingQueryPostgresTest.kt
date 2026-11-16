@@ -95,7 +95,7 @@ class ReportsSpendingQueryPostgresTest {
         val before = inOrganization(ORG_A) {
             queryNamed(legacySpending(member = member != null), values) { row ->
                 listOf("dim", "group_key", "label", "micros", "sessions").joinToString("|") {
-                    row.getString(it).toString()
+                    checkNotNull(row.getString(it)) { "$it is null" }
                 }
             }.sorted()
         }

@@ -186,7 +186,9 @@ internal suspend fun TestServer.spendingBySql(orgId: Uuid, memberId: Uuid?, rang
     memberId?.let { values["member_id"] = it }
     return inOrganization(orgId) {
         queryNamed(ReportsSqlBeforeExposed.spending(member = memberId != null), values) { row ->
-            listOf("dim", "group_key", "label", "micros", "sessions").joinToString("|") { row.getString(it).toString() }
+            listOf("dim", "group_key", "label", "micros", "sessions").joinToString("|") {
+                checkNotNull(row.getString(it)) { "$it is null" }
+            }
         }.sorted()
     }
 }

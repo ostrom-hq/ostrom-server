@@ -118,6 +118,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -565,7 +566,7 @@ class GitHubDirectoryPostgresTest {
             GitHubApps.webhookSecretSealed,
         )
         for (column in sealedColumns) {
-            val stored = row[column].orEmpty()
+            val stored = assertNotNull(row[column], "${column.name} is stored")
             assertFalse("secret" in stored || "PRIVATE KEY" in stored, "${column.name} is sealed")
         }
         val otherKey = PostgresGitHubAppStore(server.koin.get(), AesGcmSecretCipher(ByteArray(32) { 8 })).app()
