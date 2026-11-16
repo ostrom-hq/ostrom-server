@@ -135,7 +135,7 @@ class TerminalIsolationTest {
 
         val late = server.ticket(world.alice)
         // A minute later, by the database's clock the tickets live by.
-        server.database.superuser.execute("UPDATE runners_terminal_tickets SET expires_at = now()").getOrThrow()
+        server.database.superuserOutsideTransaction("UPDATE runners_terminal_tickets SET expires_at = now()")
         assertRefused(TerminalCloseCodes.UNAUTHORIZED, ws.attempt("$path?ticket=$late"))
     }
 

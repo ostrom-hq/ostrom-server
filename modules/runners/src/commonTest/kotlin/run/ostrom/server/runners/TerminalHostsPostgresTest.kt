@@ -73,7 +73,7 @@ class TerminalHostsPostgresTest {
         a.renew(ORG_A, session, 1)
         assertEquals("http://b", a.host(ORG_A, session), "An older one's never")
 
-        server.database.superuser.execute("UPDATE runners_terminal_hosts SET expires_at = now()").getOrThrow()
+        server.database.superuserOutsideTransaction("UPDATE runners_terminal_hosts SET expires_at = now()")
         a.renew(ORG_A, session, 1)
         assertEquals("http://a", b.host(ORG_A, session), "A hold past its lease is anyone's")
     }
@@ -85,12 +85,12 @@ class TerminalHostsPostgresTest {
         a.hold(ORG_A, session, 1)
         a.hold(ORG_A, other, 1)
         // The lease past, by the database's clock: the replica died.
-        server.database.superuser.execute("UPDATE runners_terminal_hosts SET expires_at = now()").getOrThrow()
+        server.database.superuserOutsideTransaction("UPDATE runners_terminal_hosts SET expires_at = now()")
         assertNull(a.host(ORG_A, session))
         a.renew(ORG_A, other, 1)
         assertEquals("http://a", a.host(ORG_A, other), "A renewal extends the lease")
 
-        server.database.superuser.execute("UPDATE runners_terminal_hosts SET expires_at = now()").getOrThrow()
+        server.database.superuserOutsideTransaction("UPDATE runners_terminal_hosts SET expires_at = now()")
         server.replica("http://b").hold(ORG_A, Uuid.random(), 1)
         assertEquals(1L, server.count(ORG_A), "The holds past their lease are dropped at the next hold")
     }
@@ -98,15 +98,15 @@ class TerminalHostsPostgresTest {
     @Test
     fun theQueriesOfAHoldScanNoTable() = serverTest(listOf(RunnersModule), testIdentities) { server ->
         // Fixtures only: the holds of two organizations at once and the statistics, which no request writes.
-        val fixtures = server.database.superuser
+        val fixtures = server.database
         listOf(ORG_B to 20_000, ORG_A to 200).forEach { (org, count) ->
-            fixtures.execute(
+            fixtures.superuserOutsideTransaction(
                 "INSERT INTO runners_terminal_hosts (session_id, org_id, epoch, replica_url, expires_at) " +
                     "SELECT gen_random_uuid(), CAST('$org' AS uuid), 1, 'http://r' || (i % 3), " +
                     "now() + (i % 90) * INTERVAL '1 second' FROM generate_series(1, $count) AS i",
-            ).getOrThrow()
+            )
         }
-        fixtures.execute("VACUUM ANALYZE runners_terminal_hosts").getOrThrow()
+        fixtures.superuserOutsideTransaction("VACUUM ANALYZE runners_terminal_hosts")
 
         val database = server.koin.get<JdbcDatabase>()
         mapOf<String, StatementBuilder.() -> Statement<*>>(

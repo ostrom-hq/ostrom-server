@@ -240,14 +240,14 @@ class RunEnginePostgresTest {
         koin.get<AnswerGateUseCase>()(actor, request.id, answer, gate.shownDigest, AnswerChannel.CONSOLE)
     }
 
-    private suspend fun TestServer.audit(orgId: Uuid, runId: String): List<String> = database.superuser.fetchAll(
+    private suspend fun TestServer.audit(orgId: Uuid, runId: String): List<String> = database.superuserTexts(
         "SELECT action FROM identity_audit_events WHERE org_id = CAST('$orgId' AS uuid) " +
             "AND target_type = 'workflow_run' AND target_id = '$runId' ORDER BY sequence",
-    ).getOrThrow().map { it.get("action").asString() }
+    ).map { checkNotNull(it) { "An audit event without an action" } }
 
-    private suspend fun TestServer.visitKeys(runId: String): Long = database.superuser.fetchAll(
-        "SELECT COUNT(*) AS n FROM workflow_runs_visits WHERE run_id = '$runId'",
-    ).getOrThrow().first().get("n").asString().toLong()
+    private suspend fun TestServer.visitKeys(runId: String): Long = checkNotNull(
+        database.superuserTexts("SELECT COUNT(*) AS n FROM workflow_runs_visits WHERE run_id = '$runId'").first(),
+    ) { "A count is never null" }.toLong()
 
     private suspend fun HttpResponse.run(): WorkflowRun =
         OstromJson.decodeFromString(WorkflowRun.serializer(), bodyAsText())
@@ -396,9 +396,9 @@ class RunEnginePostgresTest {
         val step = server.queued(ada.org.id, RunGraph("s", listOf(WorkflowNode("s", WorkflowNodeKind.STEP, "S"))))
         val legacy = server.queued(ada.org.id, RunGraph())
         // A run started before the server played runs has no graph at all.
-        server.database.superuser.fetchAll(
-            "UPDATE workflow_runs_started SET graph = NULL WHERE id = '${legacy.id}' RETURNING id",
-        ).getOrThrow()
+        server.database.superuserOutsideTransaction(
+            "UPDATE workflow_runs_started SET graph = NULL WHERE id = '${legacy.id}'",
+        )
         val ghost = server.queued(ada.org.id, RunGraph("a", listOf(AGENT)), startedBy = "ghost")
         engine.next()
         server.endSession(ada.org.id, sessionOf(failedAgent.id, 1), SessionState.FAILED)
@@ -670,10 +670,10 @@ class RunEnginePostgresTest {
     }
 
     private suspend fun TestServer.agentScopes(orgId: Uuid, scopes: String) {
-        database.superuser.execute(
+        database.superuserOutsideTransaction(
             "UPDATE identity_api_tokens SET scopes = '$scopes' WHERE kind = 'AGENT' " +
                 "AND org_id = CAST('$orgId' AS uuid)",
-        ).getOrThrow()
+        )
     }
 
     @Test

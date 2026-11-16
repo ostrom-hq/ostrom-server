@@ -181,8 +181,7 @@ class CloudFilesRoutesPostgresTest {
             .jsonPrimitive.content
 
     private suspend fun TestServer.scalar(sql: String): String? {
-        val rows = database.superuser.fetchAll("SELECT ($sql)::text AS v").getOrThrow()
-        return rows.map { it.get("v").asStringOrNull() }.single()
+        return database.superuserTexts("SELECT ($sql)::text AS v").single()
     }
 
     private fun sha(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).toHexString()
@@ -274,11 +273,11 @@ class CloudFilesRoutesPostgresTest {
         assertEquals("file_too_large", tooLargeReplay.type())
         assertEquals(1, bucket.objects.size, "A replay stores nothing")
         // A key whose upload still runs.
-        server.database.superuser.execute(
+        server.database.superuserOutsideTransaction(
             "INSERT INTO runners_session_files (id, org_id, session_id, author_id, name, size, client_key, " +
                 "created_at, expires_at) VALUES (gen_random_uuid(), '$ORG_A', '${running.session.id}', '$ALICE', " +
                 "'f', 0, 'u2', now(), now() + interval '1 hour')",
-        ).getOrThrow()
+        )
         val running2 = server.upload(running.path, text, key = "u2")
         assertEquals(HttpStatusCode.Conflict to "file_upload_in_progress", running2.status to running2.type())
 
@@ -338,8 +337,9 @@ class CloudFilesRoutesPostgresTest {
 
         // An ended session takes no file.
         val id = running.session.id
-        server.database.superuser.execute("UPDATE runners_sessions SET desired_state = 'terminated' WHERE id = '$id'")
-            .getOrThrow()
+        server.database.superuserOutsideTransaction(
+            "UPDATE runners_sessions SET desired_state = 'terminated' WHERE id = '$id'",
+        )
         assertEquals(HttpStatusCode.Conflict, server.upload(path, "x".encodeToByteArray()).status)
     }
 
@@ -351,28 +351,28 @@ class CloudFilesRoutesPostgresTest {
             "INSERT INTO runners_session_files (id, org_id, session_id, author_id, name, size, created_at, " +
                 "completed_at, expires_at) SELECT gen_random_uuid(), '$ORG_A', '$id', '$ALICE', 'f', $size, " +
                 "now(), now(), now() + interval '1 day' FROM generate_series(1, $count)"
-        server.database.superuser.execute(rows(20, 1)).getOrThrow()
+        server.database.superuserOutsideTransaction(rows(20, 1))
         val unsent = server.upload(running.path, "x".encodeToByteArray())
         assertEquals(HttpStatusCode.TooManyRequests to "upload_quota", unsent.status to unsent.type())
         assertNull(unsent.headers[HttpHeaders.RetryAfter], "A session's bound clears when its files are sent")
-        server.database.superuser.execute("DELETE FROM runners_session_files").getOrThrow()
-        server.database.superuser.execute(rows(1, CloudFileRules.SESSION_BUFFER_BYTES)).getOrThrow()
+        server.database.superuserOutsideTransaction("DELETE FROM runners_session_files")
+        server.database.superuserOutsideTransaction(rows(1, CloudFileRules.SESSION_BUFFER_BYTES))
         assertEquals("upload_quota", server.upload(running.path, "x".encodeToByteArray()).type())
-        server.database.superuser.execute("DELETE FROM runners_session_files").getOrThrow()
+        server.database.superuserOutsideTransaction("DELETE FROM runners_session_files")
 
         val day = Clock.System.now().toEpochMilliseconds() / CloudFileRules.DAY_MILLIS
-        server.database.superuser.execute(
+        server.database.superuserOutsideTransaction(
             "INSERT INTO runners_file_usage (org_id, member_id, day, bytes, files) " +
                 "VALUES ('$ORG_A', '$ALICE', $day, 0, 500)",
-        ).getOrThrow()
+        )
         val daily = server.upload(running.path, "x".encodeToByteArray())
         assertEquals("upload_quota", daily.type())
         val retry = assertNotNull(daily.headers[HttpHeaders.RetryAfter]).toLong()
         assertTrue(retry in 1..86_400, "Until the UTC day ends: $retry")
         // Bytes count too, and an upload is counted in its author's day.
-        server.database.superuser.execute(
+        server.database.superuserOutsideTransaction(
             "UPDATE runners_file_usage SET files = 0, bytes = ${CloudFileRules.MEMBER_DAILY_BYTES - 3}",
-        ).getOrThrow()
+        )
         assertEquals(HttpStatusCode.Created, server.upload(running.path, "ab".encodeToByteArray()).status)
         assertEquals("1", server.scalar("SELECT files FROM runners_file_usage"))
         assertEquals("upload_quota", server.upload(running.path, "ab".encodeToByteArray()).type())
@@ -386,7 +386,7 @@ class CloudFilesRoutesPostgresTest {
         val second = server.upload(path, png(1_200_000), name = "b.png").body<CloudFileDto>()
         // Another author's file in the same session.
         val danas = Uuid.random().toString()
-        server.database.superuser.execute(completedFile(danas, running.session.id, "dana")).getOrThrow()
+        server.database.superuserOutsideTransaction(completedFile(danas, running.session.id, "dana"))
 
         // What a message may name: at most five distinct files, the author's, unsent, small enough together.
         val six = server.send(path, SendCloudMessageBody("x", fileIds = List(6) { Uuid.random().toString() }))
@@ -432,7 +432,7 @@ class CloudFilesRoutesPostgresTest {
         val image = png(1_200_000)
         val second = server.upload(path, image, name = "b.png").body<CloudFileDto>()
         val danas = Uuid.random().toString()
-        server.database.superuser.execute(completedFile(danas, running.session.id, "dana")).getOrThrow()
+        server.database.superuserOutsideTransaction(completedFile(danas, running.session.id, "dana"))
         val input = server.messageOf(running, "Look", first.id, second.id)
 
         // Not downloadable before its message is delivered to this execution.
@@ -508,23 +508,23 @@ class CloudFilesRoutesPostgresTest {
         val sweep = suspend { server.koin.get<CloudConversationMaintenance>().run() }
         val kept = server.upload(running.path, "keep".encodeToByteArray()).body<CloudFileDto>()
         val old = server.upload(running.path, "old".encodeToByteArray()).body<CloudFileDto>()
-        server.database.superuser.execute(
+        server.database.superuserOutsideTransaction(
             "UPDATE runners_session_files SET expires_at = now() - interval '1 minute' WHERE id = '${old.id}'",
-        ).getOrThrow()
+        )
         // An upload that never completed: its parts are listed, then deleted.
         val draft = Uuid.random()
-        server.database.superuser.execute(
+        server.database.superuserOutsideTransaction(
             "INSERT INTO runners_session_files (id, org_id, session_id, author_id, name, size, created_at, " +
                 "expires_at) " +
                 "VALUES ('$draft', '$ORG_A', '${running.session.id}', '$ALICE', 'f', 0, now() - interval '2 hours', " +
                 "now() - interval '1 hour')",
-        ).getOrThrow()
+        )
         val draftKey = CloudFileKeys.part(FakeArtifactStorage.PREFIX, ORG_A, running.session.id, draft, 0)
         bucket.objects[draftKey] = "x".encodeToByteArray()
         // A past day's counter goes.
-        server.database.superuser.execute(
+        server.database.superuserOutsideTransaction(
             "INSERT INTO runners_file_usage (org_id, member_id, day, bytes, files) VALUES ('$ORG_A', 'old', 1, 1, 1)",
-        ).getOrThrow()
+        )
 
         // The bucket fails: nothing is forgotten, the next pass retries.
         bucket.failing += "list"
@@ -543,15 +543,15 @@ class CloudFilesRoutesPostgresTest {
         assertEquals(setOf(kept.id), server.ids())
 
         // No bucket left: there is nothing to remove, the rows go.
-        server.database.superuser.execute("UPDATE runners_session_files SET deleting_since = now()").getOrThrow()
+        server.database.superuserOutsideTransaction("UPDATE runners_session_files SET deleting_since = now()")
         storage.stored = false
         sweep()
         assertEquals(emptySet(), server.ids())
     }
 
     private suspend fun TestServer.ids(): Set<String> =
-        database.superuser.fetchAll("SELECT id FROM runners_session_files").getOrThrow()
-            .map { it.get("id").asString() }.toSet()
+        database.superuserTexts("SELECT id FROM runners_session_files")
+            .map { checkNotNull(it) { "A file without an id" } }.toSet()
 
     @Test
     fun aDownloadAnswersForTheBytesItFinds() = serverTest(listOf(RunnersModule), overrides()) { server ->
@@ -594,18 +594,18 @@ class CloudFilesRoutesPostgresTest {
         assertIs<CloudFileBegin.Existing>(store.begin(draft(key = "k"), ALICE.toString(), 1))
         // The session ended meanwhile, then was deleted.
         val id = running.session.id
-        val sql = server.database.superuser
-        sql.execute("UPDATE runners_sessions SET state = 'terminated' WHERE id = '$id'").getOrThrow()
+        val sql = server.database
+        sql.superuserOutsideTransaction("UPDATE runners_sessions SET state = 'terminated' WHERE id = '$id'")
         assertEquals("session_not_running", code { store.begin(draft(), ALICE.toString(), 1) })
-        sql.execute("UPDATE runners_sessions SET state = 'running', desired_state = 'terminated' WHERE id = '$id'")
-            .getOrThrow()
+        sql.superuserOutsideTransaction(
+            "UPDATE runners_sessions SET state = 'running', desired_state = 'terminated' WHERE id = '$id'",
+        )
         assertEquals("session_not_running", code { store.begin(draft(), ALICE.toString(), 1) })
-        sql.execute("UPDATE runners_sessions SET desired_state = 'running' WHERE id = '$id'").getOrThrow()
+        sql.superuserOutsideTransaction("UPDATE runners_sessions SET desired_state = 'running' WHERE id = '$id'")
 
         val orphan = draft()
         store.begin(orphan, ALICE.toString(), 1)
-        server.database.superuser.execute("DELETE FROM runners_sessions WHERE id = '${running.session.id}'")
-            .getOrThrow()
+        server.database.superuserOutsideTransaction("DELETE FROM runners_sessions WHERE id = '${running.session.id}'")
         assertEquals("file_expired", code { store.complete(ORG_A, orphan.id, "f", "text/plain", 1, "h", null) })
         store.forget(ORG_A, emptyList())
     }

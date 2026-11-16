@@ -52,7 +52,7 @@ class RunnerConversationStorePostgresTest {
     }
 
     private suspend fun TestServer.sql(statement: String) {
-        database.superuser.execute(statement).getOrThrow()
+        database.superuserOutsideTransaction(statement)
     }
 
     private fun TestServer.runner() = RunnerConversationStoreImpl(koin.get(), clock)

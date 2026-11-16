@@ -53,7 +53,7 @@ class CloudConversationStorePostgresTest {
     }
 
     private suspend fun TestServer.sql(statement: String) {
-        database.superuser.execute(statement).getOrThrow()
+        database.superuserOutsideTransaction(statement)
     }
 
     /** An event as the runner channel will append it (slice 3), with the cursor it moves. */

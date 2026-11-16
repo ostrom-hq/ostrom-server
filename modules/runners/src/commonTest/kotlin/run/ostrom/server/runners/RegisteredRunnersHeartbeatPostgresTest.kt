@@ -135,27 +135,27 @@ class RegisteredRunnersHeartbeatPostgresTest {
     @Test
     fun theHeartbeatsQueriesUseTheirIndexes() = serverTest(listOf(RunnersModule)) { server ->
         val jdbc = server.koin.get<JdbcDatabase>()
-        val fixtures = server.database.superuser
+        val fixtures = server.database
         for ((org, rows) in listOf(ORG_B to 4_000, ORG_A to 100)) {
-            fixtures.execute(
+            fixtures.superuserOutsideTransaction(
                 "INSERT INTO runners_registered (id, org_id, name, labels, key_hash, registered_by, created_at) " +
                     "SELECT gen_random_uuid(), CAST('$org' AS UUID), 'r' || i, '[]', md5('$org' || i), 'dana', now() " +
                     "FROM generate_series(1, $rows) AS i",
-            ).getOrThrow()
+            )
         }
         // Statistics only, which no request writes: the serving role may not vacuum (#68).
-        fixtures.execute("VACUUM ANALYZE runners_registered").getOrThrow()
+        fixtures.superuserOutsideTransaction("VACUUM ANALYZE runners_registered")
         val one = jdbc.inOrg(ORG_A) { RunnersRegistered.selectAll().limit(1).single() }
         val id = one[RunnersRegistered.id]
         val hash = one[RunnersRegistered.keyHash]
         // The function's own query, as `ostrom_router` reads it (its policy opens every row), then the write.
         val plans = linkedMapOf(
             "key of a runner (body of runners_registered_key)" to fixtures
-                .fetchAll(
+                .superuserTexts(
                     "EXPLAIN (ANALYZE, BUFFERS) SELECT r.org_id, r.key_hash FROM runners_registered r " +
                         "WHERE r.id = CAST('$id' AS UUID)",
                 )
-                .getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() },
+                .joinToString("\n") { checkNotNull(it) { "A plan line is never null" } },
             "sign of life" to jdbc.inOrg(ORG_A) {
                 plan { runnerTouch(ORG_A, id, hash, clock.now, 2) }.also { rollback() }
             },

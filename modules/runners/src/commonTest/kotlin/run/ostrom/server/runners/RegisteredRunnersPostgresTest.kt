@@ -250,16 +250,16 @@ class RegisteredRunnersPostgresTest {
 
     @Test
     fun theRequestPathReadsUseTheNameIndex() = serverTest(listOf(RunnersModule)) { server ->
-        val fixtures = server.database.superuser
+        val fixtures = server.database
         for ((org, rows) in listOf(ORG_B to 4_000, ORG_A to 100)) {
-            fixtures.execute(
+            fixtures.superuserOutsideTransaction(
                 "INSERT INTO runners_registered (id, org_id, name, labels, key_hash, registered_by, created_at) " +
                     "SELECT gen_random_uuid(), CAST('$org' AS UUID), 'r' || i, '[]', md5('$org' || i), 'dana', now() " +
                     "FROM generate_series(1, $rows) AS i",
-            ).getOrThrow()
+            )
         }
         // Statistics only, which no request writes: the serving role may not vacuum (#68).
-        fixtures.execute("VACUUM ANALYZE runners_registered").getOrThrow()
+        fixtures.superuserOutsideTransaction("VACUUM ANALYZE runners_registered")
         val jdbc = server.koin.get<JdbcDatabase>()
         val plans = linkedMapOf(
             "list of an organization" to jdbc.inOrg(ORG_A) { plan { runnerList(ORG_A, 100) } },
