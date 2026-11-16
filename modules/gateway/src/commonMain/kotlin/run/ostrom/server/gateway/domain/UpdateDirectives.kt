@@ -7,11 +7,13 @@ import run.ostrom.server.sharing.domain.AccountSlotRepository
 import run.ostrom.server.sharing.domain.ActiveSession
 import run.ostrom.server.sharing.domain.FORECAST_HISTORY
 import run.ostrom.server.sharing.domain.ForecastHistoryUseCase
+import run.ostrom.server.sharing.domain.MemberPoolRepository
 import run.ostrom.server.sharing.domain.QuotaHistoryRepository
 import run.ostrom.server.sharing.domain.SharedAccount
 import run.ostrom.server.sharing.domain.SharedAccountRepository
 import run.ostrom.server.sharing.domain.SharingOrgs
 import run.ostrom.server.sharing.domain.WindowPacing
+import run.ostrom.server.sharing.domain.inPool
 import kotlinx.coroutines.CancellationException
 import kotlin.time.Clock
 import kotlin.time.Duration
@@ -34,7 +36,10 @@ fun interface UpdateDirectivesUseCase {
  * @param groups The accounts lent to members through groups.
  * @param settings The members' concurrency limits and whether shared accounts serve.
  * @param spend Whether a member's budgets still let a call through.
+ * @param pools The members' home pools: a member is paced on the accounts of their pool only, as they are served.
  */
+// One port per owner: accounts, history, slots, groups, settings, spend, pools.
+@Suppress("LongParameterList")
 class PacingSources(
     val accounts: SharedAccountRepository,
     val history: QuotaHistoryRepository,
@@ -42,6 +47,7 @@ class PacingSources(
     val groups: AccountGroups,
     val settings: GatewaySettingsRepository,
     val spend: SpendGuard,
+    val pools: MemberPoolRepository,
 )
 
 /**
@@ -75,8 +81,11 @@ class UpdateDirectivesUseCaseImpl(
         val byId = accounts.associateBy { it.id }
         val pacings = pacings(orgId, accounts, now)
         val stored = directives.stored(orgId)
-        return sessions.groupBy { it.memberId }.flatMap { (member, mine) ->
-            val allowed = allowed(orgId, member, accounts, now)
+        val bySession = sessions.groupBy { it.memberId }
+        // One read for every member advised: TeamCode's `accessible`, the accounts of the member's home pool.
+        val homes = sources.pools.poolsOf(orgId, bySession.keys)
+        return bySession.flatMap { (member, mine) ->
+            val allowed = allowed(orgId, member, accounts.filter { it.inPool(homes[member]) }, now)
             val context = MemberContext(
                 member = member,
                 maximum = config.memberConcurrency[member.toString()]?.coerceAtLeast(0) ?: 0,
@@ -109,7 +118,10 @@ class UpdateDirectivesUseCaseImpl(
         }
     }
 
-    /** The accounts [member] may use: lent to the whole org, to them by name, or to one of their groups. */
+    /**
+     * The accounts of their home pool [member] may use: lent to the whole org, to them by name, or to one of their
+     * groups.
+     */
     private suspend fun allowed(
         orgId: Uuid,
         member: Uuid,

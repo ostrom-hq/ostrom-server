@@ -122,3 +122,12 @@ internal object SharingQuotaHistory : Table("sharing_quota_history") {
 
     override val primaryKey = PrimaryKey(accountId, name, sampleMinute)
 }
+
+/** The home pool of each member in one (version 14). */
+internal object SharingMemberPools : Table("sharing_member_pools") {
+    val orgId = uuid("org_id")
+    val memberId = uuid("member_id")
+    val poolId = text("pool_id")
+
+    override val primaryKey = PrimaryKey(orgId, memberId)
+}

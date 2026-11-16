@@ -256,4 +256,18 @@ val SharingMigrations: List<SchemaMigration> = listOf(
         sql = "ALTER TABLE sharing_accounts ADD COLUMN pool_id TEXT " +
             "CONSTRAINT sharing_accounts_pool_id CHECK (pool_id ~ '^[A-Za-z0-9_-]{1,36}$')",
     ),
+    // TeamCode's member policy `poolId`: each member's home pool, whose accounts alone serve them. A member without a
+    // row is in no pool and uses the accounts in none. The key serves a lease's read of one member.
+    SchemaMigration(
+        version = 14,
+        name = "sharing_member_pools",
+        sql = """
+            CREATE TABLE sharing_member_pools (
+                org_id UUID NOT NULL,
+                member_id UUID NOT NULL,
+                pool_id TEXT NOT NULL CONSTRAINT sharing_member_pools_pool_id CHECK (pool_id ~ '^[A-Za-z0-9_-]{1,36}$'),
+                PRIMARY KEY (org_id, member_id)
+            )
+        """.trimIndent() + ";\n" + tenantTableSql("sharing_member_pools"),
+    ),
 )
