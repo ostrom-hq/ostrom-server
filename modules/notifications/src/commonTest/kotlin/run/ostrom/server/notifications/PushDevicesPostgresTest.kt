@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.notifications
 
+import run.ostrom.server.notifications.infrastructure.NotificationsPushDevices
+import run.ostrom.server.kernel.database.JdbcDatabase
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
+import org.jetbrains.exposed.v1.jdbc.selectAll
 import run.ostrom.server.identity.IdentityModule
 import run.ostrom.server.identity.domain.APP_REDIRECT_URI
 import run.ostrom.server.identity.domain.ApiToken
@@ -31,8 +35,6 @@ import run.ostrom.server.orgs.domain.Org
 import run.ostrom.server.orgs.domain.OrgsRepository
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.Transaction
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.delete
@@ -123,11 +125,9 @@ class PushDevicesPostgresTest {
 
     /** The phones a query of [org]'s transaction sees, or of no organization's. */
     private suspend fun TestServer.phonesSeen(org: Uuid?): Int {
-        val count: suspend (Transaction) -> Int = { tx ->
-            tx.fetchAll(Statement.create("SELECT count(*) AS n FROM notifications_push_devices")).getOrThrow()
-                .first().get("n").asString().toInt()
-        }
-        return if (org == null) driver.transaction { count(this) } else driver.withOrganization(org, count)
+        val database = koin.get<JdbcDatabase>()
+        val count: JdbcTransaction.() -> Int = { NotificationsPushDevices.selectAll().count().toInt() }
+        return if (org == null) database.query(count) else database.withOrganization(org, count)
     }
 
     @Test

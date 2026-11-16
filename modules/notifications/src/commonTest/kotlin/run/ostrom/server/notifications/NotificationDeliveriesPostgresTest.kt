@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.notifications
 
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -78,14 +77,13 @@ class NotificationDeliveriesPostgresTest {
     private fun delivery(org: Uuid, seq: Long, at: Instant = t0, member: Uuid = mia, channel: String = "push") =
         NotificationDelivery(notification(org, "w-$seq", member).copy(eventSeq = seq, createdAt = at), channel, 0)
 
-    private suspend fun TestServer.count(where: String): Long = database.superuser.fetchAll(
-        "SELECT count(*) AS n FROM notifications_deliveries WHERE $where",
-    ).getOrThrow().first().get("n").asLong()
+    private suspend fun TestServer.count(where: String): Long =
+        database.superuserTexts("SELECT count(*) AS n FROM notifications_deliveries WHERE $where").single()!!.toLong()
 
-    private suspend fun TestServer.row(id: Uuid): String = database.superuser.fetchAll(
+    private suspend fun TestServer.row(id: Uuid): String = database.superuserTexts(
         "SELECT state || ':' || attempts || ':' || coalesce(last_error, '-') || ':' || " +
             "(delivered_at IS NOT NULL) AS r FROM notifications_deliveries WHERE id = '$id'",
-    ).getOrThrow().first().get("r").asString()
+    ).single()!!
 
     private fun TestServer.repository(journal: OrgEventJournal = FakeJournal()) =
         NotificationDeliveriesRepositoryImpl(koin.get<JdbcDatabase>()) { journal }
@@ -148,14 +146,14 @@ class NotificationDeliveriesPostgresTest {
         val repository = server.repository()
         val later = delivery(orgA, 1)
         repository.enqueue(JournalPosition(orgA, 0, 1), 1, listOf(later, delivery(orgA, 2)))
-        server.database.superuser.execute(
+        server.database.superuserOutsideTransaction(
             "UPDATE notifications_deliveries SET kind = 'later' WHERE id = '${later.notification.id}'",
-        ).getOrThrow()
+        )
         val claimed = repository.claimDue(orgA, 5, t0 + 1.minutes, 1.minutes)
         assertEquals(listOf(2L), claimed.map { (it as NotificationDelivery).notification.eventSeq })
         assertEquals("failed:0:unknown_kind:false", server.row(later.notification.id))
 
-        server.database.superuser.execute("UPDATE notifications_deliveries SET kind = 'later'").getOrThrow()
+        server.database.superuserOutsideTransaction("UPDATE notifications_deliveries SET kind = 'later'")
         assertEquals(emptyList(), repository.claimDue(orgA, 5, t0 + 1.hours, 1.minutes), "Only unknown kinds")
     }
 
@@ -178,16 +176,16 @@ class NotificationDeliveriesPostgresTest {
             assertEquals(1, server.count("event_seq = 9 AND kind = 'approval_decided' AND body = 'closed'"))
             assertEquals(
                 "approval:${approval.approvalId}:${gate.id}:bob:ana asks for your yes",
-                server.database.superuser.fetchAll(
+                server.database.superuserTexts(
                     "SELECT collapse_key || ':' || gate_id || ':' || approver || ':' || title AS r " +
                         "FROM notifications_deliveries WHERE id = '${approval.id}'",
-                ).getOrThrow().first().get("r").asString(),
+                ).single(),
             )
             assertEquals(1, server.count("approval_id IS NULL AND gate_id IS NULL AND approver IS NULL"), "The wait's")
             val (noRequest, noGate, noApprover) = broken
-            suspend fun unset(row: ApprovalDelivery, column: String) = server.database.superuser.execute(
+            suspend fun unset(row: ApprovalDelivery, column: String) = server.database.superuserOutsideTransaction(
                 "UPDATE notifications_deliveries SET $column = NULL WHERE id = '${row.id}'",
-            ).getOrThrow()
+            )
             unset(noRequest, "approval_id")
             unset(noGate, "gate_id")
             unset(noApprover, "approver")

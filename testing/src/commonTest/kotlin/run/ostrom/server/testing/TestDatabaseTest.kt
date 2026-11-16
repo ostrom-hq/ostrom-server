@@ -72,6 +72,7 @@ class TestDatabaseTest {
             // VACUUM is refused in a transaction block: run outside one, it passes, and the pool still works after.
             database.superuserOutsideTransaction("CREATE TABLE vacuumed (n int)", "VACUUM ANALYZE vacuumed")
             assertEquals(superuser, database.superuserJdbc.query { currentUser() })
+            assertEquals(listOf("a", null), database.superuserTexts("SELECT 'a' UNION ALL SELECT NULL"))
         } finally {
             database.close()
         }

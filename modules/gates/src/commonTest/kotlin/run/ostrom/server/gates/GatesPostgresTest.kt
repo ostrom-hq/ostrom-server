@@ -1,6 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.gates
 
+import run.ostrom.server.gates.infrastructure.GatesGates
+import run.ostrom.server.gates.infrastructure.GatesRequests
+import run.ostrom.server.kernel.database.confineToOrganization
+import run.ostrom.server.kernel.database.databaseNow
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.selectAll
+import kotlin.test.assertFailsWith
 import run.ostrom.core.telemetry.metrics.MeterImpl
 import run.ostrom.core.telemetry.metrics.MetricData
 import run.ostrom.server.kernel.database.JdbcDatabase
@@ -62,7 +72,6 @@ import run.ostrom.server.testing.RecordingDriver
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.checkTime
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.call.body
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -537,29 +546,37 @@ class GatesPostgresTest {
     @Test
     fun rowLevelSecurityHidesOtherOrganizationsEvenWithoutAWhereClause() = gatesTest { server ->
         server.call("agent:a:$session", "/api/v1/gates", push()).body<GateResponse>()
-        // The test server's driver is the serving role, as in production: row level security applies to it.
-        val counts = server.driver.transaction {
-            val none = fetchAll("SELECT COUNT(*) AS n FROM gates_gates").getOrThrow().first().get("n").asString()
-            fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", orgB.toString()))
-                .getOrThrow()
-            val other = fetchAll("SELECT COUNT(*) AS n FROM gates_gates").getOrThrow().first().get("n").asString()
-            fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", orgA.toString()))
-                .getOrThrow()
-            val own = fetchAll("SELECT COUNT(*) AS n FROM gates_gates").getOrThrow().first().get("n").asString()
+        // The test server's pool is the serving role, as in production: row level security applies to it.
+        val database = server.koin.get<JdbcDatabase>()
+        val gates = GatesGates
+        val counts = database.query {
+            val none = gates.selectAll().count()
+            confineToOrganization(orgB)
+            val other = gates.selectAll().count()
+            confineToOrganization(orgA)
+            val own = gates.selectAll().count()
             listOf(none, other, own)
         }
-        assertEquals(listOf("0", "0", "1"), counts, "No org set: nothing; org B: nothing; org A: its gate")
-        val forged = server.driver.transaction {
-            fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", orgB.toString()))
-                .getOrThrow()
-            execute(
-                Statement.create(
-                    "INSERT INTO gates_requests (id, gate_id, org_id, position, approver_id, status, created_at) " +
-                        "SELECT :id, id, :org, 9, 'x', 'PENDING', NOW() FROM gates_gates LIMIT 1",
-                ).bind("id", Uuid.random()).bind("org", orgA),
-            )
+        assertEquals(listOf(0L, 0L, 1L), counts, "No org set: nothing; org B: nothing; org A: its gate")
+        // A request on A's own gate, written with A's id while org B is set: the policy's check refuses it.
+        val gate = server.database.superuserJdbc.query {
+            gates.select(gates.id).where { gates.orgId eq orgA }.single()[gates.id]
         }
-        assertEquals(0L, forged.getOrThrow(), "Org B can neither see nor write org A's rows")
+        val refused = assertFailsWith<ExposedSQLException>("Org B cannot write org A's rows") {
+            database.query {
+                confineToOrganization(orgB)
+                GatesRequests.insert {
+                    it[id] = Uuid.random()
+                    it[gateId] = gate
+                    it[orgId] = orgA
+                    it[position] = 9
+                    it[approverId] = "x"
+                    it[status] = "PENDING"
+                    it[createdAt] = databaseNow()
+                }
+            }
+        }
+        assertTrue("row-level security" in refused.message.orEmpty(), refused.message)
     }
 
     @Test

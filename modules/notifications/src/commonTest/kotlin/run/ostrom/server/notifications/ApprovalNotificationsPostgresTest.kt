@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.notifications
 
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.notifications.infrastructure.NotificationsPushDevices
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.jdbc.selectAll
 import run.ostrom.server.gates.GatesModule
 import run.ostrom.server.events.EventsModule
 import run.ostrom.server.gates.domain.models.Answer
@@ -53,7 +57,6 @@ import run.ostrom.server.orgs.domain.OrgsRepository
 import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.header
@@ -178,12 +181,11 @@ class ApprovalNotificationsPostgresTest {
     )
 
     /** The rows of [org] holding [pushToken], read as the organization. */
-    private suspend fun TestServer.phonesNamed(org: Uuid, pushToken: String): Int = driver.withOrganization(org) { tx ->
-        tx.fetchAll(
-            Statement.create("SELECT count(*) AS n FROM notifications_push_devices WHERE push_token = :t")
-                .bind("t", pushToken),
-        ).getOrThrow().first().get("n").asString().toInt()
-    }
+    private suspend fun TestServer.phonesNamed(org: Uuid, pushToken: String): Int =
+        koin.get<JdbcDatabase>().withOrganization(org) {
+            val d = NotificationsPushDevices
+            d.selectAll().where { d.pushToken eq pushToken }.count().toInt()
+        }
 
     // The router reads an organization from where it first sees it: it sees this one before the gate asks.
     private suspend fun TestServer.routed(org: Uuid) {
@@ -204,10 +206,10 @@ class ApprovalNotificationsPostgresTest {
     }
 
     /** The approvals' rows of [org], as `channel:state:attempts:error`, by channel. */
-    private suspend fun TestServer.approvals(org: Uuid): List<String> = database.superuser.fetchAll(
+    private suspend fun TestServer.approvals(org: Uuid): List<String> = database.superuserTexts(
         "SELECT channel || ':' || state || ':' || attempts || ':' || coalesce(last_error, '-') AS r " +
             "FROM notifications_deliveries WHERE org_id = '$org' AND kind = 'approval' ORDER BY channel",
-    ).getOrThrow().map { it.get("r").asString() }
+    ).map { checkNotNull(it) }
 
     @Test
     fun theApproverHearsOnTheirLivePhonesOfTheGatesOrganizationAndByEmailAndNoOtherPhone() =

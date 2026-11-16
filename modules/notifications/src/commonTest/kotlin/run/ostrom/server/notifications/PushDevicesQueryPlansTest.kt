@@ -36,11 +36,12 @@ class PushDevicesQueryPlansTest {
     @Test
     fun trimmingAndRemovingAMembersPhonesReadTheirIndexes() = serverTest(listOf(NotificationsModule)) { server ->
         // Fixtures only: rows of two organizations at once and the statistics, which no request writes.
-        val fixtures = server.database.superuser
-        fixtures.execute(seed(orgB, "CAST(md5('b' || (i % 500)) AS uuid)", 20_000, "b")).getOrThrow()
-        fixtures.execute(seed(orgA, "CAST(md5('a' || (i % 500)) AS uuid)", 5_000, "a")).getOrThrow()
-        fixtures.execute(seed(orgA, "CAST('$member' AS uuid)", 12, "m")).getOrThrow()
-        fixtures.execute("VACUUM ANALYZE notifications_push_devices").getOrThrow()
+        server.database.superuserOutsideTransaction(
+            seed(orgB, "CAST(md5('b' || (i % 500)) AS uuid)", 20_000, "b"),
+            seed(orgA, "CAST(md5('a' || (i % 500)) AS uuid)", 5_000, "a"),
+            seed(orgA, "CAST('$member' AS uuid)", 12, "m"),
+            "VACUUM ANALYZE notifications_push_devices",
+        )
 
         // The member is also the person of the seeded rows (`user_id`): the same id serves both lookups.
         val statements: List<StatementBuilder.() -> Statement<*>> = listOf(
