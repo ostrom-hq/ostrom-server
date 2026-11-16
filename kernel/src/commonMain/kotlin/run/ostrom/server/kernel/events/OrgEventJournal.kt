@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.kernel.events
 
-import io.github.smyrgeorge.sqlx4k.Transaction
 import kotlinx.serialization.json.JsonObject
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import kotlin.time.Instant
@@ -76,23 +75,9 @@ interface OrgEventJournal {
     suspend fun read(position: JournalPosition, types: Set<OrgEventType>, limit: Int): JournalSlice
 
     /**
-     * Moves [reader]'s cursor from [JournalPosition.from] to [through] inside [transaction], the reader's own
-     * transaction confined to the organization, where it writes the work it made of the events: both commit, or
-     * neither does.
-     *
-     * @param transaction The reader's transaction (`withOrganization`), confined to [JournalPosition.orgId].
-     * @param reader The reader's name.
-     * @param position Where the reader stood when it read.
-     * @param through Where it stands now.
-     *
-     * @return False, with nothing written, when the cursor is no longer at [JournalPosition.from] (another replica
-     *   handled the page): the caller rolls its work back.
-     */
-    suspend fun advanceIn(transaction: Transaction, reader: String, position: JournalPosition, through: Long): Boolean
-
-    /**
-     * [advanceIn] for a reader on Exposed: moves the cursor inside [transaction], the reader's `JdbcDatabase.inOrg`
-     * transaction confined to [JournalPosition.orgId], where it writes its work.
+     * Moves [reader]'s cursor from [JournalPosition.from] to [through] inside [transaction], the reader's
+     * `JdbcDatabase.inOrg` transaction confined to [JournalPosition.orgId], where it writes the work it made of the
+     * events: both commit, or neither does.
      *
      * @param transaction The reader's transaction, confined to [JournalPosition.orgId].
      * @param reader The reader's name.

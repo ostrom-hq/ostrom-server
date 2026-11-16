@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.events
 
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
+import run.ostrom.server.events.infrastructure.EventsWebhookDeliveries
+import run.ostrom.server.events.infrastructure.EventsWebhooks
+import run.ostrom.server.kernel.database.JdbcDatabase
+import org.jetbrains.exposed.v1.jdbc.selectAll
+import org.jetbrains.exposed.v1.core.Table
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.delete
@@ -45,7 +48,6 @@ import run.ostrom.server.kernel.auth.PrincipalChannel
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import run.ostrom.server.kernel.auth.TokenAuthenticator
-import run.ostrom.server.kernel.database.withOrganization
 import run.ostrom.server.kernel.events.OrgEventDraft
 import run.ostrom.server.kernel.events.OrgEventPublisher
 import run.ostrom.server.kernel.events.OrgEventType
@@ -232,9 +234,8 @@ class WebhooksPostgresTest {
         assertEquals(HttpStatusCode.NoContent, removed.status)
         val gone = server.client.get("/api/v1/webhooks/$id") { bearerAuth("owner-a") }
         assertEquals(HttpStatusCode.NotFound, gone.status)
-        val left = server.database.superuser.fetchAll("SELECT COUNT(*) AS n FROM events_webhook_deliveries")
-            .getOrThrow()
-        assertEquals(0, left.first().get("n").asLong(), "Its log went with it")
+        val left = server.database.superuserJdbc.query { EventsWebhookDeliveries.selectAll().count() }
+        assertEquals(0, left, "Its log went with it")
     }
 
     @Test
@@ -251,9 +252,8 @@ class WebhooksPostgresTest {
     private suspend fun TestServer.publish(org: Uuid, type: OrgEventType, subject: String) =
         koin.get<OrgEventPublisher>().publish(org, listOf(OrgEventDraft(type, subject, null)))
 
-    private suspend fun TestServer.count(table: String, org: Uuid): Long = driver.withOrganization(org) { tx ->
-        tx.fetchAll(Statement.create("SELECT COUNT(*) AS n FROM $table")).getOrThrow().first().get("n").asLong()
-    }
+    private suspend fun TestServer.count(table: Table, org: Uuid): Long =
+        koin.get<JdbcDatabase>().inOrg(org) { table.selectAll().count() }
 
     @Test
     fun theWorkerDeliversEachEventOnceSignedAndBacksOffThenDisables() = serverTest(modules, overrides) { server ->
@@ -301,7 +301,7 @@ class WebhooksPostgresTest {
         assertEquals(DeliveryState.DELIVERED, repository.deliveries(orgA, created.webhook.id, 1).single().state)
 
         // The twentieth final failure in a row disables it.
-        server.database.superuser.execute("UPDATE events_webhooks SET failures = 19").getOrThrow()
+        server.database.superuserJdbc.query { exec("UPDATE events_webhooks SET failures = 19") }
         sender.status = 404
         server.publish(orgA, OrgEventType.WAIT_CREATED, "w-3")
         assertEquals(1, deliver())
@@ -312,9 +312,9 @@ class WebhooksPostgresTest {
         assertEquals(0, deliver(), "A disabled webhook queues nothing")
 
         // Organization B sees none of it.
-        assertEquals(0, server.count("events_webhooks", orgB))
-        assertEquals(0, server.count("events_webhook_deliveries", orgB))
-        assertEquals(3, server.count("events_webhook_deliveries", orgA))
+        assertEquals(0, server.count(EventsWebhooks, orgB))
+        assertEquals(0, server.count(EventsWebhookDeliveries, orgB))
+        assertEquals(3, server.count(EventsWebhookDeliveries, orgA))
     }
 
     @Test
@@ -328,9 +328,9 @@ class WebhooksPostgresTest {
         val repository = server.koin.get<WebhooksRepository>()
         val deliver = server.koin.get<DeliverWebhooksUseCase>()
 
-        server.database.superuser
-            .execute("UPDATE events_webhook_deliveries SET created_at = created_at - INTERVAL '2 days'")
-            .getOrThrow()
+        server.database.superuserJdbc.query {
+            exec("UPDATE events_webhook_deliveries SET created_at = created_at - INTERVAL '2 days'")
+        }
         clock.now += 1.days
         // Both tests are older than 24 hours and were never sent: given up.
         assertEquals(2, deliver.maintain())
@@ -344,7 +344,7 @@ class WebhooksPostgresTest {
         service.test(actor, webhook.id)
         repository.erase(orgA)
         assertNull(repository.find(orgA, webhook.id))
-        assertEquals(0, server.count("events_webhook_deliveries", orgA))
+        assertEquals(0, server.count(EventsWebhookDeliveries, orgA))
     }
 
     @Test

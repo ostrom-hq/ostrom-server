@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.events.infrastructure
 
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.Transaction
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import org.jetbrains.exposed.v1.core.SortOrder
@@ -25,7 +23,7 @@ import run.ostrom.server.kernel.events.OrgEventType
 /**
  * [OrgEventJournal] on PostgreSQL (versions 3 and 4 of [EventsMigrations]): the readers' cursors in
  * `events_readers`, found across organizations only through `events_readers_behind`, read and moved inside each
- * organization, in a sqlx4k or an Exposed transaction of the reader's.
+ * organization, in a transaction of the reader's.
  *
  * @param database The serving role's pool.
  */
@@ -68,19 +66,6 @@ class OrgEventJournalImpl(private val database: JdbcDatabase) : OrgEventJournal 
         return JournalSlice(page, if (rows.size > limit) page.last().seq else position.head)
     }
 
-    override suspend fun advanceIn(
-        transaction: Transaction,
-        reader: String,
-        position: JournalPosition,
-        through: Long,
-    ): Boolean = transaction.fetchAll(
-        Statement.create(ADVANCE_SQL)
-            .bind("org_id", position.orgId)
-            .bind("reader", reader)
-            .bind("from", position.from)
-            .bind("through", through),
-    ).getOrThrow().any()
-
     // The Exposed DSL runs in the caller's current transaction, which is [transaction].
     override fun advanceIn(
         transaction: JdbcTransaction,
@@ -97,8 +82,5 @@ class OrgEventJournalImpl(private val database: JdbcDatabase) : OrgEventJournal 
 
     private companion object {
         private val READER = Regex("[a-z][a-z0-9-]{0,31}")
-        const val ADVANCE_SQL =
-            "UPDATE events_readers SET seq = :through " +
-                "WHERE org_id = :org_id AND reader = :reader AND seq = :from RETURNING seq"
     }
 }
