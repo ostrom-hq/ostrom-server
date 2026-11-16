@@ -10,6 +10,8 @@ import run.ostrom.server.kernel.auth.GovernancePreview
 import run.ostrom.server.kernel.auth.GovernanceScopes
 import run.ostrom.server.kernel.auth.GovernanceWrite
 import run.ostrom.server.kernel.auth.holdForConfirmation
+import run.ostrom.server.kernel.errors.ErrorKind
+import run.ostrom.server.kernel.errors.OstromException
 import run.ostrom.server.kernel.http.OstromJson
 import io.ktor.server.application.ApplicationCall
 import kotlinx.serialization.json.JsonElement
@@ -37,7 +39,7 @@ class CompilerGovernanceChange(
         val payload = write.payload
         return when (write.kind) {
             WorkflowWrites.CREATE -> {
-                val document = payload.body().jsonObject
+                val document = payload.document()
                 workflows.check(document)
                 GovernancePreview("Create the workflow ${document.named()}", null, document)
             }
@@ -61,7 +63,7 @@ class CompilerGovernanceChange(
         val payload = write.payload
         return when (write.kind) {
             WorkflowWrites.CREATE ->
-                documentOf(workflows.save(orgId, payload.body().jsonObject, null, by, create = true))
+                documentOf(workflows.save(orgId, payload.document(), null, by, create = true))
             WorkflowWrites.SAVE -> {
                 val request = payload.save()
                 documentOf(workflows.save(orgId, request.workflow, request.expectedVersion, by, create = false))
@@ -94,12 +96,35 @@ class CompilerGovernanceChange(
             body?.let { put(BODY, it) }
         }
 
-        private fun JsonObject.id(): String = getValue(ID).jsonPrimitive.content
+        private fun JsonObject.id(): String = payloadPart { getValue(ID).jsonPrimitive.content }
 
-        private fun JsonObject.body(): JsonElement = getValue(BODY)
+        private fun JsonObject.document(): JsonObject = payloadPart { body().jsonObject }
+
+        private fun JsonObject.body(): JsonElement = payloadPart { getValue(BODY) }
 
         private fun JsonObject.save(): SaveWorkflowRequest =
-            OstromJson.decodeFromJsonElement(SaveWorkflowRequest.serializer(), body())
+            payloadPart { OstromJson.decodeFromJsonElement(SaveWorkflowRequest.serializer(), body()) }
+
+        // A held payload that cannot be read (a part missing or of another shape) is a refused change, never a 500:
+        // the confirmation closes as failed with this reason.
+        @Suppress("TooGenericExceptionCaught")
+        private inline fun <T> payloadPart(read: () -> T): T = try {
+            read()
+        } catch (e: OstromException) {
+            throw e
+        } catch (e: IllegalArgumentException) {
+            throw invalid(e)
+        } catch (e: NoSuchElementException) {
+            throw invalid(e)
+        }
+
+        private fun invalid(cause: Exception) = OstromException(
+            ErrorKind.INVALID_REQUEST,
+            "Invalid workflow: the held change cannot be read (${cause.message.toString().take(MAX_REASON)}).",
+            type = "invalid_workflow",
+        )
+
+        private const val MAX_REASON = 200
     }
 }
 

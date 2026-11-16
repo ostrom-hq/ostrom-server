@@ -3,6 +3,7 @@ package run.ostrom.server.compiler
 
 import run.ostrom.core.api.models.GateAction
 import run.ostrom.core.api.models.NodeRun
+import run.ostrom.core.api.models.WorkflowInput
 import run.ostrom.core.api.models.PackageEnvelope
 import run.ostrom.core.api.models.Workflow
 import run.ostrom.core.api.models.WorkflowNodeKind.AGENT
@@ -54,6 +55,7 @@ import run.ostrom.server.kernel.auth.GovernanceChange
 import run.ostrom.server.kernel.auth.GovernanceConfirmationPending
 import run.ostrom.server.kernel.auth.GovernanceConfirmations
 import run.ostrom.server.kernel.auth.GovernanceConfirmer
+import run.ostrom.server.kernel.auth.GovernanceWrite
 import run.ostrom.server.kernel.auth.GovernanceRequest
 import run.ostrom.server.kernel.auth.GovernanceScopes
 import run.ostrom.server.kernel.auth.MemberDirectory
@@ -543,6 +545,59 @@ class CompilerPostgresTest {
         assertEquals(ErrorKind.INVALID_REQUEST, refused.kind)
         val unnamed = create.copy(payload = CompilerGovernanceChange.payload(null, JsonObject(emptyMap())))
         assertFailsWith<OstromException> { change.preview(orgA, unnamed) }
+    }
+
+    // A workflow as the typed model writes it, every default and null explicit (what the CLI's `harness enforce` and
+    // `harness update` send): `inputs`, `sources`, and on each input `required` and `maxLength`.
+    private fun typedDefaults(name: String, status: WorkflowStatus = WorkflowStatus.ACCEPTED): JsonObject {
+        val workflow = workflow(
+            "deploy",
+            listOf(node("push", TRIGGER, label = "git push on main"), node("yes", GATE, label = "A second says yes")),
+            listOf("push" to "yes", "yes" to null),
+            status = status,
+            name = name,
+        ).copy(start = "push", inputs = listOf(WorkflowInput("branch", "Branch")), sources = emptyList())
+        return kotlinx.serialization.json.Json { encodeDefaults = true; explicitNulls = true }
+            .encodeToJsonElement(Workflow.serializer(), workflow).jsonObject
+    }
+
+    @Test
+    fun aWorkflowWrittenWithTheTypedModelsDefaultsIsAcceptedHeldOrNot() = compilerTest { server ->
+        val change = server.koin.get<GovernanceChange>(named("compiler"))
+        val lead = GovernanceConfirmer(
+            AuthenticatedPrincipal("user:a:lead", PrincipalKind.USER, setOf(GateScopes.ALL_USER)),
+            OrgPrincipal(orgA, Uuid.random(), OrgRole.OWNER),
+        )
+        val body = typedDefaults("Deploy", status = WorkflowStatus.PROPOSED)
+        assertEquals("false", body.getValue("inputs").jsonArray.first().jsonObject.getValue("required").toString())
+        assertEquals(HttpStatusCode.Created, server.call("user:a:lead", "/api/v1/workflows", "POST", body).status)
+
+        val path = "/api/v1/workflows/deploy"
+        val put = server.call("elevated:a:lead", path, "PUT", SaveWorkflowRequest(typedDefaults("Deploy 2"), 1))
+        assertEquals(HttpStatusCode.Accepted, put.status, put.bodyAsText())
+        val save = requests.last().write
+        change.preview(orgA, save)
+        val saved = assertNotNull(change.apply(orgA, save, lead)).jsonObject
+        assertEquals(2, saved.getValue("version").jsonPrimitive.int)
+
+        val direct = server.call("console:a:lead", path, "PUT", SaveWorkflowRequest(typedDefaults("Deploy 3"), 2))
+        assertEquals(HttpStatusCode.OK, direct.status, direct.bodyAsText())
+    }
+
+    @Test
+    fun aHeldWorkflowWriteThatCannotBeReadIsRefusedWithATypedErrorNeverAnInternalOne() = compilerTest { server ->
+        val change = server.koin.get<GovernanceChange>(named("compiler"))
+        fun write(kind: String, id: String?, body: JsonElement?) =
+            GovernanceWrite(kind, CompilerGovernanceChange.payload(id, body))
+        val create = write("workflows.create", null, JsonPrimitive("x"))
+        val save = write("workflows.save", "deploy", JsonArray(emptyList()))
+        val noBody = write("workflows.save", "deploy", null)
+        val noId = write("workflows.delete", null, null)
+        for (write in listOf(create, save, noBody, noId)) {
+            val refused = assertFailsWith<OstromException>(write.kind) { change.preview(orgA, write) }
+            assertEquals(ErrorKind.INVALID_REQUEST, refused.kind, write.kind)
+            assertEquals("invalid_workflow", refused.type, write.kind)
+        }
     }
 
     private fun settings(mode: String, vararg ids: Uuid): JsonObject = JsonObject(
