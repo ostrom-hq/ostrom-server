@@ -176,6 +176,20 @@ interface CloudSessionsRepository {
     ): ResumeOutcome
 
     /**
+     * Reopens a remote session its device refused ([SessionStateMachine.reopenable], TeamCode #282): it becomes
+     * `paused`, wanted `running`, with no failure, end or expiry left, and the reconciler gives it back to its
+     * device's queue. Any other session, or one that changed since, is left as it is.
+     *
+     * @param orgId The organization.
+     * @param id The session.
+     * @param now The time.
+     * @param journal The audit entry of the change, written in its transaction (as [resumeWithinCap]'s).
+     *
+     * @return The session reopened, or null when it is not (or no longer) reopenable.
+     */
+    suspend fun reopen(orgId: Uuid, id: Uuid, now: Instant, journal: OrgAuditRecord?): CloudSession?
+
+    /**
      * Starts an execution of a cloud session within its owner's running cap (TeamCode's `startExecution`), serialized
      * per organization like [createWithinCap]: [next] is written ([compareAndSet]) unless the owner already runs
      * [memberRunning] cloud sessions with an execution started, other than this one, or an older start of theirs waits

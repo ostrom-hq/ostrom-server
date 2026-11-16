@@ -13,7 +13,10 @@ import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.config.MapConfigSource
 import run.ostrom.server.kernel.http.docs.API_OPENAPI_PATH
 import run.ostrom.server.kernel.settings.InstanceSettings
+import run.ostrom.server.runners.domain.CloudSessionsRepository
+import run.ostrom.server.runners.domain.ReconcileCloudSessionUseCase
 import run.ostrom.server.runners.domain.RemoteSessionRules
+import run.ostrom.server.runners.domain.SessionState
 import run.ostrom.server.runners.fakes.ALICE
 import run.ostrom.server.runners.fakes.ALICE_USER
 import run.ostrom.server.runners.fakes.BOB_LAPTOP
@@ -61,9 +64,11 @@ import kotlinx.serialization.json.jsonPrimitive
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
+import kotlin.uuid.Uuid
 
 /**
  * The device daemon's routes against a real PostgreSQL (TeamCode's daemon route tests): the daemon of the caller's
@@ -190,6 +195,53 @@ class DeviceDaemonRoutesPostgresTest {
             val stopped = http.delete("/api/v1/devices/current/daemon") { bearerAuth("alice-laptop") }
             assertEquals(HttpStatusCode.NoContent, stopped.status)
             assertNull(http.folders().daemon)
+        }
+
+    @Test
+    fun aRefusedSessionIsReopenedByItsOwnerAndTheQueueHandsItOutAgain() =
+        serverTest(listOf(RunnersModule), daemon) { server ->
+            val http = server.client
+            val sessions = server.koin.get<CloudSessionsRepository>()
+            val reconcile = server.koin.get<ReconcileCloudSessionUseCase>()
+            suspend fun pass(id: String) = reconcile(assertNotNull(sessions.get(ORG_A, Uuid.parse(id))))
+            suspend fun create() = http.post("/api/v1/cloud/sessions") {
+                bearerAuth("alice")
+                contentType(ContentType.Application.Json)
+                setBody(start)
+            }.body<CloudSessionResponse>()
+            suspend fun resume(id: String) = http.post("/api/v1/cloud/sessions/$id/resume") { bearerAuth("alice") }
+            http.publish("alice-laptop", listOf(folder))
+            http.poll("alice-laptop")
+            val refused = create()
+            assertEquals(HttpStatusCode.OK, http.refuse("alice-laptop", refused.id).status)
+            pass(refused.id)
+            val ended = assertNotNull(sessions.get(ORG_A, Uuid.parse(refused.id)))
+            assertEquals(
+                SessionState.TERMINATED to RemoteSessionRules.HOST_REFUSED,
+                ended.state to ended.terminatedReason,
+            )
+
+            // TeamCode #282: a refusal ended it, but its conversation is still on the device; its owner reopens it.
+            val reopened = resume(refused.id)
+            assertEquals(HttpStatusCode.Accepted, reopened.status, reopened.bodyAsText())
+            assertEquals(
+                listOf<Any?>("paused", "running", null, null),
+                reopened.body<CloudSessionResponse>().let {
+                    listOf(it.status, it.desiredStatus, it.terminatedReason, it.failure)
+                },
+            )
+            pass(refused.id)
+            val waiting = assertNotNull(sessions.get(ORG_A, Uuid.parse(refused.id)))
+            assertEquals(SessionState.RESUMING to RemoteSessionRules.WAITING_HOST, waiting.state to waiting.phase)
+            val order = http.poll("alice-laptop").body<DaemonPollResponse>().orders.single()
+            assertEquals(refused.id to "resuming", order.sessionId to order.status)
+
+            // A session that was deleted stays ended.
+            val deleted = create()
+            http.delete("/api/v1/cloud/sessions/${deleted.id}") { bearerAuth("alice") }
+            pass(deleted.id)
+            assertEquals(HttpStatusCode.Conflict, resume(deleted.id).status)
+            assertEquals(SessionState.TERMINATED, sessions.get(ORG_A, Uuid.parse(deleted.id))?.state)
         }
 
     @Test

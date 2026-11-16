@@ -340,6 +340,55 @@ class SessionUseCasesTest {
     }
 
     @Test
+    fun aRemoteSessionItsDeviceRefusedIsReopenedByResumingItAndNothingElseIs() = runTest {
+        val remote = run.ostrom.server.runners.domain.SessionKind.REMOTE
+        val refused = session(state = SessionState.TERMINATED, desired = DesiredState.TERMINATED).copy(
+            kind = remote,
+            terminatedReason = run.ostrom.server.runners.domain.RemoteSessionRules.HOST_REFUSED,
+            terminatedAt = clock.now(),
+            failure = run.ostrom.server.runners.domain.SessionFailure("host_refused", "Refused (folder_missing)."),
+        ).also(repository::put)
+        // TeamCode #282: it never ran and its conversation is still on the device.
+        val reopened = change.resume(alice, refused.id)
+        assertEquals(
+            listOf<Any?>(SessionState.PAUSED, DesiredState.RUNNING, null, null, null, null),
+            with(reopened) { listOf(state, desiredState, phase, terminatedReason, terminatedAt, failure) },
+        )
+        assertEquals(clock.now(), repository.next[refused.id], "The reconciler hands it to the queue at once")
+        // Once reopened, a second resume is an ordinary one: it changes nothing.
+        assertEquals(DesiredState.RUNNING, change.resume(alice, refused.id).desiredState)
+
+        // Deleted, expired, or a pod's session: it stays ended.
+        val deleted = refused.copy(id = Uuid.random(), terminatedReason = "deleted").also(repository::put)
+        val pod = refused.copy(id = Uuid.random(), kind = run.ostrom.server.runners.domain.SessionKind.CLOUD)
+            .also(repository::put)
+        val stillEnding = refused.copy(id = Uuid.random(), state = SessionState.CREATING).also(repository::put)
+        for (ended in listOf(deleted, pod, stillEnding)) {
+            assertFailsWith<CloudSessionStateException> { change.resume(alice, ended.id) }
+            assertEquals(ended, repository.sessions.getValue(ended.id))
+        }
+    }
+
+    @Test
+    fun aRefusedSessionReopenedMeanwhileIsResumedAsItIsNow() = runTest {
+        val refused = session(state = SessionState.TERMINATED, desired = DesiredState.TERMINATED).copy(
+            kind = run.ostrom.server.runners.domain.SessionKind.REMOTE,
+            terminatedReason = run.ostrom.server.runners.domain.RemoteSessionRules.HOST_REFUSED,
+        ).also(repository::put)
+        val paused =
+            refused.copy(state = SessionState.PAUSED, desiredState = DesiredState.PAUSED, terminatedReason = null)
+        // Another resume reopened it between the read and the write, and its owner paused it again.
+        val racing = object : run.ostrom.server.runners.domain.CloudSessionsRepository by repository {
+            override suspend fun reopen(orgId: Uuid, id: Uuid, now: Instant, journal: OrgAuditRecord?) =
+                null.also { repository.put(paused) }
+        }
+        val resumed = ChangeCloudSessionUseCaseImpl(racing, plans, RepositoryCloudUsageMeter(racing), clock)
+            .resume(alice, refused.id)
+
+        assertEquals(SessionState.PAUSED to DesiredState.RUNNING, resumed.state to resumed.desiredState)
+    }
+
+    @Test
     fun aLocalSessionIsNeitherPausedNorResumedByAPerson() = runTest {
         val kind = run.ostrom.server.runners.domain.SessionKind.LOCAL
         val running = session(state = SessionState.RUNNING).copy(kind = kind).also(repository::put)
