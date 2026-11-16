@@ -9,6 +9,9 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import org.postgresql.ds.PGSimpleDataSource
 
+/** The PostgreSQL advisory lock `ostrom-server migrate` holds: the bytes of "ostrom". */
+internal const val MIGRATION_LOCK_KEY = 0x6F7374726F6DL
+
 /**
  * `ostrom-server migrate` on Flyway: every module's migrations, in module order, with the owner's credentials, while
  * one connection holds the PostgreSQL advisory lock [MIGRATION_LOCK_KEY]. Init containers that migrate at the same

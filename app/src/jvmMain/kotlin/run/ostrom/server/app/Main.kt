@@ -8,9 +8,7 @@ import run.ostrom.server.kernel.config.ServerConfig
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.MigrationRunner
 import run.ostrom.server.kernel.database.MigrationsNotAppliedException
-import run.ostrom.server.kernel.database.PoolHealthCheck
 import run.ostrom.server.kernel.database.UnsafeDatabaseRoleException
-import run.ostrom.server.kernel.database.connectPostgres
 import run.ostrom.server.kernel.database.migrateModules
 import run.ostrom.server.kernel.database.requireRowLevelSecurity
 import run.ostrom.server.kernel.http.configureHttp
@@ -23,7 +21,6 @@ import run.ostrom.server.kernel.observability.OstromMetrics
 import run.ostrom.server.kernel.observability.ProcessMetrics
 import run.ostrom.server.kernel.observability.TelemetryLogger
 import run.ostrom.server.kernel.signing.Ed25519InstanceSigner
-import io.github.smyrgeorge.sqlx4k.Driver
 import kotlin.system.exitProcess
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -85,7 +82,6 @@ private fun serve() {
         logger.warn("the serving process received the migration credentials: give them to `migrate` only")
     }
     val modules = serverModules()
-    var driver: Driver? = null
     var koin: Koin? = null
     var jdbc: JdbcDatabase? = null
     // A failing background job is logged with its class only (its message may quote a provider error), and the other
@@ -95,23 +91,11 @@ private fun serve() {
     }
     val workers = CoroutineScope(SupervisorJob() + Dispatchers.Default + failures)
     try {
-        // OSTROM_DATABASE_MAX_CONNECTIONS is split between sqlx4k's pool and the JVM pool while both remain (JVM step
-        // 4): `/ready` reads the JVM pool's state, and the modules on Exposed query it.
-        val database = connectPostgres(config.database.forDriver()).also { driver = it }
-        runBlocking { database.requireRowLevelSecurity() }
-        val pool = JdbcDatabase(config.database, config.database.jdbcConnections).also { jdbc = it }
+        // The one pool of OSTROM_DATABASE_MAX_CONNECTIONS: the modules query it, `/ready` reads its state.
+        val pool = JdbcDatabase(config.database, config.database.maxConnections).also { jdbc = it }
+        runBlocking { pool.requireRowLevelSecurity() }
         val signer = runBlocking { Ed25519InstanceSigner.loadOrCreate(config.signingKeyFile) }
-        val kernel = kernelModule(
-            logger,
-            database,
-            signer,
-            source,
-            telemetry = telemetry,
-            metrics = metrics,
-            databaseCheck = PoolHealthCheck(pool::state),
-            migrationRunner = pool.migrationRunner(logger),
-            jdbc = pool,
-        )
+        val kernel = kernelModule(logger, pool, signer, source, telemetry = telemetry, metrics = metrics)
         val server = serverKoin(kernel, modules).also { koin = it }
         runBlocking {
             val migrations = server.get<MigrationRunner>()
@@ -127,10 +111,10 @@ private fun serve() {
         logger.info("server stopped")
     } catch (error: Throwable) { // not coroutine-reachable: the process entry point, outside any coroutine.
         failed(logger, "server stopped on a failure", error)
-        stopThenFlush(telemetry, exporters) { shutDown(workers, koin, driver, jdbc) }
+        stopThenFlush(telemetry, exporters) { shutDown(workers, koin, jdbc) }
         exitProcess(EXIT_FAILURE)
     }
-    stopThenFlush(telemetry, exporters) { shutDown(workers, koin, driver, jdbc) }
+    stopThenFlush(telemetry, exporters) { shutDown(workers, koin, jdbc) }
 }
 
 /** Applies every module's migrations under the migration lock, with the owner's credentials (Flyway), then exits. */
@@ -172,16 +156,13 @@ private fun oneShot(
     }
     val logger = JsonLogger(config.logLevel)
     val modules = serverModules()
-    var driver: Driver? = null
     var koin: Koin? = null
     var jdbc: JdbcDatabase? = null
     val workers = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     try {
-        val database = connectPostgres(config.database.forDriver()).also { driver = it }
-        val pool = JdbcDatabase(config.database, config.database.jdbcConnections).also { jdbc = it }
+        val pool = JdbcDatabase(config.database, config.database.maxConnections).also { jdbc = it }
         val signer = runBlocking { Ed25519InstanceSigner.loadOrCreate(config.signingKeyFile) }
-        val kernel =
-            kernelModule(logger, database, signer, source, migrationRunner = pool.migrationRunner(logger), jdbc = pool)
+        val kernel = kernelModule(logger, pool, signer, source)
         val server = serverKoin(kernel, modules).also { koin = it }
         val text = runBlocking {
             val migrations = server.get<MigrationRunner>()
@@ -191,14 +172,14 @@ private fun oneShot(
         }
         println(text)
     } catch (error: UsageException) {
-        shutDown(workers, koin, driver, jdbc)
+        shutDown(workers, koin, jdbc)
         usage(error)
     } catch (error: Throwable) { // not coroutine-reachable: the process entry point, outside any coroutine.
         failed(logger, failure, error)
-        shutDown(workers, koin, driver, jdbc)
+        shutDown(workers, koin, jdbc)
         exitProcess(EXIT_FAILURE)
     }
-    shutDown(workers, koin, driver, jdbc)
+    shutDown(workers, koin, jdbc)
 }
 
 private fun loadSource(): ConfigSource = try {
@@ -240,11 +221,10 @@ private fun failed(logger: Logger, message: String, error: Throwable) {
 }
 
 // The JDBC pool is closed even when a module's stop fails, so that its threads never hold the JVM up.
-private fun shutDown(workers: CoroutineScope, koin: Koin?, driver: Driver?, jdbc: JdbcDatabase?) {
+private fun shutDown(workers: CoroutineScope, koin: Koin?, jdbc: JdbcDatabase?) {
     try {
         workers.cancel()
         koin?.close()
-        runBlocking { driver?.close() }
     } finally {
         jdbc?.close()
     }

@@ -2,6 +2,7 @@
 package run.ostrom.server.kernel.config
 
 import run.ostrom.core.telemetry.TelemetrySettings
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.http.CallCeilingSettings
 import run.ostrom.server.kernel.http.ReadLimits
 import run.ostrom.server.kernel.logging.LogLevel
@@ -60,10 +61,9 @@ data class ServerConfig(
         private const val MAX_PORT = 65535
         private const val DEFAULT_MAX_CONNECTIONS = 10
 
-        // TeamCode's bounds are 2 to 64 (`TEAMCODE_DATABASE_POOL_SIZE`). While sqlx4k's pool remains beside the JDBC
-        // one (JVM step 4), each gets a share of at least 2, so the floor is 4 until the last module leaves sqlx4k.
-        private const val MIN_CONNECTIONS = 4
-        private const val MAX_CONNECTIONS = 64
+        // TeamCode's bounds (`TEAMCODE_DATABASE_POOL_SIZE`), the JDBC pool's.
+        private const val MIN_CONNECTIONS = JdbcDatabase.MIN_POOL_SIZE
+        private const val MAX_CONNECTIONS = JdbcDatabase.MAX_POOL_SIZE
         private const val DEFAULT_DRAIN_DELAY_SECONDS = 5
         private const val MAX_DRAIN_DELAY_SECONDS = 10
         private const val DEFAULT_DRAIN_GRACE_SECONDS = 5
@@ -240,8 +240,8 @@ data class ServerConfig(
  * @property url The connection URL without credentials, e.g. `postgresql://localhost:5432/ostrom`.
  * @property username The database user.
  * @property password The database password.
- * @property maxConnections The connections this process opens at most, its pools together (the listening connection of
- *   `DatabaseNotifications` apart).
+ * @property maxConnections The connections of this process's pool (`JdbcDatabase`), the listening connections of
+ *   `DatabaseNotifications` apart.
  */
 data class DatabaseConfig(
     val url: String,
@@ -249,18 +249,6 @@ data class DatabaseConfig(
     val password: String,
     val maxConnections: Int,
 ) {
-    /**
-     * The sqlx4k pool's share of [maxConnections] while it remains beside the JDBC pool (JVM step 4): the smaller
-     * half. The JDBC pool takes all of [maxConnections] once the last module has left sqlx4k.
-     */
-    val driverConnections: Int get() = maxConnections / 2
-
-    /** The JDBC pool's share of [maxConnections]: the larger half, the modules on Exposed (identity first) using it. */
-    val jdbcConnections: Int get() = maxConnections - driverConnections
-
-    /** This configuration sized for sqlx4k's pool: [driverConnections] connections, the only one to open it with. */
-    fun forDriver(): DatabaseConfig = copy(maxConnections = driverConnections)
-
     override fun toString(): String =
         "DatabaseConfig(url=$url, username=$username, password=***, maxConnections=$maxConnections)"
 

@@ -54,7 +54,6 @@ kotlin {
             // The engine of that client: its `dnsResolver` is where the address is checked and pinned.
             implementation(libs.ktor.client.cio)
             api(libs.koin.core)
-            api(libs.sqlx4k.postgres)
             api(libs.kotlinx.io)
             api(libs.ostrom.telemetry)
             implementation(libs.cryptography.core)

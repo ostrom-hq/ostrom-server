@@ -5,9 +5,6 @@ import run.ostrom.server.kernel.logging.JsonLogger
 import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.testing.TestDatabase
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -26,6 +23,9 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import org.flywaydb.core.api.FlywayException
+import org.jetbrains.exposed.v1.core.LongColumnType
+import org.jetbrains.exposed.v1.core.TextColumnType
+import org.jetbrains.exposed.v1.core.statements.StatementType
 import org.koin.core.module.Module
 import org.koin.dsl.module
 
@@ -54,8 +54,28 @@ class FlywayMigrationRunnerTest {
     private fun TestDatabase.runner(pause: Duration = 1.seconds, attempts: Int = 2) =
         FlywayMigrationRunner(migrationSource(ownerConfig), logger, pause, attempts)
 
-    private suspend fun TestDatabase.count(table: String): Long =
-        owner.fetchAll(Statement.create("SELECT count(*) AS n FROM $table")).getOrThrow().single().get("n").asLong()
+    private suspend fun JdbcDatabase.long(sql: String): Long = query {
+        exec(sql, explicitStatementType = StatementType.SELECT) { rows -> rows.next(); rows.getLong(1) }!!
+    }
+
+    private suspend fun TestDatabase.count(table: String): Long = ownerJdbc.long("SELECT count(*) FROM $table")
+
+    // What the first migrator left: the migrations' tables, and one row per version, its checksum the hash of the SQL.
+    private suspend fun TestDatabase.legacyHistory(vararg applied: SchemaMigration) {
+        ownerJdbc.query {
+            exec("CREATE TABLE _migrations_probe (version BIGINT, checksum TEXT)")
+            applied.forEach {
+                exec(it.sql)
+                exec(
+                    "INSERT INTO _migrations_probe (version, checksum) VALUES (?, ?)",
+                    listOf(
+                        LongColumnType() to it.version,
+                        TextColumnType() to FlywayMigrationRunner.legacyChecksum(it),
+                    ),
+                )
+            }
+        }
+    }
 
     private fun applied(): Int = synchronized(lines) { lines.count { "\"msg\":\"migration applied\"" in it } }
 
@@ -86,28 +106,34 @@ class FlywayMigrationRunnerTest {
         }
     }
 
-    // AUDIT-RLS R8, as for sqlx4k's history: the serving role reads Flyway's, and the older one, and never writes them.
+    // AUDIT-RLS R8: the serving role reads Flyway's history and the first migrator's, and never writes them.
     @Test
     fun onlyTheOwnerWritesTheHistory() {
         databaseTest { database ->
             val runner = database.runner()
             runner.migrate("probe", first)
             assertFalse(database.canWrite(database.servingRole, "flyway_probe"), "Serving role writes the history")
-            database.superuser.execute("GRANT ALL ON flyway_probe TO ${database.servingRole}").getOrThrow()
+            database.superuserJdbc.query { exec("GRANT ALL ON flyway_probe TO ${database.servingRole}") }
             runner.migrate("probe", first)
             assertFalse(database.canWrite(database.servingRole, "flyway_probe"), "Write not revoked again")
             assertTrue(database.canWrite(database.servingRole, "probe_items"), "Module tables keep their grants")
-            database.owner.execute("CREATE TABLE _migrations_probe (version BIGINT, checksum TEXT)").getOrThrow()
-            database.superuser.execute("GRANT ALL ON _migrations_probe TO ${database.servingRole}").getOrThrow()
+            database.legacyHistory()
+            database.superuserJdbc.query { exec("GRANT ALL ON _migrations_probe TO ${database.servingRole}") }
             runner.migrate("probe", first)
             assertFalse(database.canWrite(database.servingRole, "_migrations_probe"), "The older history is writable")
         }
     }
 
+    // The first migrator wrote the SQL's Java hash as decimal; changing the formula would orphan every such history.
     @Test
-    fun adoptsWhatSqlx4kAppliedWithoutRunningItAgain() {
+    fun theLegacyChecksumIsTheJavaHashOfTheSql() {
+        assertEquals("1070588878", FlywayMigrationRunner.legacyChecksum(SchemaMigration(1, "x", "SELECT 1;")))
+    }
+
+    @Test
+    fun adoptsWhatTheFirstMigratorAppliedWithoutRunningItAgain() {
         databaseTest { database ->
-            MigrationRunnerImpl(database.owner, logger).migrate("probe", second)
+            database.legacyHistory(*second.toTypedArray())
             val before = applied()
             val runner = database.runner()
             runner.migrate("probe", third)
@@ -125,22 +151,22 @@ class FlywayMigrationRunnerTest {
     @Test
     fun refusesToAdoptAHistoryTheCodeNoLongerMatches() {
         databaseTest { database ->
-            MigrationRunnerImpl(database.owner, logger).migrate("probe", second)
+            database.legacyHistory(*second.toTypedArray())
             val edited = listOf(first.single().copy(sql = "CREATE TABLE probe_items (id TEXT PRIMARY KEY);")) +
                 second.drop(1)
             val runner = database.runner()
             val refused = assertFailsWith<MigrationsNotAppliedException> { runner.migrate("probe", edited) }
             assertTrue("[1]" in refused.message.orEmpty())
             // A history with a gap (a version missing below the last one) is refused too.
-            database.owner.execute("DELETE FROM _migrations_probe WHERE version = 1").getOrThrow()
+            database.ownerJdbc.query { exec("DELETE FROM _migrations_probe WHERE version = 1") }
             assertFailsWith<MigrationsNotAppliedException> { runner.migrate("probe", second) }
         }
     }
 
     @Test
-    fun adoptsAnEmptySqlx4kHistoryAtTheStart() {
+    fun adoptsAnEmptyFirstMigratorHistoryAtTheStart() {
         databaseTest { database ->
-            database.owner.execute("CREATE TABLE _migrations_probe (version BIGINT, checksum TEXT)").getOrThrow()
+            database.legacyHistory()
             database.runner().migrate("probe", first)
             assertEquals(1, database.count("flyway_probe WHERE type = 'BASELINE' AND version = '0'"))
             assertEquals(1, database.count("flyway_probe WHERE version = '1' AND success"))
@@ -152,11 +178,13 @@ class FlywayMigrationRunnerTest {
         databaseTest { database ->
             val runner = database.runner()
             runner.migrate("probe", first)
-            database.owner.execute(
-                "INSERT INTO flyway_probe (installed_rank, version, description, type, script, checksum, " +
-                    "installed_by, execution_time, success) " +
-                    "VALUES (100, '2', 'add_name', 'JDBC', 'add_name', 0, current_user, 0, false)",
-            ).getOrThrow()
+            database.ownerJdbc.query {
+                exec(
+                    "INSERT INTO flyway_probe (installed_rank, version, description, type, script, checksum, " +
+                        "installed_by, execution_time, success) " +
+                        "VALUES (100, '2', 'add_name', 'JDBC', 'add_name', 0, current_user, 0, false)",
+                )
+            }
             val missing = assertFailsWith<MigrationsNotAppliedException> { runner.verify("probe", second) }
             assertTrue("[2]" in missing.message.orEmpty())
         }
@@ -247,18 +275,20 @@ class FlywayMigrationRunnerTest {
         }
     }
 
-    private suspend fun heldMigrationLocks(database: TestDatabase): Long = database.superuser.fetchAll(
+    private suspend fun heldMigrationLocks(database: TestDatabase): Long = database.superuserJdbc.long(
         // This test's database only: other tests' passes take the same key on theirs at the same time.
-        "SELECT count(*) AS n FROM pg_locks WHERE locktype = 'advisory' AND objid = " +
+        "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = " +
             (MIGRATION_LOCK_KEY and 0xFFFFFFFFL) +
             " AND database = (SELECT oid FROM pg_database WHERE datname = current_database())",
-    ).getOrThrow().single().get("n").asLong()
+    )
 
-    private suspend fun TestDatabase.canWrite(role: String, table: String): Boolean = owner.fetchAll(
-        Statement.create(
-            "SELECT has_table_privilege(:role, :table, 'INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') AS w",
-        ).bind("role", role).bind("table", table),
-    ).getOrThrow().single().get("w").asBoolean()
+    private suspend fun TestDatabase.canWrite(role: String, table: String): Boolean = ownerJdbc.query {
+        exec(
+            "SELECT has_table_privilege(?, ?, 'INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')",
+            listOf(TextColumnType() to role, TextColumnType() to table),
+            StatementType.SELECT,
+        ) { rows -> rows.next(); rows.getBoolean(1) }!!
+    }
 
     private fun SchemaMigration.renamed(prefix: String) = copy(sql = sql.replace("probe_items", "${prefix}_items"))
 

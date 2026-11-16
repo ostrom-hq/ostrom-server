@@ -1,25 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.kernel.database
 
-import run.ostrom.server.kernel.logging.Logger
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
-import io.github.smyrgeorge.sqlx4k.impl.migrate.MigrationFile
-
 /**
  * Applies the migrations of each module, in the order of the modules, each module with its own history table
- * (`_migrations_<module>`) so that two modules never compete for a version number.
+ * (`flyway_<module>`, [FlywayMigrationRunner]) so that two modules never compete for a version number.
  */
 interface MigrationRunner {
     /**
      * Applies the migrations a module has not applied yet, and verifies the checksums of those it has. Then the history
-     * table is left writable by its owner alone (see [MigrationRunnerImpl]).
+     * table is left writable by its owner alone ([ownerOnlySql]).
      *
      * @param module The module name (lower-case letters, digits and `-`).
      * @param migrations The module's migrations.
      *
-     * @throws io.github.smyrgeorge.sqlx4k.SQLError When a migration fails or an applied one was edited.
+     * @throws MigrationsNotAppliedException When an applied migration was edited.
      */
     suspend fun migrate(module: String, migrations: List<SchemaMigration>)
 
@@ -48,68 +42,6 @@ class MigrationsNotAppliedException(module: String, versions: List<Long>) : Ille
 )
 
 /**
- * [MigrationRunner] on sqlx4k's migrator: each module's migrations run in one transaction per file. Concurrent
- * passes are serialized by [migrateUnderLock].
- *
- * @param driver The database.
- * @param logger Where applied migrations are reported.
- */
-class MigrationRunnerImpl(
-    private val driver: Driver,
-    private val logger: Logger,
-) : MigrationRunner {
-    override suspend fun migrate(module: String, migrations: List<SchemaMigration>) {
-        val table = historyTable(module)
-        if (migrations.isEmpty()) return
-        val pass = driver.migrate(
-            files = migrations.files(),
-            table = table,
-            afterFileMigration = { migration, duration ->
-                logger.info(
-                    "migration applied",
-                    mapOf(
-                        "module" to module,
-                        "version" to migration.version,
-                        "duration_ms" to duration.inWholeMilliseconds,
-                    ),
-                )
-            },
-        )
-        // Even after a failed pass: the history may have been created, and must not stay writable meanwhile.
-        val locked = driver.execute(ownerOnlySql(table))
-        val results = pass.getOrThrow()
-        locked.getOrThrow()
-        logger.info(
-            "migrations checked",
-            mapOf("module" to module, "total" to results.total, "applied" to results.applied),
-        )
-    }
-
-    override suspend fun verify(module: String, migrations: List<SchemaMigration>) {
-        val table = historyTable(module)
-        if (migrations.isEmpty()) return
-        val lookup = Statement.create("SELECT CAST(to_regclass(:table) AS text) AS name").bind("table", table)
-        val present = driver.fetchAll(lookup)
-            .getOrThrow()
-            .single()
-            .get("name")
-            .asStringOrNull()
-        val applied = if (present == null) {
-            emptyMap()
-        } else {
-            driver.fetchAll("SELECT version, checksum FROM $table").getOrThrow()
-                .associate { it.get("version").asLong() to it.get("checksum").asString() }
-        }
-        val missing = migrations.files().filter { applied[it.version] != it.checksum }.map { it.version }
-        if (missing.isNotEmpty()) throw MigrationsNotAppliedException(module, missing)
-    }
-
-    private fun historyTable(module: String): String = "_migrations_" + moduleKey(module)
-
-    private fun List<SchemaMigration>.files() = map { MigrationFile("${it.version}_${it.name}.sql", it.sql) }
-}
-
-/**
  * The part of a module's history table names that comes from the module's name.
  *
  * @throws IllegalArgumentException When [module] is not lower-case letters, digits and `-`.
@@ -121,7 +53,7 @@ internal fun moduleKey(module: String): String {
 
 /**
  * Refuses a module's migrations whose versions are not 1, 2, 3… in order (TeamCode 3da27ca0): two migrations with one
- * version would make Flyway, or sqlx4k, apply one of them only, and a gap would be skipped without a word.
+ * version would make Flyway apply one of them only, and a gap would be skipped without a word.
  *
  * @throws IllegalArgumentException When a version is repeated, out of order or missing.
  */

@@ -40,7 +40,7 @@ private val TEST_TIMEOUT = 3.minutes
 /** How long a read bench may run, its tables filled: a minute is too short on a CI runner of a few cores. */
 private val BENCH_TIMEOUT = 5.minutes
 
-// A bench's JDBC pool: its concurrent callers (a load test's replicas) contend for it as for its sqlx4k pool of 4.
+// A bench's pool: its concurrent callers (a load test's replicas) contend for its 4 connections.
 private const val BENCH_JDBC_POOL = 4
 
 /**
@@ -107,28 +107,18 @@ private suspend fun ApplicationTestBuilder.serve(
         val signer = Ed25519InstanceSigner.generate()
         val logger = JsonLogger(LogLevel.WARN)
         migrateModules(database.ownerConfig, logger, modules)
-        database.driver.requireRowLevelSecurity()
         // What the server sends is recorded on demand, for the read benches (ReadBench.kt).
         val recorder = StatementRecorder()
         // Tests sign people up as an open instance does (ostrom.run): with the admin module, its former variable is
         // imported into the console's settings at start; without it, the settings say so (testKernel). The
         // invite-only default of a self-hosted instance has its own tests, which override the instance's settings.
         val source = LayeredConfigSource(listOf(environment, MapConfigSource(mapOf("OSTROM_SIGNUP" to "open"))))
-        // The JDBC pool of the modules on Exposed, connected as the serving role as the server's is.
+        // The server's pool, connected as the serving role, which must pass the start check.
         val jdbc = JdbcDatabase(database.servingConfig, jdbcPoolSize)
         try {
-            val kernel = testKernel(
-                kernelModule(
-                    logger,
-                    database.driver,
-                    signer,
-                    source,
-                    // The server's start check reads Flyway's histories through the pool, as the server does.
-                    migrationRunner = jdbc.migrationRunner(logger),
-                    jdbc = jdbc,
-                ),
-                modules,
-            )
+            jdbc.requireRowLevelSecurity()
+            // The server's start check reads Flyway's histories through the pool, as the server does.
+            val kernel = testKernel(kernelModule(logger, jdbc, signer, source), modules)
             // The read benches count and replay the statements of the modules.
             ExposedRecorder.into(recorder) {
                 serveWith(serverKoin(kernel, modules, overrides), modules, recorder, database, block)

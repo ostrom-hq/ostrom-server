@@ -3,7 +3,6 @@ package run.ostrom.server.kernel.database
 
 import run.ostrom.server.kernel.config.DatabaseConfig
 import run.ostrom.server.kernel.logging.Logger
-import io.github.smyrgeorge.sqlx4k.impl.migrate.MigrationFile
 import java.sql.Connection
 import java.sql.SQLException
 import java.util.zip.CRC32
@@ -24,8 +23,8 @@ import org.flywaydb.core.api.migration.JavaMigration
  * [MigrationRunner] on Flyway (docs/decisions/0001, step 2; CRL-05), as TeamCode's `Database.migrate`, one history
  * table per module (`flyway_<module>`) so that two modules never compete for a version number.
  *
- * A database migrated before by sqlx4k ([MigrationRunnerImpl], `_migrations_<module>`) is adopted: when a module has
- * that history and no Flyway one, every version it applied must still match the code's (its sqlx4k checksum), and
+ * A database migrated before by the server's first migrator (`_migrations_<module>`, [legacyChecksum]) is adopted:
+ * when a module has that history and no Flyway one, every version it applied must still match the code's, and
  * Flyway's history starts with a baseline at the last of them, so nothing applied is run again. The old history is
  * left as it is, so that a replica of the previous version still starts during a rolling update.
  *
@@ -58,7 +57,7 @@ class FlywayMigrationRunner(
                 null
             } finally {
                 // Even after a failed or cancelled pass: the history may have been created, and must not stay writable
-                // meanwhile. sqlx4k's older history too, which nothing else writes now (AUDIT-RLS R8).
+                // meanwhile. The first migrator's older history too, which nothing else writes now (AUDIT-RLS R8).
                 withContext(NonCancellable + Dispatchers.IO) {
                     source.connection.use { connection ->
                         listOf(table, legacyTable(module)).forEach { connection.run(ownerOnlySql(it)) }
@@ -95,7 +94,7 @@ class FlywayMigrationRunner(
         if (missing.isNotEmpty()) throw MigrationsNotAppliedException(module, missing)
     }
 
-    /** The last version sqlx4k applied, once its history is checked against the code; 0 without one to adopt. */
+    /** The last version the first migrator applied, its history checked against the code; 0 without one to adopt. */
     private fun adopt(connection: Connection, module: String, table: String, migrations: List<SchemaMigration>): Long {
         val legacy = legacyTable(module)
         val applied = if (connection.exists(table) || !connection.exists(legacy)) {
@@ -107,7 +106,7 @@ class FlywayMigrationRunner(
                 }
             }
         }
-        val code = migrations.associate { it.version to MigrationFile("${it.version}_${it.name}.sql", it.sql).checksum }
+        val code = migrations.associate { it.version to legacyChecksum(it) }
         val last = applied.keys.maxOrNull() ?: 0L
         val differing = (1..last).filter { applied[it] != code[it] }
         if (differing.isNotEmpty()) throw MigrationsNotAppliedException(module, differing)
@@ -183,6 +182,12 @@ class FlywayMigrationRunner(
          */
         fun migrationUrl(config: DatabaseConfig): String =
             JdbcDatabase.jdbcUrl(config, listOf("lock_timeout=3s"), socketTimeoutSeconds = 0)
+
+        /**
+         * The checksum the first migrator wrote in `_migrations_<module>`: the decimal text of the JVM
+         * `String.hashCode` of the migration's SQL.
+         */
+        internal fun legacyChecksum(migration: SchemaMigration): String = migration.sql.hashCode().toString()
 
         private fun checksum(migration: SchemaMigration): Int =
             CRC32().apply { update(migration.sql.toByteArray(Charsets.UTF_8)) }.value.toInt()

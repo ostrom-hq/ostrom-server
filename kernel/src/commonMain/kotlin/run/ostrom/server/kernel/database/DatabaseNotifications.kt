@@ -1,10 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.kernel.database
 
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.postgres.IPostgresSQL
+import java.sql.SQLException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.withContext
+import org.jetbrains.exposed.v1.core.TextColumnType
+import org.postgresql.PGConnection
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * PostgreSQL's `LISTEN`/`NOTIFY`: what one replica tells every replica at once (a new row's id, a wake-up), on the
@@ -35,20 +43,60 @@ interface DatabaseNotifications {
 }
 
 /**
- * [DatabaseNotifications] on PostgreSQL, through sqlx4k's listener.
+ * [DatabaseNotifications] on PostgreSQL: `pg_notify` sent through the pool, and each listener on a connection of its
+ * own outside the pool (a `LISTEN` lasts as long as its session), whose notifications pgjdbc hands over when asked
+ * ([PGConnection.getNotifications]): asked every [poll], so that a cancelled listener stops within it.
  *
- * @param database The PostgreSQL pool (not a wrapper of it: the listener needs the driver itself).
+ * @param database The pool, and how to open the listening connections.
+ * @param poll How long one wait for notifications lasts.
+ * @param retry The pause before a dropped listening connection is opened again.
  */
-class PostgresNotifications(private val database: IPostgresSQL) : DatabaseNotifications {
-    override suspend fun notify(channel: String, payload: String) = database.notify(channel, payload)
+class PostgresNotifications(
+    private val database: JdbcDatabase,
+    private val poll: Duration = 500.milliseconds,
+    private val retry: Duration = 1.seconds,
+) : DatabaseNotifications {
+    override suspend fun notify(channel: String, payload: String) {
+        database.query {
+            exec("SELECT pg_notify(?, ?)", listOf(TextColumnType() to channel(channel), TextColumnType() to payload)) {}
+        }
+    }
 
-    override suspend fun listen(channel: String, onPayload: suspend (String) -> Unit) =
-        database.listen(channel) { onPayload(it.value.asString()) }
+    override suspend fun listen(channel: String, onPayload: suspend (String) -> Unit) {
+        val name = channel(channel)
+        withContext(Dispatchers.IO) {
+            while (true) {
+                try {
+                    database.connectAlone().use { connection ->
+                        connection.createStatement().use { it.execute("LISTEN $name") }
+                        val notifications = connection.unwrap(PGConnection::class.java)
+                        while (true) {
+                            ensureActive()
+                            notifications.getNotifications(poll.inWholeMilliseconds.toInt())
+                                .filter { it.name == name }
+                                .forEach { onPayload(it.parameter) }
+                        }
+                    }
+                } catch (_: SQLException) {
+                    // The connection dropped (a restart, a failover): opened again after a pause.
+                    delay(retry)
+                }
+            }
+        }
+    }
+
+    private fun channel(channel: String): String {
+        require(CHANNEL.matches(channel)) { "A channel is a lower-case identifier, not $channel." }
+        return channel
+    }
 }
 
+// A channel name PostgreSQL takes as an identifier unquoted: at most 63 bytes, never anything to escape.
+private val CHANNEL = Regex("[a-z_][a-z0-9_]{0,62}")
+
 /**
- * [DatabaseNotifications] within this process, for a database without `LISTEN` (SQLite, a single process): a
- * notification reaches this process's listeners only, which are then every listener there is.
+ * [DatabaseNotifications] within this process, for a single process without a shared database: a notification
+ * reaches this process's listeners only, which are then every listener there is.
  */
 class InProcessNotifications : DatabaseNotifications {
     private val sent = MutableSharedFlow<Pair<String, String>>(extraBufferCapacity = BUFFER)
@@ -65,16 +113,3 @@ class InProcessNotifications : DatabaseNotifications {
         const val BUFFER = 256
     }
 }
-
-/**
- * The notifications of a database: PostgreSQL's when [driver] is a PostgreSQL pool, else within this process.
- *
- * @param driver The database, as [connectPostgres] opened it.
- *
- * @return The notifications.
- */
-fun databaseNotifications(driver: Driver): DatabaseNotifications =
-    when (val pool = if (driver is CancellationKeepingDriver) driver.inner else driver) {
-        is IPostgresSQL -> PostgresNotifications(pool)
-        else -> InProcessNotifications()
-    }
