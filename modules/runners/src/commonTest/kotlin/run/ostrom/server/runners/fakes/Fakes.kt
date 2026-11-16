@@ -23,6 +23,7 @@ import run.ostrom.server.runners.domain.SessionRef
 import run.ostrom.server.runners.domain.SessionKind
 import run.ostrom.server.runners.domain.RemoteSessionRules
 import run.ostrom.server.runners.domain.SessionState
+import run.ostrom.server.runners.domain.StartOutcome
 import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -278,6 +279,40 @@ class InMemoryCloudSessionsRepository : CloudSessionsRepository {
         journal?.let(this.journal::add)
         return ResumeOutcome.Resumed(updated)
     }
+
+    override suspend fun startWithinCap(
+        current: CloudSession,
+        next: CloudSession,
+        memberRunning: Int,
+        nextReconcileAt: Instant?,
+    ): StartOutcome {
+        val capped = memberRunning != Int.MAX_VALUE && current.automationId == null
+        if (capped && waitsForCapacity(current, current.capacityWaitingSince ?: next.updatedAt, memberRunning)) {
+            return StartOutcome.WaitingCapacity
+        }
+        return compareAndSet(next, nextReconcileAt)?.let { StartOutcome.Started(it) } ?: StartOutcome.Conflict
+    }
+
+    /** The SQL's count of the owner's executions, and its FIFO among the owner's waiting starts. */
+    private fun waitsForCapacity(current: CloudSession, since: Instant, memberRunning: Int): Boolean {
+        val mine = sessions.values.filter {
+            it.orgId == current.orgId && it.ownerId == current.ownerId && it.id != current.id &&
+                it.kind == SessionKind.CLOUD && it.automationId == null
+        }
+        val running = mine.count {
+            it.state == SessionState.RUNNING || it.state == SessionState.PAUSING ||
+                (it.state.starting && it.executionStartedAt != null)
+        }
+        val ahead = mine.any {
+            val at = it.capacityWaitingSince
+            at != null && it.state.starting && it.desiredState == DesiredState.RUNNING &&
+                (at < since || (at == since && it.id < current.id))
+        }
+        return running >= memberRunning || ahead
+    }
+
+    private val SessionState.starting: Boolean
+        get() = this == SessionState.CREATING || this == SessionState.RESUMING
 
     override suspend fun compareAndSet(session: CloudSession, nextReconcileAt: Instant?): CloudSession? {
         val current = sessions[session.id] ?: return null

@@ -952,4 +952,16 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
         name = "session_automation",
         sql = "ALTER TABLE runners_sessions ADD COLUMN automation_id UUID",
     ),
+    // The per-member running cap (TeamCode's waiting_capacity): a start over it waits, and its owner's starts are let
+    // in oldest first, read at each start among the owner's waiting ones only.
+    SchemaMigration(
+        version = 29,
+        name = "capacity_waiting",
+        sql = """
+            ALTER TABLE runners_sessions ADD COLUMN capacity_waiting_since TIMESTAMPTZ;
+            CREATE INDEX runners_sessions_capacity_waiting
+                ON runners_sessions (org_id, owner_id, capacity_waiting_since, id)
+                WHERE capacity_waiting_since IS NOT NULL;
+        """.trimIndent(),
+    ),
 )

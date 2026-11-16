@@ -367,7 +367,7 @@ object RunnersModule : ServerModule {
             val transfers = get<TransferWiring>().complete
             ReconcileCloudSessionUseCaseImpl(
                 get(), get(), get(), get(), get(), get(), ended, get(), answers, transfers, retention,
-                getOrNull<SignedInDevices>(), limit,
+                getOrNull<SignedInDevices>(), get(), limit,
             )
         }
         // Ownership transfers need the orgs module's members: without it nobody can be named, and none is served.

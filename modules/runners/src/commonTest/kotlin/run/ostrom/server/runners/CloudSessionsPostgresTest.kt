@@ -21,6 +21,7 @@ import run.ostrom.server.runners.domain.CloudPlanProvider
 import run.ostrom.server.runners.domain.CloudSession
 import run.ostrom.server.runners.domain.CloudSessionRetainedLimitException
 import run.ostrom.server.runners.domain.CreateKey
+import run.ostrom.server.runners.domain.StartOutcome
 import run.ostrom.server.runners.domain.ReconcileCloudSessionUseCase
 import run.ostrom.server.runners.domain.CloudSessionsRepository
 import run.ostrom.server.runners.domain.DesiredState
@@ -69,6 +70,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -215,6 +217,51 @@ class CloudSessionsPostgresTest {
     }
 
     private fun paused() = session(SessionState.PAUSED, DesiredState.PAUSED, createdAt = t0)
+
+    @Test
+    fun aStartWithinTheOwnersRunningCapIsAdmittedOldestFirst() = serverTest(listOf(RunnersModule)) { server ->
+        val repository = server.koin.get<CloudSessionsRepository>()
+        val busy = session(SessionState.RUNNING, createdAt = t0).copy(epoch = 1, executionStartedAt = t0)
+        val older = session(createdAt = t0)
+        val newer = session(createdAt = t0)
+        val bobs = session(ownerId = "bob", createdAt = t0)
+        listOf(busy, older, newer, bobs).forEach { assertTrue(repository.createWithinCap(it, 100)) }
+        fun CloudSession.started() = copy(epoch = 1, executionStartedAt = t0 + 10.seconds, updatedAt = t0 + 10.seconds)
+
+        // At the cap of one: the start waits; another member's is not held by it.
+        assertEquals(StartOutcome.WaitingCapacity, repository.startWithinCap(older, older.started(), 1, null))
+        assertIs<StartOutcome.Started>(repository.startWithinCap(bobs, bobs.started(), 1, null))
+        // Both of alice's starts wait, the older one first in her queue.
+        val waitingOlder =
+            repository.compareAndSet(older.copy(phase = "waiting_capacity", capacityWaitingSince = t0), null)!!
+        val waitingNewer = repository.compareAndSet(
+            newer.copy(phase = "waiting_capacity", capacityWaitingSince = t0 + 1.seconds),
+            null,
+        )!!
+        assertEquals(t0 + 1.seconds, repository.get(ORG_A, newer.id)?.capacityWaitingSince)
+        val stopped = repository.get(ORG_A, busy.id)!!
+        repository.compareAndSet(stopped.copy(state = SessionState.PAUSED, executionStartedAt = null), null)
+        assertEquals(
+            StartOutcome.WaitingCapacity,
+            repository.startWithinCap(waitingNewer, waitingNewer.started().copy(capacityWaitingSince = null), 1, null),
+        )
+        val next = waitingOlder.started().copy(capacityWaitingSince = null)
+        val admitted = repository.startWithinCap(waitingOlder, next, 1, null)
+        assertNull(assertIs<StartOutcome.Started>(admitted).session.capacityWaitingSince)
+        // A stale read loses; no limit counts nothing.
+        assertEquals(StartOutcome.Conflict, repository.startWithinCap(waitingOlder, waitingOlder.started(), 5, null))
+        assertIs<StartOutcome.Started>(
+            repository.startWithinCap(waitingNewer, waitingNewer.started(), Int.MAX_VALUE, null),
+        )
+        assertEquals(
+            StartOutcome.Conflict,
+            repository.startWithinCap(waitingNewer, waitingNewer.started(), Int.MAX_VALUE, null),
+        )
+        // An automation's start has its own cap: alice's two executions do not hold it.
+        val run = session(createdAt = t0).copy(automationId = Uuid.random())
+        assertTrue(repository.createWithinCap(run, 100))
+        assertIs<StartOutcome.Started>(repository.startWithinCap(run, run.started(), 1, null))
+    }
 
     @Test
     fun resumeWithinCapCountsOnlyOtherHoldingSessions() = serverTest(listOf(RunnersModule)) { server ->

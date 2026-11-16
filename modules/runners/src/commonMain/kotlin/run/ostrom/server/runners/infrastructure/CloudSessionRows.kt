@@ -109,6 +109,7 @@ private fun RunnersSessionsTable.sessionLifecycle(b: UpdateBuilder<*>, session: 
     b[githubAccess] = session.githubAccess.wire
     b[backgroundSince] = session.backgroundSince
     b[backgroundSeenAt] = session.backgroundSeenAt
+    b[capacityWaitingSince] = session.capacityWaitingSince
 }
 
 /** The reconciler's schedule of a new session, and the hash of its runner token. */
@@ -167,6 +168,7 @@ internal fun toSession(row: ResultRow): CloudSession {
         runnerTokenHash = row[s.runnerTokenHash],
         backgroundSince = row[s.backgroundSince],
         backgroundSeenAt = row[s.backgroundSeenAt],
+        capacityWaitingSince = row[s.capacityWaitingSince],
         model = row[s.model],
         prompt = row[s.prompt],
         // A name this version does not know grants nothing.

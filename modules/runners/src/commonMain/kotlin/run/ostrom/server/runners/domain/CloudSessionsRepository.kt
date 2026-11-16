@@ -176,6 +176,26 @@ interface CloudSessionsRepository {
     ): ResumeOutcome
 
     /**
+     * Starts an execution of a cloud session within its owner's running cap (TeamCode's `startExecution`), serialized
+     * per organization like [createWithinCap]: [next] is written ([compareAndSet]) unless the owner already runs
+     * [memberRunning] cloud sessions with an execution started, other than this one, or an older start of theirs waits
+     * for the cap (FIFO by [CloudSession.capacityWaitingSince], then id). [Int.MAX_VALUE] counts nothing.
+     *
+     * @param current The session as read, waiting or not.
+     * @param next The session with its new execution.
+     * @param memberRunning The owner's running cap.
+     * @param nextReconcileAt When the reconciler must look at it again once started.
+     *
+     * @return What happened.
+     */
+    suspend fun startWithinCap(
+        current: CloudSession,
+        next: CloudSession,
+        memberRunning: Int,
+        nextReconcileAt: Instant?,
+    ): StartOutcome
+
+    /**
      * Writes a session if nobody changed it since it was read (compare-and-set on [CloudSession.generation]); the
      * stored generation becomes `session.generation + 1`.
      *
@@ -324,6 +344,22 @@ sealed interface ResumeOutcome {
 
     /** No such session in the organization, or it is being deleted or over. */
     data object NotFound : ResumeOutcome
+}
+
+/** What [CloudSessionsRepository.startWithinCap] did. */
+sealed interface StartOutcome {
+    /**
+     * The execution is the session's.
+     *
+     * @property session The session stored.
+     */
+    data class Started(val session: CloudSession) : StartOutcome
+
+    /** The owner is at their running cap, or an older start of theirs goes first: nothing was written. */
+    data object WaitingCapacity : StartOutcome
+
+    /** Another writer changed the session first. */
+    data object Conflict : StartOutcome
 }
 
 /**

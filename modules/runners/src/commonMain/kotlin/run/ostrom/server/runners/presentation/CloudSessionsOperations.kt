@@ -18,6 +18,10 @@ import run.ostrom.server.kernel.http.docs.queryText
 private const val STATE_CHANGE = "A session whose state does not allow it, or that changed meanwhile " +
     "(`conflict`, `session_busy`)."
 
+private const val WAITING_CAPACITY = "Past its owner's running cap (the instance's `maxRunningSessionsPerMember`, 0 " +
+    "for none), a start waits in `creating` or `resuming` with phase `waiting_capacity`, and the owner's waiting " +
+    "starts go oldest first as their running sessions pause."
+
 /** The cloud sessions a member manages: listing, creating, reading, stopping, pausing, resuming, and their access. */
 internal fun ApiCatalog.cloudSessionOperations() {
     cloudSessionListing()
@@ -90,7 +94,7 @@ private fun ApiCatalog.cloudSessionCreation() {
             "`idempotency_conflict`; concurrent requests with one key create one session and the others replay. A " +
             "malformed key is 400 `invalid_request`. The key is optional. A cloud session a member creates counts " +
             "toward the retained cap of its owner (the instance's `maxRetainedSessionsPerMember`, 0 for none): the " +
-            "sessions they keep, neither terminated nor failed, paused ones included. $ORG_RESOLUTION"
+            "sessions they keep, neither terminated nor failed, paused ones included. $WAITING_CAPACITY $ORG_RESOLUTION"
         parameters {
             onBehalfHeader()
             organizationHeader()
@@ -193,7 +197,7 @@ private fun ApiCatalog.cloudSessionResume() {
         tag(TAG)
         summary = "Resume a paused cloud session, within the plan's running cap and hours."
         description = "The reconciler starts a new execution on the kept workspace. A session an accepted transfer " +
-            "is moving only resumes through that transfer. $ORG_RESOLUTION"
+            "is moving only resumes through that transfer. $WAITING_CAPACITY $ORG_RESOLUTION"
         parameters {
             onBehalfHeader()
             organizationHeader()

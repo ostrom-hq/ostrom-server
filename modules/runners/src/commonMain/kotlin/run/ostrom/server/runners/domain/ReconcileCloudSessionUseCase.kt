@@ -56,6 +56,9 @@ interface ReconcileCloudSessionUseCase {
  * @param devices Whether a remote session's host device still exists: one removed while the removal could not end
  *   its sessions ([EndRemovedDeviceSessions]) ends them here, with [RemoteSessionRules.DEVICE_REMOVED]; null where
  *   the server has no signed-in devices (no remote session is ever created there).
+ * @param caps The owner's running cap (TeamCode's): a creation, a resume, a wake or a transfer that resumes, past it,
+ *   waits in its state with phase [CloudSession.WAITING_CAPACITY], looked at every [CAPACITY_DELAY], and the owner's
+ *   waiting starts are let in oldest first.
  */
 // Each step is a decision table read top to bottom: an early return per outcome reads better than nested branches,
 // and one small function per state and per check keeps each table short.
@@ -74,6 +77,7 @@ class ReconcileCloudSessionUseCaseImpl(
     private val transfers: CompleteCloudTransferUseCase? = null,
     private val retention: PausedRetention = KeepPausedSessions,
     private val devices: SignedInDevices? = null,
+    private val caps: MemberSessionCaps = NoMemberSessionCaps,
     private val backgroundWork: BackgroundWorkLimit,
 ) : ReconcileCloudSessionUseCase {
     override suspend fun invoke(session: CloudSession): Instant? {
@@ -401,12 +405,26 @@ class ReconcileCloudSessionUseCaseImpl(
             runnerStoppedAt = null,
             pausingSince = null,
             phase = STARTING_PHASE,
+            capacityWaitingSince = null,
             updatedAt = now,
         )
         // The row commits first: an execution the runtime runs always has its row, never the reverse.
-        val stored = repository.compareAndSet(next, now + STEP_DELAY) ?: return now
+        val outcome = repository.startWithinCap(session, next, caps.runningLimit(), now + STEP_DELAY)
+        val stored = when (outcome) {
+            is StartOutcome.Started -> outcome.session
+            StartOutcome.WaitingCapacity -> return waitingCapacity(session, now)
+            StartOutcome.Conflict -> return now
+        }
         driver.startExecution(stored.executionSpec(token))
         return now + STEP_DELAY
+    }
+
+    /** The owner runs as many sessions as allowed: the start waits, keeping its place in the owner's queue. */
+    private suspend fun waitingCapacity(session: CloudSession, now: Instant): Instant? {
+        // Its place was written with the phase, once: every start clears both.
+        if (session.phase == CloudSession.WAITING_CAPACITY) return now + CAPACITY_DELAY
+        val waiting = session.copy(phase = CloudSession.WAITING_CAPACITY, capacityWaitingSince = now, updatedAt = now)
+        return write(waiting, now + CAPACITY_DELAY)
     }
 
     /**
@@ -599,7 +617,8 @@ class ReconcileCloudSessionUseCaseImpl(
 
     private fun CloudSession.moveTo(state: SessionState, now: Instant): CloudSession {
         SessionStateMachine.requireTransition(this.state, state)
-        return copy(state = state, updatedAt = now)
+        // A start that waited for the cap leaves the owner's queue with its state.
+        return copy(state = state, capacityWaitingSince = null, updatedAt = now)
     }
 
     private fun CloudSession.toPausing(now: Instant, reason: SessionFailure?): CloudSession =
@@ -802,6 +821,9 @@ class ReconcileCloudSessionUseCaseImpl(
             "The host device stopped responding; the session resumes when its host starts again.",
             retryable = true,
         )
+
+        /** How often a start that waits for its owner's running cap tries again (TeamCode's `CAPACITY_MILLIS`). */
+        private val CAPACITY_DELAY: Duration = 5.seconds
 
         /** A start must report ready within this time, image pull and repository clone included. */
         private val START_TIMEOUT: Duration = 15.minutes
