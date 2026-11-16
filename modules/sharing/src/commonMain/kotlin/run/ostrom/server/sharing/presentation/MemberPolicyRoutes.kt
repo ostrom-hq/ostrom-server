@@ -41,7 +41,7 @@ fun Route.memberPolicyRoutes(dependencies: MemberPolicyRoutesDependencies) = wit
                     policy.login,
                     auditDetails(
                         "pool_id" to policy.poolId,
-                        "allow_shared_overflow" to policy.allowSharedOverflow.takeIf { it },
+                        "allow_shared_overflow" to policy.allowSharedOverflow,
                     ),
                 ),
             )

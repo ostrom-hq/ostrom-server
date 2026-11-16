@@ -227,7 +227,7 @@ class SharingMemberPoolsPostgresTest {
             val record = audited.single()
             assertEquals("policy.updated", record.event)
             assertEquals("member" to "liam", record.subjectType to record.subjectId)
-            assertEquals(mapOf("pool_id" to "eu"), record.details)
+            assertEquals(mapOf("pool_id" to "eu", "allow_shared_overflow" to "false"), record.details)
 
             val moved = send("PATCH", "kira", policy("liam"), pool("us")).json()
             assertEquals("us", moved.getValue("poolId").jsonPrimitive.content, "An owner moves them")
@@ -235,7 +235,7 @@ class SharingMemberPoolsPostgresTest {
             assertStatus(HttpStatusCode.OK, cleared, cleared.bodyAsText())
             assertNull(cleared.json()["poolId"], "An empty string clears the pool")
             assertNull(send("GET", "liam", policy("liam")).json()["poolId"])
-            assertEquals(emptyMap(), audited.last().details)
+            assertEquals(mapOf("allow_shared_overflow" to "false"), audited.last().details, "A revoke is written too")
         }
     }
 

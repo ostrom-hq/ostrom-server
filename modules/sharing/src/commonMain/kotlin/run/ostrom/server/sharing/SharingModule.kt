@@ -39,6 +39,7 @@ import run.ostrom.server.sharing.domain.MemberNames
 import run.ostrom.server.sharing.domain.MemberPoliciesUseCase
 import run.ostrom.server.sharing.domain.MemberPoliciesUseCaseImpl
 import run.ostrom.server.sharing.domain.MemberPoolRepository
+import run.ostrom.server.sharing.domain.NoOverflowPools
 import run.ostrom.server.sharing.domain.NoAccountSpendReader
 import run.ostrom.server.sharing.domain.NoMemberLogins
 import run.ostrom.server.sharing.domain.OAuthRefresher
@@ -141,7 +142,11 @@ object SharingModule : ServerModule {
         single<SharingOrgs> { SharingOrgsImpl(get()) }
         single<MemberPoolRepository> { MemberPoolRepositoryImpl(get()) }
         single<PoolBudgetRepository> { PoolBudgetRepositoryImpl(get()) }
-        single<OverflowPools> { OverflowPoolsImpl(get(), accountSpend(), get()) }
+        // Without the usage ledger, nothing says what a reserve lent today: none lends (fail closed).
+        single<OverflowPools> {
+            val spend = getOrNull<SharedAccountSpend>()
+            if (spend == null) NoOverflowPools else OverflowPoolsImpl(get(), spend, get())
+        }
         single {
             SharedAccountPool(get(), get(), get(), get(), get(), spend(), get(), get(), get(), get(), get(), get())
         }
@@ -195,10 +200,6 @@ object SharingModule : ServerModule {
 
     /** The usage ledger's spend per account when the gateway binds it; none otherwise. */
     private fun Scope.spend(): AccountSpendReader = getOrNull<AccountSpendReader>() ?: NoAccountSpendReader()
-
-    /** The usage ledger's spend of the shared accounts when it is loaded; none otherwise (no overflow pool spends). */
-    private fun Scope.accountSpend(): SharedAccountSpend =
-        getOrNull<SharedAccountSpend>() ?: SharedAccountSpend { _, _, _ -> emptyMap() }
 
     override val migrations: List<SchemaMigration> = SharingMigrations
 

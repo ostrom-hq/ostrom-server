@@ -399,13 +399,13 @@ class SharingOverflowPostgresTest {
     }
 
     @Test
-    fun withoutTheLedgerAReserveLendsItsWholeBudget() = serverTest(modules, base) { server ->
+    fun withoutTheLedgerNoReserveLends() = serverTest(modules, base) { server ->
         with(server) {
             val team = team()
             account("reserve", "reserve")
-            send("PUT", "kira", budgets, budget("reserve", 1, true))
+            send("PUT", "kira", budgets, budget("reserve", 1_000_000, true))
             send("PATCH", "kira", policy("liam"), member("eu", overflow = true))
-            assertEquals("reserve", leased(team.org, team.liam))
+            assertEquals(null, leased(team.org, team.liam), "Nothing says what it lent today: closed")
         }
     }
 }
