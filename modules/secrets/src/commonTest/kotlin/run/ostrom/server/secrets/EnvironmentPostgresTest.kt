@@ -104,7 +104,8 @@ class EnvironmentPostgresTest {
         assertEquals(1, variant.version)
         assertNull(variant.owner)
         val v = EnvironmentVariants
-        val stored = server.inOrgA { v.select(v.envelope).single()[v.envelope] }.orEmpty()
+        val envelope = server.inOrgA { v.select(v.envelope).single()[v.envelope] }
+        val stored = checkNotNull(envelope) { "An envelope is stored" }
         assertFalse("ghp_org_a" in stored, "Encrypted at rest")
 
         assertEquals(emptyMap(), server.values("member-a").variables, "A shared variant is never an implicit grant")

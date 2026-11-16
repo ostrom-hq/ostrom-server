@@ -3,8 +3,8 @@ package run.ostrom.server.secrets.infrastructure
 
 /**
  * The role every organization-scoped query of the RELAY modules runs as: not a superuser, owner of nothing, so the
- * row-level security policies always apply to it (SECURITY-AUDIT S2-01). The same role and setting as the identity
- * module's `inOrg`, so both converge on the kernel's entry point when it lands.
+ * row-level security policies always apply to it (SECURITY-AUDIT S2-01). The same role and setting as the kernel's
+ * `JdbcDatabase.inOrg`, which the queries go through; the secrets migrations read these two names.
  */
 const val TENANT_ROLE: String = "ostrom_tenant"
 

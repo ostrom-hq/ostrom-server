@@ -4,6 +4,7 @@ package run.ostrom.server.secrets
 import run.ostrom.server.secrets.infrastructure.SecretsEntries
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.databaseNow
+import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.select
@@ -40,7 +41,7 @@ import org.koin.dsl.module
 import kotlin.io.encoding.Base64
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFails
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Instant
@@ -334,7 +335,7 @@ class SecretsPostgresTest {
             assertEquals(1, database.inOrg(TestCallers.orgA) { unfiltered() }.size)
             assertEquals(0, database.inOrg(TestCallers.orgB) { unfiltered() }.size, "No WHERE, no leak")
             assertEquals(0, database.inOrg(TestCallers.orgB) { e.update { it[name] = "TAKEN" } })
-            assertFails("Another org's row is refused") {
+            val refused = assertFailsWith<ExposedSQLException>("Another org's row is refused") {
                 database.inOrg(TestCallers.orgB) {
                     e.insert {
                         it[id] = Uuid.random()
@@ -348,6 +349,7 @@ class SecretsPostgresTest {
                     }
                 }
             }
+            assertTrue("row-level security" in refused.message.orEmpty(), "Refused by the policy")
             val names = database.inOrg(TestCallers.orgA) { unfiltered() }
             assertEquals(listOf("ORG_A_ONLY"), names, "The failed write left nothing")
         }
