@@ -40,17 +40,29 @@ private fun ApiCatalog.cloudSessionListing() {
             "sessions only, so a client from before remote sessions never lists one it cannot show. A page of " +
             "`limit` sessions (20 by default) is followed by `next` while there may be more. With " +
             "`runners.cloud.sessions.owner.v1` (TeamCode's `owner`), `owner` is the caller's member id, or absent; " +
-            "another member's id, a login or `all` is 403 `forbidden`, administrators included. $ORG_RESOLUTION"
+            "another member's id, a login or `all` is 403 `forbidden`, administrators included. `status` " +
+            "(repeatable, TeamCode's `state`) lists only sessions in these statuses: `creating`, `running`, " +
+            "`pausing`, `paused`, `resuming`, `transferring`, `terminated` or `failed` (400 `invalid_state` " +
+            "otherwise); every status without it. A session an automation started names it in `automationId`. " +
+            ORG_RESOLUTION
         parameters {
             organizationHeader()
             queryText("kind", "The kind of session to list, `cloud`, `remote` or `local`; repeat it to list several.")
             queryText("owner", "The caller's member id; anything else is refused.")
+            queryText(
+                "status",
+                "A status of session to list, `creating`, `running`, `pausing`, `paused`, `resuming`, " +
+                    "`transferring`, `terminated` or `failed`; repeat it to list several.",
+            )
             queryText("before", "The `next` of the previous page.")
             queryLimit("How many sessions a page holds.", maximum = 50)
         }
         responses {
             ok<CloudSessionsResponse>("A page of the caller's sessions, newest first, with the cursor of the next.")
-            badRequest("An unknown `kind` (`invalid_kind`), or `owner` sent more than once (`invalid_query`).")
+            badRequest(
+                "An unknown `kind` (`invalid_kind`) or `status` (`invalid_state`), or `owner` sent more than once " +
+                    "(`invalid_query`).",
+            )
             error(HttpStatusCode.Forbidden, "`owner` names anyone but the caller (`forbidden`).")
             notFound("The caller is no member of an organization the request can act in (`not_found`).")
         }

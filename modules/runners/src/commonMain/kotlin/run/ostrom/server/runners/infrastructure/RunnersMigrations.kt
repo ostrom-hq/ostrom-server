@@ -946,4 +946,10 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
                 WHERE launch_id IS NOT NULL;
         """.trimIndent(),
     ),
+    // The automation whose run started a session (TeamCode's cloud_sessions.automation_id), shown to clients.
+    SchemaMigration(
+        version = 28,
+        name = "session_automation",
+        sql = "ALTER TABLE runners_sessions ADD COLUMN automation_id UUID",
+    ),
 )

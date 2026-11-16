@@ -43,6 +43,7 @@ internal class CloudSessionAutomationLauncher(
             model = request.action.model,
             prompt = request.prompt,
             profileId = request.action.profileId?.let(Uuid::parseOrNull),
+            automationId = request.automationId,
         )
         val refusal = try {
             return LaunchResult.Started(create(Caller(request.orgId, request.owner), payload).id.toString())

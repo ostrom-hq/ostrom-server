@@ -24,6 +24,7 @@ import run.ostrom.server.runners.domain.ResumeOutcome
 import run.ostrom.server.runners.domain.SessionKind
 import run.ostrom.server.runners.domain.SessionProfile
 import run.ostrom.server.runners.domain.SessionRef
+import run.ostrom.server.runners.domain.SessionState
 import org.jetbrains.exposed.v1.core.Op
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.TextColumnType
@@ -118,13 +119,17 @@ class CloudSessionsRepositoryImpl(
 
     override suspend fun getById(id: Uuid): CloudSession? = orgOf(id)?.let { get(it, id) }
 
+    @Suppress("LongParameterList") // As the interface's.
     override suspend fun list(
         orgId: Uuid,
         ownerId: String,
         before: Uuid?,
         limit: Int,
         kinds: Set<SessionKind>,
-    ): List<CloudSession> = database.inOrg(orgId) { sessionList(orgId, ownerId, before, limit, kinds).map(::toSession) }
+        states: Set<SessionState>,
+    ): List<CloudSession> = database.inOrg(orgId) {
+        sessionList(orgId, ownerId, before, limit, kinds, states).map(::toSession)
+    }
 
     override suspend fun executions(orgId: Uuid, ownerId: String, limit: Int): List<CloudSession> =
         database.inOrg(orgId) { sessionExecutions(orgId, ownerId, limit).map(::toSession) }
@@ -336,10 +341,26 @@ internal fun StatementBuilder.createKeyInsert(
     it[expiresAt] = key.expiresAt
 }
 
-/** The member's sessions of these kinds, newest first, before the cursor's session when there is one. */
-internal fun sessionList(orgId: Uuid, ownerId: String, before: Uuid?, limit: Int, kinds: Set<SessionKind>): Query {
+/**
+ * The member's sessions of these kinds (and of these states, when any is named), newest first, before the cursor's
+ * session when there is one.
+ */
+@Suppress("LongParameterList") // The page and each filter of the list.
+internal fun sessionList(
+    orgId: Uuid,
+    ownerId: String,
+    before: Uuid?,
+    limit: Int,
+    kinds: Set<SessionKind>,
+    states: Set<SessionState>,
+): Query {
     val s = RunnersSessionsTable
     val kind = s.kind eq anyFrom(kinds.map { it.wire }.sorted(), TextColumnType())
+    val state: Op<Boolean> = if (states.isEmpty()) {
+        Op.TRUE
+    } else {
+        s.state eq anyFrom(states.map { it.wire }.sorted(), TextColumnType())
+    }
     val cursor: Op<Boolean> = if (before == null) {
         Op.TRUE
     } else {
@@ -348,7 +369,7 @@ internal fun sessionList(orgId: Uuid, ownerId: String, before: Uuid?, limit: Int
             s.select(s.createdAt, s.id).where { (s.id eq before) and (s.orgId eq orgId) },
         )
     }
-    return s.select(s.columns).where { (s.orgId eq orgId) and (s.ownerId eq ownerId) and kind and cursor }
+    return s.select(s.columns).where { (s.orgId eq orgId) and (s.ownerId eq ownerId) and kind and state and cursor }
         .orderBy(s.createdAt to SortOrder.DESC, s.id to SortOrder.DESC)
         .limit(limit)
 }

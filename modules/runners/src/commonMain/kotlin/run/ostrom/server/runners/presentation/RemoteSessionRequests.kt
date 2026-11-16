@@ -14,6 +14,7 @@ import run.ostrom.server.runners.domain.RemoteSessionException
 import run.ostrom.server.runners.domain.RemoteSessionRules
 import run.ostrom.server.runners.domain.SessionKind
 import run.ostrom.server.runners.domain.SessionMode
+import run.ostrom.server.runners.domain.SessionState
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.request.header
 import io.ktor.server.request.receive
@@ -140,6 +141,20 @@ private fun CreateCloudSessionRequest.toLocalDraft(): LocalSessionDraft {
  */
 internal fun atMostOnce(name: String, values: List<String>): String? =
     if (values.size > 1) throw InvalidQueryException(name) else values.singleOrNull()
+
+/**
+ * The statuses a list asks for (TeamCode's `state` filter): every status when it names none.
+ *
+ * @throws RemoteSessionException `invalid_state` (400) for an unknown one.
+ */
+internal fun states(wires: List<String>): Set<SessionState> =
+    wires.mapTo(mutableSetOf()) { wire ->
+        SessionState.entries.firstOrNull { it.wire == wire } ?: throw RemoteSessionRules.invalid(
+            "invalid_state",
+            "Unknown session status: use creating, running, pausing, paused, resuming, transferring, terminated or " +
+                "failed.",
+        )
+    }
 
 /**
  * The kinds a list asks for: cloud sessions only when it names none.

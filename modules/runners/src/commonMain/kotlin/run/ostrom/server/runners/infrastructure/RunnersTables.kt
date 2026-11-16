@@ -92,6 +92,7 @@ internal object RunnersSessionsTable : Table("runners_sessions") {
     val createdByEffectiveMemberId = text("created_by_effective_member_id").nullable()
     val hostResumeSessionId = text("host_resume_session_id").nullable()
     val launchId = text("launch_id").nullable()
+    val automationId = uuid("automation_id").nullable()
 
     override val primaryKey = PrimaryKey(id)
 }

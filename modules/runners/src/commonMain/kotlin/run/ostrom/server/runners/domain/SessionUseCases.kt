@@ -23,6 +23,8 @@ import kotlin.uuid.Uuid
  * @property image The session image instead of the profile's, one of its allowed overrides.
  * @property mode `terminal` (null) or `conversation` (claude and codex only).
  * @property effort The agent's effort (reasoning level), if chosen.
+ * @property automationId The automation whose run starts it (TeamCode's `CloudSessionDraft.automationId`); never from
+ *   an API request.
  */
 data class CreateCloudSessionPayload(
     val name: String?,
@@ -36,6 +38,7 @@ data class CreateCloudSessionPayload(
     val image: String? = null,
     val mode: String? = null,
     val effort: String? = null,
+    val automationId: Uuid? = null,
 )
 
 /** Creates a cloud session for the caller, within their organization's plan. */
@@ -187,6 +190,7 @@ class CreateCloudSessionUseCaseImpl(
             profile = profile,
             mode = mode,
             effort = payload.effort,
+            automationId = payload.automationId,
         )
         return attributed(session, caller) to plan
     }
@@ -363,6 +367,7 @@ interface ListCloudSessionsUseCase {
      *   never lists one it cannot show.
      * @param owner The owner asked for (`runners.cloud.sessions.owner.v1`, TeamCode's `owner`): the caller's member
      *   id, or null for the caller.
+     * @param states The statuses listed (TeamCode's `state`); every status when empty.
      *
      * @return The sessions, newest first.
      *
@@ -370,12 +375,14 @@ interface ListCloudSessionsUseCase {
      * @throws CloudSessionsOwnerForbiddenException When [owner] names anyone else (another member, a login, `all`),
      *   whatever the caller's role.
      */
+    @Suppress("LongParameterList") // The list's query: the caller, the page and each filter of TeamCode's.
     suspend operator fun invoke(
         caller: Caller,
         before: Uuid?,
         limit: Int?,
         kinds: Set<SessionKind> = setOf(SessionKind.CLOUD),
         owner: String? = null,
+        states: Set<SessionState> = emptySet(),
     ): List<CloudSession>
 }
 
@@ -385,12 +392,14 @@ interface ListCloudSessionsUseCase {
  * @param repository The sessions.
  */
 class ListCloudSessionsUseCaseImpl(private val repository: CloudSessionsRepository) : ListCloudSessionsUseCase {
+    @Suppress("LongParameterList") // As the interface's.
     override suspend fun invoke(
         caller: Caller,
         before: Uuid?,
         limit: Int?,
         kinds: Set<SessionKind>,
         owner: String?,
+        states: Set<SessionState>,
     ): List<CloudSession> {
         val size = limit ?: DEFAULT_PAGE
         ensureValid(size in 1..MAX_PAGE) { "The limit must be between 1 and $MAX_PAGE." }
@@ -398,7 +407,8 @@ class ListCloudSessionsUseCaseImpl(private val repository: CloudSessionsReposito
         // a transfer (TeamCode's rule).
         if (owner != null && owner != caller.memberId) throw CloudSessionsOwnerForbiddenException()
         // A `before` that names no session of the organization (forged, or another's) is a 400, not an empty page.
-        return Pages.checked("before", before, repository.list(caller.orgId, caller.memberId, before, size, kinds)) {
+        val page = repository.list(caller.orgId, caller.memberId, before, size, kinds, states)
+        return Pages.checked("before", before, page) {
             repository.get(caller.orgId, it) != null
         }
     }

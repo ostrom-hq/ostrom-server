@@ -64,7 +64,8 @@ class CloudSessionAutomationLauncherTest {
 
     @Test
     fun aRunStartsASessionOwnedByTheAutomationsOwnerWithItsPrompt() = runTest {
-        val started = assertIs<LaunchResult.Started>(launcher.launch(request()))
+        val asked = request()
+        val started = assertIs<LaunchResult.Started>(launcher.launch(asked))
         val session = repository.sessions.getValue(Uuid.parse(started.sessionId))
         assertEquals(ORG_A, session.orgId)
         assertEquals("alice", session.ownerId)
@@ -72,6 +73,7 @@ class CloudSessionAutomationLauncherTest {
         assertEquals("Summarize 2026-10-30", session.prompt)
         assertEquals("claude-sonnet-4-5", session.model)
         assertEquals(SessionState.CREATING, session.state)
+        assertEquals(asked.automationId, session.automationId, "The session names its automation, as TeamCode's")
     }
 
     @Test

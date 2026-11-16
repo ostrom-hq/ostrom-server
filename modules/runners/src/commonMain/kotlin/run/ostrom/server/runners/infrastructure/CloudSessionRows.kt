@@ -75,6 +75,7 @@ internal fun StatementBuilder.sessionInsert(session: CloudSession): InsertStatem
         it[createdByEffectiveMemberId] = session.createdBy?.effectiveMemberId
         it[hostResumeSessionId] = session.host?.resumeSessionId
         it[launchId] = session.launchId
+        it[automationId] = session.automationId
         // A remote session in `bypass` mode starts with its owner's standing approval (TeamCode's permissionMode).
         it[bypassBy] = session.permissionBypass?.by
         it[bypassCredentialId] = session.permissionBypass?.credentialId
@@ -190,6 +191,7 @@ internal fun toSession(row: ResultRow): CloudSession {
         host = hostOf(row),
         createdBy = createdByOf(row),
         launchId = row[s.launchId],
+        automationId = row[s.automationId],
     )
 }
 
