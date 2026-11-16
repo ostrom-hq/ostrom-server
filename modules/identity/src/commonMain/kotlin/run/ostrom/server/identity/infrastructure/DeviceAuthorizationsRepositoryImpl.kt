@@ -118,46 +118,9 @@ class DeviceAuthorizationsRepositoryImpl(private val database: JdbcDatabase) : D
             it[status] = DeviceAuthorizationStatus.CONSUMED.name
         } == 1
         if (!consumed) return@query null
-        val signIn = signIn(token.userId, login, now)
+        val signIn = signInDevice(token.userId, login, now)
         insertToken(token.copy(deviceId = signIn.device.id), secretHash)
         signIn
-    }
-
-    private fun JdbcTransaction.signIn(userId: Uuid, login: DeviceSignInRequest, now: Instant): DeviceSignIn {
-        val d = IdentityDevices
-        val existing = d.select(d.columns)
-            .where { (d.userId eq userId) and (d.installationId eq login.installationId) }
-            .singleOrNull()?.toDevice()
-        if (existing != null) {
-            // A client that reports nothing keeps what a newer one reported.
-            val device = existing.copy(
-                lastLoginAt = now,
-                platform = login.platform ?: existing.platform,
-                osVersion = if (login.platform != null) login.osVersion else existing.osVersion,
-            )
-            d.update({ d.id eq existing.id }) {
-                it[lastLoginAt] = device.lastLoginAt
-                it[platform] = device.platform
-                it[osVersion] = device.osVersion
-            }
-            return DeviceSignIn(device, registered = false)
-        }
-        val held = d.select(d.id).where { d.userId eq userId }.limit(MAX_REGISTERED_DEVICES).count()
-        if (held >= MAX_REGISTERED_DEVICES) throw DeviceLimitException()
-        val device = RegisteredDevice(
-            Uuid.random(), userId, login.installationId, login.name, login.platform, login.osVersion, now, now,
-        )
-        d.insert {
-            it[id] = device.id
-            it[this.userId] = userId
-            it[installationId] = device.installationId
-            it[name] = device.name
-            it[platform] = device.platform
-            it[osVersion] = device.osVersion
-            it[createdAt] = now
-            it[lastLoginAt] = now
-        }
-        return DeviceSignIn(device, registered = true)
     }
 
     private val columns = listOf(
@@ -187,6 +150,56 @@ class DeviceAuthorizationsRepositoryImpl(private val database: JdbcDatabase) : D
 /** Locks a person's row until the end of the transaction: what their devices' writes serialize on. */
 internal fun JdbcTransaction.lockUser(userId: Uuid) {
     IdentityUsers.select(IdentityUsers.id).where { IdentityUsers.id eq userId }.forUpdate().singleOrNull()
+}
+
+/**
+ * The sign-in of an installation, inside a transaction that holds the person's row ([lockUser]): the device of this
+ * person and installation is found and its latest sign-in moved to [now], or registered. The device flow of the CLI and
+ * the app's code exchange both register through it.
+ *
+ * @param userId The person.
+ * @param login The installation, its name for a new device, and what it reported.
+ * @param now The time of the sign-in.
+ *
+ * @return The device, and whether this sign-in registered it.
+ *
+ * @throws DeviceLimitException When the installation is new and the person holds [MAX_REGISTERED_DEVICES] already.
+ */
+internal fun JdbcTransaction.signInDevice(userId: Uuid, login: DeviceSignInRequest, now: Instant): DeviceSignIn {
+    val d = IdentityDevices
+    val existing = d.select(d.columns)
+        .where { (d.userId eq userId) and (d.installationId eq login.installationId) }
+        .singleOrNull()?.toDevice()
+    if (existing != null) {
+        // A client that reports nothing keeps what a newer one reported.
+        val device = existing.copy(
+            lastLoginAt = now,
+            platform = login.platform ?: existing.platform,
+            osVersion = if (login.platform != null) login.osVersion else existing.osVersion,
+        )
+        d.update({ d.id eq existing.id }) {
+            it[lastLoginAt] = device.lastLoginAt
+            it[platform] = device.platform
+            it[osVersion] = device.osVersion
+        }
+        return DeviceSignIn(device, registered = false)
+    }
+    val held = d.select(d.id).where { d.userId eq userId }.limit(MAX_REGISTERED_DEVICES).count()
+    if (held >= MAX_REGISTERED_DEVICES) throw DeviceLimitException()
+    val device = RegisteredDevice(
+        Uuid.random(), userId, login.installationId, login.name, login.platform, login.osVersion, now, now,
+    )
+    d.insert {
+        it[id] = device.id
+        it[this.userId] = userId
+        it[installationId] = device.installationId
+        it[name] = device.name
+        it[platform] = device.platform
+        it[osVersion] = device.osVersion
+        it[createdAt] = now
+        it[lastLoginAt] = now
+    }
+    return DeviceSignIn(device, registered = true)
 }
 
 private val PENDING = DeviceAuthorizationStatus.PENDING.name

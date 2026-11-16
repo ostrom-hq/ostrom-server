@@ -375,7 +375,9 @@ object IdentityModule : ServerModule {
         single<PhoneUnlockProofs> { PhoneUnlockProofsImpl(get<JdbcDatabase>()) }
         single<NotificationPreferencesRepository> { NotificationPreferencesRepositoryImpl(get<JdbcDatabase>()) }
         single<CompleteMobileSignInUseCase> { CompleteMobileSignInUseCaseImpl(get(), get(), get(), get(), get()) }
-        single<ExchangeMobileCodeUseCase> { ExchangeMobileCodeUseCaseImpl(get(), get(), get(), get(), get(), get()) }
+        single<ExchangeMobileCodeUseCase> {
+            ExchangeMobileCodeUseCaseImpl(get(), get(), get(), get(), get(), get(), get())
+        }
         single<UnlockMobileAppUseCase> { UnlockMobileAppUseCaseImpl(get(), get(), get(), get(), get()) }
         single<GetNotificationPreferencesUseCase> { GetNotificationPreferencesUseCaseImpl(get()) }
         single<SetNotificationPreferencesUseCase> { SetNotificationPreferencesUseCaseImpl(get(), get()) }

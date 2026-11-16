@@ -177,6 +177,30 @@ interface MobileTokensRepository {
     suspend fun create(token: ApiToken, secretHash: String, unlockKeyHash: String)
 
     /**
+     * [create] for an app that names its installation (`devices.v1`): in the same transaction, which no other sign-in
+     * of the person runs through at once, the installation is registered as a device of the token's owner, or found,
+     * and the token is stored as one of its sign-ins ([ApiToken.deviceId] is set here), as the CLI's device flow does.
+     *
+     * @param token The token (kind [TokenKind.MOBILE]).
+     * @param secretHash The SHA-256 of its secret.
+     * @param unlockKeyHash The SHA-256 of its unlock key.
+     * @param login The installation, its name for a new device, and what it reported.
+     * @param now The time of the sign-in.
+     *
+     * @return The device, and whether this sign-in registered it.
+     *
+     * @throws DeviceLimitException When the installation is new and its owner holds [MAX_REGISTERED_DEVICES] already;
+     *   nothing is written.
+     */
+    suspend fun createOnDevice(
+        token: ApiToken,
+        secretHash: String,
+        unlockKeyHash: String,
+        login: DeviceSignInRequest,
+        now: Instant,
+    ): DeviceSignIn
+
+    /**
      * Records an unlock: the token's [ApiToken.authenticatedAt] becomes [at], and the request it is for [requestId],
      * only when the token is the user's, an app token, live, and its unlock key has this hash.
      *

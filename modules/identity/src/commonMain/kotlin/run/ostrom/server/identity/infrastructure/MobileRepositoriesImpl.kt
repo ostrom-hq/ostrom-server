@@ -2,6 +2,8 @@
 package run.ostrom.server.identity.infrastructure
 
 import run.ostrom.server.identity.domain.ApiToken
+import run.ostrom.server.identity.domain.DeviceSignIn
+import run.ostrom.server.identity.domain.DeviceSignInRequest
 import run.ostrom.server.identity.domain.MobileCode
 import run.ostrom.server.identity.domain.MobileCodesRepository
 import run.ostrom.server.identity.domain.MobileTokensRepository
@@ -77,6 +79,21 @@ class MobileTokensRepositoryImpl(private val database: JdbcDatabase) : MobileTok
 
     override suspend fun create(token: ApiToken, secretHash: String, unlockKeyHash: String) {
         database.query { insertToken(token, secretHash, unlockKeyHash) }
+    }
+
+    // As the device flow's sign-in: the person's row is locked, so that their sign-ins and removals of a device run one
+    // after the other; the limit is counted under it.
+    override suspend fun createOnDevice(
+        token: ApiToken,
+        secretHash: String,
+        unlockKeyHash: String,
+        login: DeviceSignInRequest,
+        now: Instant,
+    ): DeviceSignIn = database.query {
+        lockUser(token.userId)
+        val signIn = signInDevice(token.userId, login, now)
+        insertToken(token.copy(deviceId = signIn.device.id), secretHash, unlockKeyHash)
+        signIn
     }
 
     override suspend fun unlock(

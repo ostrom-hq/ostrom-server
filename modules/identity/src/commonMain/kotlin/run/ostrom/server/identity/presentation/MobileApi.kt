@@ -52,9 +52,22 @@ class MySettingsApi {
  * @property code The one-time code from the deep link.
  * @property codeVerifier The PKCE verifier.
  * @property redirectUri The deep link the code was sent to.
+ * @property installationId With `devices.v1`, the app's installation: a random lowercase UUID kept in its settings,
+ *   registered as a device of the person who signs in (otherwise 400 `invalid_installation`).
+ * @property deviceName The name a device this sign-in registers carries (1 to 120 characters).
+ * @property platform `macos`, `windows`, `linux`, `ios` or `android`.
+ * @property osVersion The system's version, 1 to 64 printable characters, only with [platform].
  */
 @Serializable
-data class MobileTokenRequest(val code: String, val codeVerifier: String, val redirectUri: String)
+data class MobileTokenRequest(
+    val code: String,
+    val codeVerifier: String,
+    val redirectUri: String,
+    val installationId: String? = null,
+    val deviceName: String? = null,
+    val platform: String? = null,
+    val osVersion: String? = null,
+)
 
 /**
  * The signed-in person, as the contract's `AuthUser`.
