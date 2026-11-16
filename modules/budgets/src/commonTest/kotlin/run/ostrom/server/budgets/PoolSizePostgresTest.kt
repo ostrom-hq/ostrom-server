@@ -412,7 +412,7 @@ class PoolSizePostgresTest {
         val next = store.store(org, now + 1.minutes) { assertNotNull(it).micros + 1 }
         assertEquals(AutomaticDaily(6, now + 1.minutes), next)
         assertNull(store.read(TestCallers.orgB))
-        val rows = server.database.superuser.fetchAll("SELECT org_id FROM budgets_automatic_daily").getOrThrow()
+        val rows = server.database.superuserTexts("SELECT org_id FROM budgets_automatic_daily")
         assertEquals(1, rows.size)
     }
 }

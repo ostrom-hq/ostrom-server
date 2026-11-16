@@ -451,7 +451,7 @@ class GovernancePostgresTest {
     fun theQueriesUseTheirIndexes() = governanceTest { server ->
         val database = server.koin.get<JdbcDatabase>()
         for ((org, count) in listOf(orgB to 6_000, orgA to 60)) database.seed(org, count)
-        server.database.superuser.execute("VACUUM ANALYZE governance_confirmations").getOrThrow()
+        server.database.superuserOutsideTransaction("VACUUM ANALYZE governance_confirmations")
         val now = Time.now()
         val outcome = ConfirmationOutcome(ConfirmationStatus.CONFIRMED, ConfirmationPerson("u", Uuid.random()), now)
         val error = ConfirmationError("internal_error", "m")

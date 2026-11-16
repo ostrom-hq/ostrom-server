@@ -150,7 +150,7 @@ class OrgSettingsPostgresTest {
 
     // A check across organizations and modules, as no request does: the superuser's pool.
     private suspend fun TestServer.count(sql: String): Long =
-        database.superuser.fetchAll(sql).getOrThrow().single().get("n").asString().toLong()
+        checkNotNull(database.superuserTexts(sql).single()).toLong()
 
     @Test
     fun anOwnerOrAdminSetsTheTimeZoneAndTheShortNameNeverChanges() =

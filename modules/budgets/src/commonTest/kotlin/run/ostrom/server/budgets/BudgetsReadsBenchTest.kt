@@ -50,15 +50,14 @@ class BudgetsReadsBenchTest {
 
     @Test
     fun myBudgetKeepsItsBudget() = benchTest(listOf(SecretsModule, UsageModule, BudgetsModule), overrides) { server ->
-        val fixtures = server.database.superuser
-        orgs.forEach { fixtures.execute(usageOf(it)).getOrThrow() }
-        fixtures.execute(
+        server.database.superuserOutsideTransaction(
+            *orgs.map(::usageOf).toTypedArray(),
             "INSERT INTO budgets_limits (org_id, member_id, scope, limit_micros, updated_at) VALUES " +
                 "(CAST('${TestCallers.orgA}' AS uuid), NULL, 'ORG', $LIMIT_MICROS, now()), " +
                 "(CAST('${TestCallers.orgA}' AS uuid), CAST('${TestCallers.memberA.memberId}' AS uuid), 'MEMBER', " +
                 "$MEMBER_LIMIT_MICROS, now())",
-        ).getOrThrow()
-        fixtures.execute("VACUUM ANALYZE usage_events").getOrThrow()
+            "VACUUM ANALYZE usage_events",
+        )
 
         // The member's own limit, not the organization's: the route reads both and the month's spending.
         val response = server.client.get("/api/v1/budgets/me") { bearerAuth("member-a") }

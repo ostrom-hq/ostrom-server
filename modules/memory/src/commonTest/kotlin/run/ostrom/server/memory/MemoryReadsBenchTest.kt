@@ -54,13 +54,11 @@ class MemoryReadsBenchTest {
 
     @Test
     fun theReadsKeepTheirBudget() = benchTest(listOf(MemoryModule), overrides) { server ->
-        val fixtures = server.database.superuser
-        orgs.forEach {
-            fixtures.execute(entriesOf(it)).getOrThrow()
-            fixtures.execute(tagsOf(it)).getOrThrow()
-        }
-        fixtures.execute("VACUUM ANALYZE memory_entries").getOrThrow()
-        fixtures.execute("VACUUM ANALYZE memory_tags").getOrThrow()
+        server.database.superuserOutsideTransaction(
+            *orgs.flatMap { listOf(entriesOf(it), tagsOf(it)) }.toTypedArray(),
+            "VACUUM ANALYZE memory_entries",
+            "VACUUM ANALYZE memory_tags",
+        )
 
         val first = server.client.get("/api/v1/memory/index") { bearerAuth("ada") }.body<MemoryIndexPage>()
         assertEquals(50, first.entries.size)

@@ -21,6 +21,7 @@ import run.ostrom.server.orgs.infrastructure.OrgOrganizations
 import run.ostrom.server.orgs.infrastructure.OrgsRepositoryImpl
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
+import org.jetbrains.exposed.v1.core.statements.StatementType
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -59,16 +60,14 @@ class OrgsServingRolePostgresTest {
             val bob = server.user("bob")
             server.database.withJdbcRole(JdbcDatabase.MIN_POOL_SIZE) { role, serving ->
                 // What ci/database-roles.sql and the Helm chart grant `ostrom_app`.
-                server.database.superuser
-                    .execute("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO $role")
-                    .getOrThrow()
-                server.database.superuser.execute("GRANT ostrom_tenant TO $role").getOrThrow()
+                server.database.superuserOutsideTransaction(
+                    "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO $role",
+                    "GRANT ostrom_tenant TO $role",
+                )
                 val orgs = OrgsRepositoryImpl(serving, server.koin.get())
                 // Without its own EXECUTE grant, a role cannot run them: PUBLIC has none (S2-60).
                 assertFails { orgs.slugTaken("acme") }
-                server.database.superuser
-                    .execute("GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO $role")
-                    .getOrThrow()
+                server.database.superuserOutsideTransaction("GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO $role")
                 val members = MembersRepositoryImpl(serving)
                 val invitations = InvitationsRepositoryImpl(serving)
 
@@ -107,12 +106,11 @@ class OrgsServingRolePostgresTest {
         serverTest(listOf(IdentityModule, OrgsModule)) { server ->
             val ada = server.user("ada")
             server.database.withJdbcRole(JdbcDatabase.MIN_POOL_SIZE) { role, serving ->
-                val superuser = server.database.superuser
-                superuser
-                    .execute("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO $role")
-                    .getOrThrow()
-                superuser.execute("GRANT ostrom_tenant TO $role").getOrThrow()
-                superuser.execute("GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO $role").getOrThrow()
+                server.database.superuserOutsideTransaction(
+                    "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO $role",
+                    "GRANT ostrom_tenant TO $role",
+                    "GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO $role",
+                )
                 val orgs = OrgsRepositoryImpl(serving, server.koin.get())
                 val deletions = OrgDeletionsRepositoryImpl(serving)
                 val acme = org("acme")
@@ -142,16 +140,15 @@ class OrgsServingRolePostgresTest {
     @Test
     fun theCrossOrganizationFunctionsPutTheTemporarySchemaLast() =
         serverTest(listOf(IdentityModule, OrgsModule)) { server ->
-            val hardened =
-                server.driver
-                    .fetchAll(
-                        "SELECT count(*) AS n FROM pg_proc WHERE proname LIKE 'orgs\\_%' " +
-                            "AND proconfig = ARRAY['search_path=pg_catalog, public, pg_temp']"
-                    ).getOrThrow()
-                    .single()
-                    .get("n")
-                    .asString()
-                    .toLong()
+            // As the serving role, the path of every request.
+            val hardened = server.koin.get<JdbcDatabase>().query {
+                val sql = "SELECT count(*) FROM pg_proc WHERE proname LIKE 'orgs\\_%' " +
+                    "AND proconfig = ARRAY['search_path=pg_catalog, public, pg_temp']"
+                exec(sql, explicitStatementType = StatementType.SELECT) { rows ->
+                    check(rows.next())
+                    rows.getLong(1)
+                }
+            }
             // The router's eight, and the member search's (orgs migration 7, owned by ostrom_member_search).
             assertEquals(9L, hardened)
         }

@@ -26,6 +26,7 @@ import run.ostrom.server.automations.fakes.ORG_B
 import run.ostrom.server.automations.fakes.RecordingEvents
 import run.ostrom.server.automations.fakes.RecordingOrgEvents
 import run.ostrom.server.automations.fakes.testIdentities
+import run.ostrom.server.automations.infrastructure.AutomationsWaits
 import run.ostrom.server.automations.presentation.WaitsResponse
 import run.ostrom.server.kernel.events.OrgEventPublisher
 import run.ostrom.server.kernel.events.OrgEventType
@@ -44,6 +45,8 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.jdbc.select
 import org.koin.dsl.module
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -141,8 +144,9 @@ class TimedWaitsPostgresTest {
         val pass = server.koin.get<ResolveDueWaitsUseCase>()
         assertEquals(0, pass.pass(), "Not due yet")
         // As if 30 s had passed: the instant is moved back.
-        server.database.superuser.execute("UPDATE automations_waits SET due_at = due_at - INTERVAL '1 minute'")
-            .getOrThrow()
+        server.database.superuserOutsideTransaction(
+            "UPDATE automations_waits SET due_at = due_at - INTERVAL '1 minute'",
+        )
         assertEquals(1, pass.pass())
         assertEquals(0, pass.pass(), "Once")
         assertTrue("resolved" to id in events.seen, "The bound events hear of it")
@@ -171,9 +175,12 @@ class TimedWaitsPostgresTest {
             assertTrue(url.startsWith("/api/v1/waits/$id/event?token=wev_"), url)
             assertTrue(created.field("timeoutAt") != null)
             val secret = url.substringAfter("token=")
-            val stored = server.database.superuser.fetchAll(
-                "SELECT event_secret_hash FROM automations_waits WHERE id = '$id'",
-            ).getOrThrow().single().get("event_secret_hash").asString()
+            val stored = checkNotNull(
+                server.database.superuserJdbc.query {
+                    AutomationsWaits.select(AutomationsWaits.eventSecretHash)
+                        .where { AutomationsWaits.id eq Uuid.parse(id) }.single()[AutomationsWaits.eventSecretHash]
+                },
+            )
             assertFalse(secret in stored, "Only its hash is kept")
 
             val bare = "/api/v1/waits/$id/event"

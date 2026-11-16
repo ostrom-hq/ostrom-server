@@ -176,9 +176,9 @@ class BudgetOverridesPostgresTest {
     fun anOverrideEndsByTheDatabasesClockWithNoJob() = serverTest(modules, overrides) { server ->
         val granted = server.grant().body<BudgetOverrideDto>()
         assertNotNull(server.history().body<BudgetOverridesPage>().activeId)
-        server.database.superuser.execute(
+        server.database.superuserOutsideTransaction(
             "UPDATE budgets_overrides SET expires_at = now() - interval '1 second'",
-        ).getOrThrow()
+        )
         assertNull(server.history().body<BudgetOverridesPage>().activeId)
         val mine = server.client.get("/api/v1/budgets/me") { bearerAuth("member-a") }.body<MyBudgetResponse>()
         assertNull(mine.override)
@@ -201,12 +201,12 @@ class BudgetOverridesPostgresTest {
 
     @Test
     fun theHistoryPagesByFiftyAndRefusesWhatItCannotTake() = serverTest(modules, overrides) { server ->
-        server.database.superuser.execute(
+        server.database.superuserOutsideTransaction(
             "INSERT INTO budgets_overrides (id, org_id, member_id, micros, created_by, reason, created_at, " +
                 "expires_at, revoked_at) SELECT gen_random_uuid(), '${TestCallers.orgA}', '$member', i, " +
                 "gen_random_uuid(), 'old', now() - make_interval(0, 0, 0, 0, 0, i), now(), now() " +
                 "FROM generate_series(1, 55) AS i",
-        ).getOrThrow()
+        )
         val first = server.history().body<BudgetOverridesPage>()
         assertEquals(50, first.items.size)
         assertEquals((1L..50L).toList(), first.items.map { it.micros }, "Newest first")
@@ -236,14 +236,14 @@ class BudgetOverridesPostgresTest {
                 "expires_at, revoked_at) SELECT gen_random_uuid(), '${TestCallers.orgA}', $memberOf, 0, " +
                 "gen_random_uuid(), 'old', now(), now(), now() FROM generate_series(1, $count) AS i"
         }
-        server.database.superuser.execute(fill(4999, "'$member'")).getOrThrow()
+        server.database.superuserOutsideTransaction(fill(4999, "'$member'"))
         val last = server.grant()
         assertEquals(HttpStatusCode.Created, last.status, "The 5 000th")
         val full = server.grant(replacesId = last.body<BudgetOverrideDto>().id)
         assertEquals(HttpStatusCode.BadRequest, full.status)
         assertEquals("invalid_budget_override", errorType(full))
-        server.database.superuser.execute("DELETE FROM budgets_overrides").getOrThrow()
-        server.database.superuser.execute(fill(100_000, "gen_random_uuid()")).getOrThrow()
+        server.database.superuserOutsideTransaction("DELETE FROM budgets_overrides")
+        server.database.superuserOutsideTransaction(fill(100_000, "gen_random_uuid()"))
         assertEquals(HttpStatusCode.BadRequest, server.grant().status, "The organization's 100 000")
     }
 

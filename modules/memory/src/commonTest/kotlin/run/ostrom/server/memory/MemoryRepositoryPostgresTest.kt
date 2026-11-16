@@ -57,14 +57,14 @@ class MemoryRepositoryPostgresTest {
         count: Long,
         expires: String = "NULL",
     ) {
-        database.superuser.execute(
+        database.superuserOutsideTransaction(
             """
             INSERT INTO memory_entries (id, org_id, scope, owner_id, title, summary, content, refs, status, origin,
             author_id, expires_at, version, created_at, updated_at)
             SELECT gen_random_uuid(), '$org', '${scope.wire}', '$owner', 'Old ' || n, 's', 'c', '[]', 'active', 'human',
             '$owner', $expires, 1, now(), now() FROM generate_series(1, $count) AS n
             """.trimIndent(),
-        ).getOrThrow()
+        )
     }
 
     @Test
@@ -110,8 +110,8 @@ class MemoryRepositoryPostgresTest {
         server.fill(ORG_A, MemoryScope.TEAM, "", 1, expires = "now() - INTERVAL '1 minute'")
         assertTrue(repository.index(ada, MemoryScope.TEAM, emptyList(), null, 50).entries.isEmpty())
         assertTrue(repository.search(ada, listOf("old"), emptyList(), 20).isEmpty())
-        val expired = server.database.superuser.fetchAll("SELECT id FROM memory_entries WHERE expires_at IS NOT NULL")
-            .getOrThrow().single().get("id").asString().let(Uuid::parse)
+        val expired = server.database.superuserTexts("SELECT id FROM memory_entries WHERE expires_at IS NOT NULL")
+            .single().let { Uuid.parse(checkNotNull(it)) }
         assertFailsWith<MemoryNotFoundException> { repository.read(ada, expired) }
         assertFailsWith<MemoryNotFoundException> { repository.delete(ada, expired) { } }
     }
@@ -128,8 +128,8 @@ class MemoryRepositoryPostgresTest {
         assertEquals(2, repository.index(ada, null, emptyList(), null, 50).entries.size, "Kept until the purge")
         listener.purge(ORG_A)
         assertTrue(repository.index(ada, null, emptyList(), null, 50).entries.isEmpty())
-        val left = server.database.superuser.fetchAll("SELECT org_id FROM memory_tags").getOrThrow()
-        assertEquals(listOf(ORG_B.toString()), left.map { it.get("org_id").asString() }, "Their tags go with them")
+        val left = server.database.superuserTexts("SELECT org_id FROM memory_tags")
+        assertEquals(listOf(ORG_B.toString()), left, "Their tags go with them")
         assertEquals(kept.id, repository.read(eve, kept.id).id)
     }
 

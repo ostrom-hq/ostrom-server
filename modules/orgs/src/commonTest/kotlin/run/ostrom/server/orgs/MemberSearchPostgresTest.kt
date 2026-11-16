@@ -16,6 +16,7 @@ import run.ostrom.server.orgs.infrastructure.MembersRepositoryImpl
 import run.ostrom.server.orgs.infrastructure.OrgsRepositoryImpl
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
+import org.jetbrains.exposed.v1.core.statements.StatementType
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import org.jetbrains.exposed.v1.jdbc.select
 import kotlin.test.Test
@@ -60,11 +61,11 @@ class MemberSearchPostgresTest {
             val names = listOf("a_b", "axb", "50% off", "50x off", "ada")
             names.forEachIndexed { index, name ->
                 val user = server.user("member$index", name)
-                server.database.superuser.execute(
+                server.database.superuserOutsideTransaction(
                     "INSERT INTO orgs_members (id, org_id, user_id, role, joined_at) VALUES (gen_random_uuid(), " +
                         "CAST('${acme.id}' AS uuid), CAST('${user.id}' AS uuid), 'member', now() + " +
                         "INTERVAL '${index + 1} minutes')",
-                ).getOrThrow()
+                )
             }
             val members = MembersRepositoryImpl(server.koin.get())
             suspend fun found(org: Org, prefix: String) =
@@ -89,33 +90,41 @@ class MemberSearchPostgresTest {
             assertTrue("not the session's organization" in none.message.orEmpty(), "A session without one")
 
             // Owned by its own role, its search_path fixed, run by the tenant role only.
-            val function = server.database.superuser.fetchAll(
+            val function = server.catalogRow(
                 "SELECT pg_get_userbyid(p.proowner) AS owner, CAST(p.prosecdef AS TEXT) AS definer, " +
                     "array_to_string(p.proconfig, ' ') AS config, " +
                     "CAST(has_function_privilege('ostrom_tenant', p.oid, 'EXECUTE') AS TEXT) AS tenant, " +
                     "CAST(has_function_privilege('ostrom_router', p.oid, 'EXECUTE') AS TEXT) AS router " +
                     "FROM pg_proc p WHERE p.proname = 'orgs_search_members'",
-            ).getOrThrow().single()
-            assertEquals("ostrom_member_search", function.get("owner").asString())
-            assertTrue(function.get("definer").asString() == "true")
-            assertTrue("search_path=pg_catalog, public, pg_temp" in function.get("config").asString())
-            assertTrue(function.get("tenant").asString() == "true")
-            assertFalse(function.get("router").asString() == "true", "No other role: EXECUTE is revoked from PUBLIC")
+            )
+            assertEquals("ostrom_member_search", function.getValue("owner"))
+            assertTrue(function.getValue("definer") == "true")
+            assertTrue("search_path=pg_catalog, public, pg_temp" in function.getValue("config"))
+            assertTrue(function.getValue("tenant") == "true")
+            assertFalse(function.getValue("router") == "true", "No other role: EXECUTE is revoked from PUBLIC")
 
             // Its role reads three columns of identity_users, never an e-mail or anything else of a user.
-            val columns = server.database.superuser.fetchAll(
+            val columns = server.catalogRow(
                 "SELECT CAST(has_column_privilege('ostrom_member_search', 'identity_users', 'primary_email', " +
                     "'SELECT') OR has_table_privilege('ostrom_member_search', 'identity_user_emails', 'SELECT') " +
                     "AS TEXT) AS email, " +
                     "CAST(has_table_privilege('ostrom_member_search', 'identity_users', 'SELECT') AS TEXT) AS whole, " +
                     "CAST(has_column_privilege('ostrom_member_search', 'identity_users', 'login', 'SELECT') AS TEXT) " +
                     "AS login",
-            ).getOrThrow().single()
-            assertFalse(columns.get("email").asString() == "true", "The search's role reads no e-mail")
-            assertFalse(
-                columns.get("whole").asString() == "true",
-                "The search's role reads no whole row of identity_users",
             )
-            assertTrue(columns.get("login").asString() == "true")
+            assertFalse(columns.getValue("email") == "true", "The search's role reads no e-mail")
+            assertFalse(columns.getValue("whole") == "true", "The search's role reads no whole row of identity_users")
+            assertTrue(columns.getValue("login") == "true")
         }
+
+    // The one row of a catalog query, by column label, read as the superuser; a SQL null fails the test.
+    private suspend fun TestServer.catalogRow(sql: String): Map<String, String> = database.superuserJdbc.query {
+        exec(sql, explicitStatementType = StatementType.SELECT) { rows ->
+            check(rows.next()) { "No row: $sql" }
+            val columns = rows.metaData
+            (1..columns.columnCount).associate { i ->
+                columns.getColumnLabel(i) to checkNotNull(rows.getString(i)) { columns.getColumnLabel(i) }
+            }.also { check(!rows.next()) { "More than one row: $sql" } }
+        }
+    }.let { checkNotNull(it) }
 }
