@@ -102,10 +102,12 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
@@ -593,7 +595,9 @@ class CompilerPostgresTest {
         val save = write("workflows.save", "deploy", JsonArray(emptyList()))
         val noBody = write("workflows.save", "deploy", null)
         val noId = write("workflows.delete", null, null)
-        for (write in listOf(create, save, noBody, noId)) {
+        val numberId = GovernanceWrite("workflows.delete", buildJsonObject { put("id", 7) })
+        val objectId = GovernanceWrite("workflows.delete", buildJsonObject { put("id", JsonObject(emptyMap())) })
+        for (write in listOf(create, save, noBody, noId, numberId, objectId)) {
             val refused = assertFailsWith<OstromException>(write.kind) { change.preview(orgA, write) }
             assertEquals(ErrorKind.INVALID_REQUEST, refused.kind, write.kind)
             assertEquals("invalid_workflow", refused.type, write.kind)

@@ -97,7 +97,9 @@ class CompilerGovernanceChange(
         }
 
         private fun JsonObject.id(): String = payloadPart {
-            (getValue(ID) as JsonPrimitive).takeIf { it.isString }?.content ?: error("The workflow id is not a text.")
+            val id = getValue(ID).jsonPrimitive
+            require(id.isString) { "The workflow id is not a text." }
+            id.content
         }
 
         private fun JsonObject.document(): JsonObject = payloadPart { body().jsonObject }
@@ -114,10 +116,6 @@ class CompilerGovernanceChange(
         } catch (_: IllegalArgumentException) {
             throw unreadable()
         } catch (_: NoSuchElementException) {
-            throw unreadable()
-        } catch (_: ClassCastException) {
-            throw unreadable()
-        } catch (_: IllegalStateException) {
             throw unreadable()
         }
 
