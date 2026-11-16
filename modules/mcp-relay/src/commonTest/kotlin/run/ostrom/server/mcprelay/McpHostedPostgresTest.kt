@@ -30,7 +30,6 @@ import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
-import io.github.smyrgeorge.sqlx4k.Transaction
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -51,9 +50,6 @@ class McpHostedPostgresTest : RelayPostgresHarness() {
         val published = mutableListOf<Pair<String, List<OrgEventDraft>>>()
 
         override suspend fun publish(orgId: Uuid, events: List<OrgEventDraft>) = error("In the state's transaction")
-
-        override suspend fun publishIn(transaction: Transaction, orgId: Uuid, events: List<OrgEventDraft>) =
-            error("The relay is on Exposed")
 
         override fun publishIn(transaction: JdbcTransaction, orgId: Uuid, events: List<OrgEventDraft>) {
             val org = transaction.exec("SELECT current_setting('ostrom.org_id')") {

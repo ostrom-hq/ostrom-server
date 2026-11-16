@@ -169,15 +169,14 @@ override suspend fun rename(orgId: Uuid, id: Uuid, name: String): Boolean = data
   the table's row-level security policy still refuses another organization's rows. Keep both until the step that
   drops row-level security; outside `inOrg` a tenant table shows no row and accepts none. A table whose migration lets
   `ostrom_tenant` only read it (identity's `identity_api_tokens`) is written in `database.withOrganization(orgId) { }`,
-  the serving role with the organization set, as the sqlx4k `withOrganization`. The identity audit chain has two
-  writers until orgs and workflow-runs move: identity's own on Exposed, theirs in their sqlx4k transaction
-  (`TransactionalAuditLog`); both take the kernel's advisory lock on the chain with the same SQL
-  (`lockUntilCommit`, on a `JdbcTransaction` and on a sqlx4k `Transaction`, both `LOCK_UNTIL_COMMIT_SQL`). The
-  Exposed writer signs an event between two transactions, never inside one (a transaction block is not `suspend`),
-  and signs it again if another writer appended meanwhile. The organization's event journal has two writers the same
-  way until every publisher moves: `OrgEventPublisher.publishIn` on a `JdbcTransaction` (the gates' approval events,
-  in the gate's own `inOrg` transaction) and on a sqlx4k `Transaction`; both move the organization's cursor with the
-  same upsert, whose row lock they wait on, so they share one gap-free sequence (`JournalWritersPostgresTest`).
+  the serving role with the organization set. The identity audit chain has two writers: identity's own
+  (`AuditLog.record`) and the other modules', inside their transaction (`TransactionalAuditLog`: `head`, `sign`,
+  `append`); both take the kernel's advisory lock on the chain (`lockUntilCommit`) and read its head the same way. A
+  writer signs an event between two transactions, never inside one (a transaction block is not `suspend`), and signs
+  it again if another writer appended meanwhile. The organization's event journal is written by
+  `OrgEventPublisher.publishIn` inside the caller's transaction (the gates' approval events, in the gate's own `inOrg`
+  transaction) or `publish` in its own; both move the organization's cursor with the same upsert, whose row lock they
+  wait on, so they share one gap-free sequence (`JournalWritersPostgresTest`).
 - A change that reads then writes locks what it read: `select(…).where { … }.forUpdate()` in the same transaction.
 - Exposed never retries a transaction (`defaultMaxAttempts = 1`). A refusal the domain expects (a duplicate) is an
   `insertIgnore`/`upsert` or a check in the same transaction, not a caught exception.
