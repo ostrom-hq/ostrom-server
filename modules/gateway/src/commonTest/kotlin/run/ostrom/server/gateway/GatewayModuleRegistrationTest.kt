@@ -15,6 +15,8 @@ import run.ostrom.server.sharing.domain.AccountSlotRepository
 import run.ostrom.server.sharing.domain.MemberPoolRepository
 import run.ostrom.server.sharing.domain.NoAccountGroups
 import run.ostrom.server.sharing.domain.NoMemberPools
+import run.ostrom.server.sharing.domain.NoOverflowPools
+import run.ostrom.server.sharing.domain.OverflowPools
 import run.ostrom.server.sharing.domain.NoQuotaHistory
 import run.ostrom.server.sharing.domain.QuotaHistoryRepository
 import run.ostrom.server.sharing.domain.SharedAccountRepository
@@ -75,6 +77,7 @@ class GatewayModuleRegistrationTest {
             single<QuotaHistoryRepository> { NoQuotaHistory }
             single<AccountGroups> { NoAccountGroups }
             single<MemberPoolRepository> { NoMemberPools }
+            single<OverflowPools> { NoOverflowPools }
             single<SpendGuard> { SpendGuard { SpendDecision.Allowed } }
         }
         koinApplication { modules(GatewayModule.koinModule, required) }.let {

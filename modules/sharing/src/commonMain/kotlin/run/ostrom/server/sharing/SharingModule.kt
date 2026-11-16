@@ -12,6 +12,7 @@ import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.settings.InstanceSettings
 import run.ostrom.server.kernel.settings.SettingsSection
+import run.ostrom.server.kernel.sharing.SharedAccountSpend
 import run.ostrom.server.secrets.domain.CallerResolver
 import run.ostrom.server.secrets.domain.OrgPrincipalCallerResolver
 import run.ostrom.server.sharing.domain.AccountGroups
@@ -48,6 +49,11 @@ import run.ostrom.server.sharing.domain.RemoveSharedAccountUseCase
 import run.ostrom.server.sharing.domain.RemoveSharedAccountUseCaseImpl
 import run.ostrom.server.sharing.domain.ShareAccountUseCase
 import run.ostrom.server.sharing.domain.ShareAccountUseCaseImpl
+import run.ostrom.server.sharing.domain.OverflowPools
+import run.ostrom.server.sharing.domain.OverflowPoolsImpl
+import run.ostrom.server.sharing.domain.PoolBudgetRepository
+import run.ostrom.server.sharing.domain.PoolBudgetsUseCase
+import run.ostrom.server.sharing.domain.PoolBudgetsUseCaseImpl
 import run.ostrom.server.sharing.domain.SharedAccountPool
 import run.ostrom.server.sharing.domain.SharedAccountRepository
 import run.ostrom.server.sharing.domain.SharingOrgs
@@ -61,6 +67,7 @@ import run.ostrom.server.sharing.infrastructure.AccountSlotRepositoryImpl
 import run.ostrom.server.sharing.infrastructure.GroupRepositoryImpl
 import run.ostrom.server.sharing.infrastructure.HttpOAuthRefresher
 import run.ostrom.server.sharing.infrastructure.MemberPoolRepositoryImpl
+import run.ostrom.server.sharing.infrastructure.PoolBudgetRepositoryImpl
 import run.ostrom.server.sharing.infrastructure.ProviderQuotaHeaderParser
 import run.ostrom.server.sharing.infrastructure.QuotaHistoryRepositoryImpl
 import run.ostrom.server.sharing.infrastructure.QuotaWindowRepositoryImpl
@@ -71,10 +78,12 @@ import run.ostrom.server.sharing.infrastructure.SharingOrgsImpl
 import run.ostrom.server.sharing.presentation.ForecastRoutesDependencies
 import run.ostrom.server.sharing.presentation.GroupRoutesDependencies
 import run.ostrom.server.sharing.presentation.MemberPolicyRoutesDependencies
+import run.ostrom.server.sharing.presentation.PoolBudgetRoutesDependencies
 import run.ostrom.server.sharing.presentation.SharingRoutesDependencies
 import run.ostrom.server.sharing.presentation.forecastRoutes
 import run.ostrom.server.sharing.presentation.groupRoutes
 import run.ostrom.server.sharing.presentation.memberPolicyRoutes
+import run.ostrom.server.sharing.presentation.poolBudgetRoutes
 import run.ostrom.server.sharing.presentation.sharingOperations
 import run.ostrom.server.sharing.presentation.sharingRoutes
 import io.ktor.client.HttpClient
@@ -131,7 +140,11 @@ object SharingModule : ServerModule {
         single<AccountSlotRepository> { AccountSlotRepositoryImpl(get()) }
         single<SharingOrgs> { SharingOrgsImpl(get()) }
         single<MemberPoolRepository> { MemberPoolRepositoryImpl(get()) }
-        single { SharedAccountPool(get(), get(), get(), get(), get(), spend(), get(), get(), get(), get(), get()) }
+        single<PoolBudgetRepository> { PoolBudgetRepositoryImpl(get()) }
+        single<OverflowPools> { OverflowPoolsImpl(get(), accountSpend(), get()) }
+        single {
+            SharedAccountPool(get(), get(), get(), get(), get(), spend(), get(), get(), get(), get(), get(), get())
+        }
         single<ShareAccountUseCase> { ShareAccountUseCaseImpl(get(), get(), get()) }
         single { MemberNames(logins(), get()) }
         single<ListSharedAccountsUseCase> {
@@ -148,6 +161,10 @@ object SharingModule : ServerModule {
         single<GroupMembersUseCase> { GroupMembersUseCaseImpl(get(), logins()) }
         single<ForecastService> { ForecastServiceImpl(get(), get(), get(), get()) }
         single<MemberPoliciesUseCase> { MemberPoliciesUseCaseImpl(get(), logins()) }
+        single<PoolBudgetsUseCase> { PoolBudgetsUseCaseImpl(get()) }
+        single {
+            PoolBudgetRoutesDependencies(getOrNull<CallerResolver>() ?: OrgPrincipalCallerResolver(get()), get(), get())
+        }
         single {
             val callers = getOrNull<CallerResolver>() ?: OrgPrincipalCallerResolver(get())
             MemberPolicyRoutesDependencies(callers, get(), get())
@@ -179,6 +196,10 @@ object SharingModule : ServerModule {
     /** The usage ledger's spend per account when the gateway binds it; none otherwise. */
     private fun Scope.spend(): AccountSpendReader = getOrNull<AccountSpendReader>() ?: NoAccountSpendReader()
 
+    /** The usage ledger's spend of the shared accounts when it is loaded; none otherwise (no overflow pool spends). */
+    private fun Scope.accountSpend(): SharedAccountSpend =
+        getOrNull<SharedAccountSpend>() ?: SharedAccountSpend { _, _, _ -> emptyMap() }
+
     override val migrations: List<SchemaMigration> = SharingMigrations
 
     override fun routes(route: Route, koin: Koin) {
@@ -186,6 +207,7 @@ object SharingModule : ServerModule {
         route.groupRoutes(koin.get())
         route.forecastRoutes(koin.get())
         route.memberPolicyRoutes(koin.get())
+        route.poolBudgetRoutes(koin.get())
     }
 
     /** The prune of the quota history, each minute, one replica at a time (TeamCode's admission maintenance). */

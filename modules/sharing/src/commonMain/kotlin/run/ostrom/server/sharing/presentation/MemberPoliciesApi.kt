@@ -15,13 +15,14 @@ import kotlinx.serialization.Serializable
 class MemberPolicyApi(val login: String)
 
 /**
- * A change of a member's policy (TeamCode's `PolicyRequest`, its pool only).
+ * A change of a member's policy (TeamCode's `PolicyRequest`, its pools only).
  *
  * @property poolId The member's home pool: 1 to 36 letters, digits, underscores or hyphens; an empty string takes
  *   them out of their pool.
+ * @property allowSharedOverflow Whether they may borrow the shared overflow pools; absent keeps what it was.
  */
 @Serializable
-data class UpdateMemberPolicyRequest(val poolId: String)
+data class UpdateMemberPolicyRequest(val poolId: String, val allowSharedOverflow: Boolean? = null)
 
 /**
  * A member's policy.
@@ -29,6 +30,8 @@ data class UpdateMemberPolicyRequest(val poolId: String)
  * @property member The member's login.
  * @property poolId Their home pool, absent for none: only the shared accounts of that pool serve them, and a member in
  *   no pool is served by the accounts in none.
+ * @property allowSharedOverflow Whether they may borrow the accounts of the shared overflow pools while their budget
+ *   lasts.
  */
 @Serializable
-data class MemberPolicyResponse(val member: String, val poolId: String? = null)
+data class MemberPolicyResponse(val member: String, val poolId: String? = null, val allowSharedOverflow: Boolean)

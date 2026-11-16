@@ -100,6 +100,21 @@ private val PACING_READS_SQL: String =
     REVOKE CREATE ON SCHEMA public FROM ostrom_router
     """.trimIndent()
 
+/** TeamCode's shared overflow: the reserves' budgets, the members allowed, and the indexes of a lease's reads. */
+private val SHARED_OVERFLOW_SQL: String = """
+    ALTER TABLE sharing_member_pools ALTER COLUMN pool_id DROP NOT NULL;
+    ALTER TABLE sharing_member_pools ADD COLUMN allow_shared_overflow BOOLEAN NOT NULL DEFAULT FALSE;
+    CREATE INDEX sharing_member_pools_pool ON sharing_member_pools (org_id, pool_id) WHERE pool_id IS NOT NULL;
+    CREATE INDEX sharing_accounts_pool ON sharing_accounts (org_id, pool_id) WHERE pool_id IS NOT NULL;
+    CREATE TABLE sharing_pool_budgets (
+        org_id UUID NOT NULL,
+        pool_id TEXT NOT NULL CONSTRAINT sharing_pool_budgets_pool_id CHECK (pool_id ~ '^[A-Za-z0-9_-]{1,36}$'),
+        daily_micros BIGINT NOT NULL CONSTRAINT sharing_pool_budgets_daily CHECK (daily_micros > 0),
+        shared_overflow BOOLEAN NOT NULL DEFAULT FALSE,
+        PRIMARY KEY (org_id, pool_id)
+    )
+""".trimIndent() + ";\n" + tenantTableSql("sharing_pool_budgets")
+
 /** The schema of the sharing module; its tables start with `sharing_`, each confined to its org (S2-01, S2-21). */
 val SharingMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -270,4 +285,9 @@ val SharingMigrations: List<SchemaMigration> = listOf(
             )
         """.trimIndent() + ";\n" + tenantTableSql("sharing_member_pools"),
     ),
+    // TeamCode's shared overflow (`pool_budgets.shared_overflow`, `member_policies.allow_shared_overflow`): a member
+    // may borrow the accounts of a named pool an administrator shares, while its daily budget, in USD millionths,
+    // covers what that pool lent today. A member allowed overflow may be in no pool, so their row's pool becomes
+    // optional. The indexes serve a lease's reads: the reserves no member calls home, and their accounts.
+    SchemaMigration(version = 15, name = "sharing_shared_overflow", sql = SHARED_OVERFLOW_SQL),
 )

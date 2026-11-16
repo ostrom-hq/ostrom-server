@@ -21,6 +21,7 @@ import run.ostrom.server.usage.domain.UsageWindow
 import run.ostrom.server.usage.infrastructure.ReviewCursor
 import run.ostrom.server.usage.infrastructure.accountHoursRead
 import run.ostrom.server.usage.infrastructure.accountSpentRead
+import run.ostrom.server.usage.infrastructure.accountsSpentRead
 import run.ostrom.server.usage.infrastructure.historyRead
 import run.ostrom.server.usage.infrastructure.holdTotalsRead
 import run.ostrom.server.usage.infrastructure.launchSpentRead
@@ -142,6 +143,8 @@ class UsageQueryPlansTest {
                 "spend of the org (budgets, gateway)" to spentRead(org, null, since).query,
                 "spend of a member (budgets, gateway)" to spentRead(org, member, since).query,
                 "spend of a shared account (sharing)" to accountSpentRead(org, account, since).query,
+                "overflow pools' accounts today (lease)" to
+                    accountsSpentRead(org, List(15) { Uuid.random() } + account, TestCallers.epoch - 1.days).query,
                 "newest page of the org" to listRead(org, null, null, 50).query,
                 "next page of the org" to listRead(org, null, UsageCursor(since, Uuid.random()), 50).query,
                 "next page of a member" to listRead(org, member, UsageCursor(since, Uuid.random()), 50).query,

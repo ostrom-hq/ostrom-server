@@ -313,6 +313,12 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
         body = """{"poolId": "taken"}""",
         admin = true,
     ),
+    // The pools' budgets and the shared overflow pools (TeamCode's pool budgets): the org's, read and set by its admins.
+    "GET /api/v1/pools/budgets" to Case.Target(admin = true),
+    "PUT /api/v1/pools/budgets" to Case.Target(
+        body = """{"poolId": "taken", "dailyMicros": 1000, "sharedOverflow": true}""",
+        admin = true,
+    ),
 
     // Secrets.
     "GET /api/v1/secrets" to Case.Target(),

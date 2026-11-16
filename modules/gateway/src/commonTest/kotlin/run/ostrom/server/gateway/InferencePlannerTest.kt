@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.gateway
 
+import run.ostrom.server.gateway.domain.AllowAllSpend
+import run.ostrom.server.gateway.domain.BudgetCheck
 import run.ostrom.server.gateway.domain.ClaudeMetadata
+import run.ostrom.server.gateway.domain.PriceTable
+import run.ostrom.server.gateway.domain.RequestBody
 import run.ostrom.server.gateway.domain.GatewayOrgConfig
 import run.ostrom.server.gateway.domain.GatewaySettings
 import run.ostrom.server.gateway.domain.InferenceCall
@@ -18,11 +22,21 @@ import run.ostrom.server.gateway.domain.UpstreamRequests
 import run.ostrom.server.gateway.domain.WireProtocol
 import run.ostrom.server.sharing.domain.AccountLimits
 import run.ostrom.server.sharing.domain.AccountProvider
+import run.ostrom.server.sharing.domain.AccountTokens
+import run.ostrom.server.sharing.domain.MemberPoolRepository
+import run.ostrom.server.sharing.domain.NoAccountSpendReader
+import run.ostrom.server.sharing.domain.OverflowPools
+import run.ostrom.server.sharing.domain.PoolPolicy
+import run.ostrom.server.sharing.domain.SharedAccountPool
+import run.ostrom.server.sharing.infrastructure.ProviderQuotaHeaderParser
+import run.ostrom.server.kernel.logging.JsonLogger
+import run.ostrom.server.kernel.logging.LogLevel
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.hours
@@ -337,6 +351,38 @@ class InferencePlannerTest {
             assertIs<InferencePlan.Ready>(withKey.plan(Gw.memberA, call(WireProtocol.MESSAGES, body))).provider,
         )
         first.lease?.release()
+    }
+
+    @Test
+    fun aMemberAllowedOverflowBorrowsAReservePricedAtWhatTheCallMayCost() = runTest {
+        val reserve = accounts.share(AccountProvider.CLAUDE, "reserve", clock)
+        accounts.update(reserve.copy(poolId = "reserve"))
+        val needs = mutableListOf<Long>()
+        val policies = object : MemberPoolRepository {
+            override suspend fun policyOf(orgId: Uuid, memberId: Uuid) = PoolPolicy(null, true)
+
+            override suspend fun policiesOf(orgId: Uuid, memberIds: Collection<Uuid>) = emptyMap<Uuid, PoolPolicy>()
+
+            override suspend fun setPolicy(orgId: Uuid, memberId: Uuid, poolId: String?, allow: Boolean?) = null
+        }
+        val shared = SharedAccountPool(
+            accounts, accounts,
+            AccountTokens(accounts, Gw.cipher, NoRefresh(), clock, JsonLogger(LogLevel.ERROR, sink = {})),
+            InMemorySlots(), ProviderQuotaHeaderParser(), NoAccountSpendReader(), clock,
+            logger = JsonLogger(LogLevel.ERROR, sink = {}),
+            pools = policies,
+            overflow = OverflowPools { _, need -> setOf("reserve").also { needs += need() } },
+        )
+        val body = """{"model":"claude-opus-5","max_tokens":1000}"""
+        val ready = assertIs<InferencePlan.Ready>(
+            planner(settings, shared).plan(Gw.memberA, call(WireProtocol.MESSAGES, body)),
+        )
+        assertEquals(reserve.id, ready.lease?.account?.id, "The reserve serves a member in no pool")
+        val priced = BudgetCheck(AllowAllSpend, PriceTable())
+            .reserveMicros(Gw.orgA, InferenceProvider.ANTHROPIC, assertNotNull(RequestBody.read(body, null)))
+        assertEquals(listOf(priced), needs, "The lease asks what the call may cost, once")
+        assertTrue(priced > 0)
+        ready.lease?.release()
     }
 
     @Test
