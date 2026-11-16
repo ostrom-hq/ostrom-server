@@ -46,7 +46,9 @@ private fun ApiCatalog.sessionReadOperations() {
         operationId = "listSessions"
         tag(TAG)
         summary = "Sessions."
-        description = "The segments of the caller's organization the caller may read, newest first."
+        description = "The segments of the caller's organization the caller may read, newest first. A segment " +
+            "opened under the launch of a cloud session a workflow run's agent node started names that run in " +
+            "`runId` (Ostrom's own), absent otherwise."
         parameters {
             organizationHeader()
             queryText("repo", "Only this repository's.")
@@ -75,7 +77,9 @@ private fun ApiCatalog.sessionReadOperations() {
         description = "Read by the session's person, an agent token of its launch, and the approvers of its gates " +
             "(read only), who get the segment whole. An owner or an administrator reads another member's session as " +
             "its record only, as TeamCode's run records: `gates`, `gateAnswers` and `receipt` are absent, " +
-            "`receiptId` names the receipt they do not read. Anyone else gets 404."
+            "`receiptId` names the receipt they do not read. Anyone else gets 404. `runId` names the workflow run " +
+            "whose agent node started the cloud session the segment's launch runs in (Ostrom's own), absent " +
+            "otherwise."
         parameters {
             organizationHeader()
             pathId("id", SEGMENT_ID)

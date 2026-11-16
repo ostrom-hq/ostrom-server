@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.runners
 
+import run.ostrom.server.kernel.workflows.SessionRunIds
 import run.ostrom.server.runners.domain.RemoteHost
 import run.ostrom.server.runners.domain.RemoteSessionRules
 import run.ostrom.server.runners.domain.SessionKind
@@ -17,12 +18,14 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.time.Duration.Companion.seconds
+import kotlin.uuid.Uuid
 
 /** The host of a remote session as its answers show it (TeamCode's `CloudSessionHostView`). */
 class RemoteHostViewsTest {
     private val clock = SettableClock()
     private val devices = FakeSignedInDevices()
-    private val views = RemoteHostViews(devices, clock)
+    private val runs = FakeSessionRunIds()
+    private val views = RemoteHostViews(devices, runs, clock)
 
     private fun remote(state: SessionState, host: RemoteHost = RemoteHost(LAPTOP, "ostrom", RemoteSessionRules.ASK)) =
         session(state = state).copy(kind = SessionKind.REMOTE, host = host)
@@ -65,8 +68,37 @@ class RemoteHostViewsTest {
 
     @Test
     fun withoutTheIdentityModuleNoDeviceIsNamed() = runTest {
-        val shown = RemoteHostViews(null, clock).response(remote(SessionState.RUNNING))
+        val shown = RemoteHostViews(null, null, clock).response(remote(SessionState.RUNNING))
         assertEquals(LAPTOP.toString() to null, shown.host?.deviceId to shown.host?.deviceName)
         assertEquals(emptyList(), views.responses(emptyList()))
+        assertEquals(emptyList(), runs.asked, "No session, no query")
+    }
+
+    @Test
+    fun aSessionAWorkflowRunStartedNamesItsRunAndAPageAsksOnce() = runTest {
+        val started = session()
+        val own = session()
+        val hosted = remote(SessionState.RUNNING)
+        runs.runs[started.id] = "wfr_1"
+
+        val shown = views.responses(listOf(started, own, hosted))
+
+        assertEquals(listOf("wfr_1", null, null), shown.map { it.runId })
+        assertEquals(listOf(listOf(started.id, own.id, hosted.id)), runs.asked)
+        assertNull(RemoteHostViews(devices, null, clock).response(started).runId, "Without the workflow-runs module")
+    }
+
+    /** The runs of the cloud sessions, and each batch asked. */
+    private class FakeSessionRunIds : SessionRunIds {
+        val runs = mutableMapOf<Uuid, String>()
+        val asked = mutableListOf<List<Uuid>>()
+
+        override suspend fun runsOf(orgId: Uuid, sessionIds: Collection<Uuid>): Map<Uuid, String> {
+            asked += sessionIds.toList()
+            return runs.filterKeys { it in sessionIds }
+        }
+
+        override suspend fun runsOfLaunches(orgId: Uuid, launchIds: Collection<String>): Map<String, String> =
+            error("Not asked by the cloud sessions")
     }
 }

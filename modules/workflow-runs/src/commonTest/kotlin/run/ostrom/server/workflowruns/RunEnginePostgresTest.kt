@@ -37,6 +37,7 @@ import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.withOrganization
 import run.ostrom.server.kernel.http.OstromJson
+import run.ostrom.server.kernel.workflows.SessionRunIds
 import run.ostrom.server.launches.LaunchesModule
 import run.ostrom.server.launches.domain.services.LauncherResolver
 import run.ostrom.server.launches.domain.usecases.OpenRunnerLaunchUseCase
@@ -94,7 +95,12 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -115,19 +121,25 @@ import kotlin.uuid.Uuid
  * gate node opens an enforced gate and waits for its approver; the run ends `succeeded`, `failed` or `cancelled`, each
  * step written once, with its audit line, in its organization only.
  */
+@Suppress("LargeClass") // One real server, one scenario per behavior: splitting would copy the harness.
 class RunEnginePostgresTest {
     private val modules = listOf(
         InstanceModule, IdentityModule, OrgsModule, ReceiptsModule, GatesModule, SessionsModule, CompilerModule,
         RunnersModule, LaunchesModule, AutomationsModule, WorkflowRunsModule,
     )
 
+    private val clock = FixedClock(Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds() + 1_000))
+
     // Cloud sessions are closed to every organization the console does not list (cloud-access): the free plan here.
-    private val overrides = module { single<CloudPlanProvider> { FreeCloudPlanProvider() } }
+    // The server reads this test's clock: a run started on the system's was not due yet at the engine's first tick
+    // when the server's start took longer than the clock's head start (a loaded machine, the class's first test).
+    private val overrides = module {
+        single<CloudPlanProvider> { FreeCloudPlanProvider() }
+        single<Clock> { clock }
+    }
 
     /** A member of a new organization, and a token of theirs that starts, cancels and reads the runs. */
     private class Person(val login: String, val org: Org, val userId: Uuid, val memberId: Uuid, val token: String)
-
-    private val clock = FixedClock(Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds() + 1_000))
 
     private fun engineTest(block: suspend (TestServer) -> Unit) = serverTest(modules, overrides) { block(it) }
 
@@ -538,8 +550,8 @@ class RunEnginePostgresTest {
             """"deliverable":{"type":"url","domain":"github.com"}}"""
     }
 
-    private suspend fun TestServer.sessionStep(): SessionStep {
-        val ada = person("ada")
+    private suspend fun TestServer.sessionStep(scopes: Set<String> = WRITE_SCOPES): SessionStep {
+        val ada = person("ada", scopes)
         workflow(ada, DELIVERING, DELIVERING_EDGES, "build")
         val run = start(ada)
         engine().next()
@@ -668,6 +680,56 @@ class RunEnginePostgresTest {
         val over = server.call(token, SESSION_DELIVER, """{"output":"$pr"}""")
         assertEquals(HttpStatusCode.Forbidden to true, over.status to ("no organization" in over.bodyAsText()))
     }
+
+    @Test
+    fun aSessionARunStartedNamesItsRunAnotherSessionNoneAndAnotherOrganizationNeverSeesIt() = engineTest { server ->
+        val scopes = WRITE_SCOPES + setOf("sessions:read", "sessions:write", "cloud:read")
+        val step = server.sessionStep(scopes)
+        val (ada, session) = step.ada to step.session
+        val eve = server.person("eve", scopes)
+        // The agent of the run's cloud session opens a segment under its launch; Ada opens one outside any run.
+        assertEquals(HttpStatusCode.OK, server.call(server.agentTokenOf(step), "/api/v1/sessions", SEGMENT).status)
+        assertEquals(HttpStatusCode.OK, server.call(ada.token, "/api/v1/sessions", OWN_SEGMENT).status)
+        val cloud = server.koin.get<CloudSessionsRepository>()
+        val own = Uuid.random()
+        val mine = assertNotNull(cloud.get(ada.org.id, session)).copy(id = own, runnerTokenHash = null, runnerId = null)
+        assertTrue(cloud.createWithinCap(mine, RUNS))
+
+        val segment = server.json(ada.token, "/api/v1/sessions/s-1").getValue("session").jsonObject
+        val segments = server.json(ada.token, "/api/v1/sessions").getValue("items").jsonArray.map { it.jsonObject }
+        val sessions =
+            server.json(ada.token, "/api/v1/cloud/sessions").getValue("items").jsonArray.map { it.jsonObject }
+
+        assertEquals(step.run.id, segment.text("runId"))
+        assertEquals(
+            mapOf<String?, String?>("s-1" to step.run.id, "s-2" to null),
+            segments.associate { it.text("id") to it.text("runId") },
+        )
+        assertEquals(
+            mapOf<String?, String?>(session.toString() to step.run.id, own.toString() to null),
+            sessions.associate { it.text("id") to it.text("runId") },
+        )
+        assertEquals(step.run.id, server.json(ada.token, "/api/v1/cloud/sessions/$session").text("runId"))
+        assertNull(server.json(ada.token, "/api/v1/cloud/sessions/$own").text("runId"))
+        // Another organization sees no run of Ada's sessions, nor the sessions themselves.
+        val launch = assertNotNull(segment.text("launchId"))
+        val runIds = server.koin.get<SessionRunIds>()
+        assertEquals(mapOf(session to step.run.id), runIds.runsOf(ada.org.id, listOf(session, own)))
+        assertEquals(mapOf(launch to step.run.id), runIds.runsOfLaunches(ada.org.id, listOf(launch, "lch-none")))
+        assertEquals(emptyMap(), runIds.runsOf(eve.org.id, listOf(session)))
+        assertEquals(emptyMap(), runIds.runsOfLaunches(eve.org.id, listOf(launch)))
+        assertEquals(HttpStatusCode.NotFound, server.call(eve.token, "/api/v1/cloud/sessions/$session").status)
+        assertEquals(HttpStatusCode.NotFound, server.call(eve.token, "/api/v1/sessions/s-1").status)
+        // Their plans on filled tables: SessionRunIdsQueryPlansTest.
+    }
+
+    private suspend fun TestServer.json(token: String, path: String): JsonObject {
+        val answer = call(token, path)
+        assertEquals(HttpStatusCode.OK, answer.status, answer.bodyAsText())
+        return Json.parseToJsonElement(answer.bodyAsText()).jsonObject
+    }
+
+    private fun JsonObject.text(key: String): String? = get(key)?.jsonPrimitive?.contentOrNull
 
     private suspend fun TestServer.agentScopes(orgId: Uuid, scopes: String) {
         database.superuserOutsideTransaction(
@@ -842,6 +904,7 @@ class RunEnginePostgresTest {
         const val SESSION_PENDING = "/api/v1/workflows/session/pending"
         const val NOTHING_PENDING = """{"needsAction":false}"""
         const val SEGMENT = """{"id":"s-1","agent":"claude-code","repo":"acme/api"}"""
+        const val OWN_SEGMENT = """{"id":"s-2","agent":"claude-code","repo":"acme/api"}"""
         const val GATE_ONLY = """[{"id":"review","kind":"gate","label":"Review","approvers":["bea"]}]"""
     }
 }
