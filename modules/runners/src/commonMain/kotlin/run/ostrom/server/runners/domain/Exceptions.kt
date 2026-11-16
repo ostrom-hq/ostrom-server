@@ -39,6 +39,28 @@ class CloudSessionLimitException(max: Int) : OstromException(
 )
 
 /**
+ * A member already keeps as many cloud sessions as the instance allows (`maxRetainedSessionsPerMember`, 409
+ * `cloud_session_limit`, TeamCode's): a creation for them, or a transfer to them, waits until they delete one.
+ *
+ * @param message Whose sessions: the caller's, or a transfer's recipient's.
+ */
+class CloudSessionRetainedLimitException(message: String = OWN) :
+    OstromException(ErrorKind.CONFLICT, message, CODE) {
+    /** The messages and the key. */
+    companion object {
+        /** The stable `error.type`. */
+        const val CODE: String = "cloud_session_limit"
+
+        /** A creation for a member at the cap. */
+        const val OWN: String = "The member already retains the maximum number of cloud sessions. Delete one first."
+
+        /** A transfer to a recipient at the cap. */
+        const val RECIPIENT: String =
+            "The recipient already retains the maximum number of cloud sessions. They must delete one first."
+    }
+}
+
+/**
  * The `Idempotency-Key` was already used with another request, or the session it created no longer exists (422
  * `idempotency_conflict`, TeamCode's).
  *

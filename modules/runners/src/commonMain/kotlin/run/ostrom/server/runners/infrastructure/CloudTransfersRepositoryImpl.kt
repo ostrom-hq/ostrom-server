@@ -94,25 +94,48 @@ class CloudTransfersRepositoryImpl(private val database: JdbcDatabase) : CloudTr
             stored
         }
 
+    override suspend fun retained(orgId: Uuid, memberId: String): Int =
+        database.inOrg(orgId) { countRetained(orgId, memberId).toInt() }
+
     override suspend fun complete(
         expected: CloudSession,
         next: CloudSession,
         transfer: CloudTransfer,
+        retainedLimit: Int,
     ): TransferCompletion {
         // Guarded by the version the step observed: a transfer cancelled or failed since does not complete.
         val observed = transfer.copy(version = transfer.version - 1)
-        val stored = attempt(transfer.orgId) {
-            if (returned { transferWritten(observed, transfer) }.isEmpty()) throw Lost()
-            val session = compareAndSetIn(next, next.updatedAt) ?: throw Lost()
-            // Nothing issued to the former owner survives the change: their terminal tickets go.
-            write { ticketsForgotten(expected.orgId, expected.id) }
-            session
+        val stored = try {
+            attempt(transfer.orgId) { completed(expected, next, transfer, observed, retainedLimit) }
+        } catch (_: AtLimit) {
+            return TransferCompletion.RecipientAtLimit
         }
         return if (stored == null) {
             TransferCompletion.Conflict
         } else {
             TransferCompletion.Completed(transfer.copy(version = transfer.version), stored)
         }
+    }
+
+    // Each guard rolls the transaction back by its own exception, which [complete] tells apart.
+    @Suppress("ThrowsCount")
+    private fun JdbcTransaction.completed(
+        expected: CloudSession,
+        next: CloudSession,
+        transfer: CloudTransfer,
+        observed: CloudTransfer,
+        retainedLimit: Int,
+    ): CloudSession {
+        if (retainedLimit != Int.MAX_VALUE) {
+            // Under the creations' lock: a session created for the recipient meanwhile is counted (the race).
+            lockOrg(transfer.orgId)
+            if (countRetained(transfer.orgId, transfer.toMemberId) >= retainedLimit) throw AtLimit()
+        }
+        if (returned { transferWritten(observed, transfer) }.isEmpty()) throw Lost()
+        val session = compareAndSetIn(next, next.updatedAt) ?: throw Lost()
+        // Nothing issued to the former owner survives the change: their terminal tickets go.
+        write { ticketsForgotten(expected.orgId, expected.id) }
+        return session
     }
 
     /** Runs [block] in the organization's transaction; [Lost] rolls it back and gives null. */
@@ -124,6 +147,9 @@ class CloudTransfersRepositoryImpl(private val database: JdbcDatabase) : CloudTr
 
     /** A compare-and-set lost: the transaction rolls back. */
     private class Lost : Exception()
+
+    /** The recipient is at the retained cap: the transaction rolls back. */
+    private class AtLimit : Exception()
 }
 
 /** The transfers of a member, newest first, as [query] asks. */

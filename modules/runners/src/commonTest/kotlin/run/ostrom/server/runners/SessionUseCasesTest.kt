@@ -9,6 +9,11 @@ import run.ostrom.server.runners.domain.ChangeCloudSessionUseCaseImpl
 import run.ostrom.server.runners.domain.CloudHoursExhaustedException
 import run.ostrom.server.runners.domain.CloudPlan
 import run.ostrom.server.runners.domain.CloudSessionLimitException
+import run.ostrom.server.runners.domain.CloudSessionRetainedLimitException
+import run.ostrom.server.runners.domain.MemberSessionCaps
+import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import run.ostrom.server.kernel.auth.PrincipalKind
+import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.runners.domain.CloudSessionIdempotencyConflictException
 import run.ostrom.server.runners.domain.CloudSessionNotFoundException
 import run.ostrom.server.runners.domain.CloudSessionStateException
@@ -59,6 +64,34 @@ class SessionUseCasesTest {
         repository: RepositorySpec? = null,
     ) =
         CreateCloudSessionPayload(name, agent, repository)
+
+    @Test
+    fun aCreationStopsAtTheOwnersRetainedCapAndAnAutomationsDoesNot() = runTest {
+        val caps = object : MemberSessionCaps {
+            override suspend fun runningLimit(): Int = Int.MAX_VALUE
+
+            override suspend fun retainedLimit(): Int = 2
+        }
+        val capped = CreateCloudSessionUseCaseImpl(
+            repository, plans, RepositoryCloudUsageMeter(repository), clock, caps = caps,
+        )
+        val member = alice.copy(principal = AuthenticatedPrincipal("alice", PrincipalKind.USER, emptySet()))
+        capped(member, payload(name = "one"))
+        capped.createKeyed(member, payload(name = "two"), "press-1", "digest-1")
+        val over = assertFailsWith<CloudSessionRetainedLimitException> { capped(member, payload(name = "three")) }
+        assertEquals("cloud_session_limit" to ErrorKind.CONFLICT, over.type to over.kind)
+        assertFailsWith<CloudSessionRetainedLimitException> {
+            capped.createKeyed(member, payload(name = "three"), "press-2", "digest-2")
+        }
+        // The replay of a key that created a session is never refused by the cap.
+        assertEquals(true, capped.createKeyed(member, payload(name = "two"), "press-1", "digest-1").replayed)
+        // The server's own creation for the member counts too; an automation's session is bounded by its automation.
+        assertFailsWith<CloudSessionRetainedLimitException> { capped(alice, payload(name = "workflow")) }
+        val run = payload(name = "automation").copy(automationId = Uuid.random())
+        assertEquals("alice", capped(alice, run).ownerId)
+        // It is not counted either: the member is still at two.
+        assertEquals(2, repository.retained(ORG_A, "alice"))
+    }
 
     @Test
     fun createStoresACreatingSessionWithThePlansLimits() = runTest {

@@ -18,10 +18,20 @@ interface CloudSessionsRepository {
      * @param journal The audit entry of the change (`runners.cloud.onbehalf.writes.v1`, TeamCode's `CloudWrite`),
      *   written in its transaction: kept only when the session is created, and the creation does not
      *   happen when it cannot be written. Null for a change of the server itself, which journals nothing.
+     * @param maxRetained The owner's retained cap (TeamCode's `retainedLimit`): the cloud sessions they keep, neither
+     *   terminated nor failed, counted under the same lock. A local or remote session, or an automation's, is
+     *   outside it.
      *
      * @return True when the session was created, false when the cap was reached.
+     *
+     * @throws CloudSessionRetainedLimitException When the owner already keeps [maxRetained] cloud sessions.
      */
-    suspend fun createWithinCap(session: CloudSession, maxRunning: Int, journal: OrgAuditRecord? = null): Boolean
+    suspend fun createWithinCap(
+        session: CloudSession,
+        maxRunning: Int,
+        journal: OrgAuditRecord? = null,
+        maxRetained: Int = Int.MAX_VALUE,
+    ): Boolean
 
     /**
      * Creates a session under an `Idempotency-Key` (TeamCode's `SqlCloudSessionStore.insert`), in one transaction
@@ -35,14 +45,18 @@ interface CloudSessionsRepository {
      * @param journal The audit entry of the change (`runners.cloud.onbehalf.writes.v1`, TeamCode's `CloudWrite`),
      *   written in its transaction: kept only when the session is created (not on a replay), and the creation does not
      *   happen when it cannot be written. Null for a change of the server itself, which journals nothing.
+     * @param maxRetained The owner's retained cap, as [createWithinCap]'s; a replay is never refused by it.
      *
      * @return What happened.
+     *
+     * @throws CloudSessionRetainedLimitException When the owner already keeps [maxRetained] cloud sessions.
      */
     suspend fun createKeyed(
         session: CloudSession,
         maxRunning: Int,
         key: CreateKey,
         journal: OrgAuditRecord? = null,
+        maxRetained: Int = Int.MAX_VALUE,
     ): KeyedCreateOutcome
 
     /**

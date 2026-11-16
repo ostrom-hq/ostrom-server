@@ -6,6 +6,7 @@ import run.ostrom.server.runners.domain.AgentKind
 import run.ostrom.server.runners.domain.CloudPlan
 import run.ostrom.server.runners.domain.CloudPlanProvider
 import run.ostrom.server.runners.domain.CloudSession
+import run.ostrom.server.runners.domain.CloudSessionRetainedLimitException
 import run.ostrom.server.runners.domain.CloudSessionsRepository
 import run.ostrom.server.runners.domain.CreateKey
 import run.ostrom.server.runners.domain.KeyedCreateOutcome
@@ -155,8 +156,17 @@ class InMemoryCloudSessionsRepository : CloudSessionsRepository {
     /** The audit entries written with the writes, as the database's transaction does. */
     val journal = mutableListOf<OrgAuditRecord>()
 
-    override suspend fun createWithinCap(session: CloudSession, maxRunning: Int, journal: OrgAuditRecord?): Boolean {
+    override suspend fun createWithinCap(
+        session: CloudSession,
+        maxRunning: Int,
+        journal: OrgAuditRecord?,
+        maxRetained: Int,
+    ): Boolean {
         if (holding(session.orgId, null) >= maxRunning) return false
+        val capped = session.kind == SessionKind.CLOUD && session.automationId == null
+        if (capped && retained(session.orgId, session.ownerId) >= maxRetained) {
+            throw CloudSessionRetainedLimitException()
+        }
         // The unique index of a launch's local session, as the database's.
         val launch = session.launchId
         check(launch == null || sessions.values.none { it.orgId == session.orgId && it.launchId == launch }) {
@@ -176,6 +186,7 @@ class InMemoryCloudSessionsRepository : CloudSessionsRepository {
         maxRunning: Int,
         key: CreateKey,
         journal: OrgAuditRecord?,
+        maxRetained: Int,
     ): KeyedCreateOutcome {
         val scope = Triple(session.orgId, key.memberId ?: session.ownerId, key.key)
         val existing = createKeys[scope]
@@ -183,7 +194,7 @@ class InMemoryCloudSessionsRepository : CloudSessionsRepository {
             if (existing.first.requestDigest != key.requestDigest) return KeyedCreateOutcome.Conflict
             return sessions[existing.second]?.let { KeyedCreateOutcome.Replayed(it) } ?: KeyedCreateOutcome.Conflict
         }
-        if (!createWithinCap(session, maxRunning, journal)) return KeyedCreateOutcome.AtCap
+        if (!createWithinCap(session, maxRunning, journal, maxRetained)) return KeyedCreateOutcome.AtCap
         createKeys[scope] = key to session.id
         return KeyedCreateOutcome.Created
     }
@@ -340,6 +351,13 @@ class InMemoryCloudSessionsRepository : CloudSessionsRepository {
     override suspend fun addUsage(orgId: Uuid, month: String, seconds: Long) {
         usage[orgId to month] = usageSeconds(orgId, month) + seconds
     }
+
+    /** The cloud sessions [ownerId] keeps, as the SQL's retained count: neither terminated nor failed. */
+    fun retained(orgId: Uuid, ownerId: String): Int =
+        sessions.values.count {
+            it.orgId == orgId && it.ownerId == ownerId && !it.state.isFinal && it.kind == SessionKind.CLOUD &&
+                it.automationId == null
+        }
 
     private fun holding(orgId: Uuid, except: Uuid?): Int =
         sessions.values.count {

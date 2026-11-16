@@ -19,6 +19,8 @@ import run.ostrom.server.runners.fakes.FakeClusterRuntime
 import run.ostrom.server.runners.domain.CloudPlan
 import run.ostrom.server.runners.domain.CloudPlanProvider
 import run.ostrom.server.runners.domain.CloudSession
+import run.ostrom.server.runners.domain.CloudSessionRetainedLimitException
+import run.ostrom.server.runners.domain.CreateKey
 import run.ostrom.server.runners.domain.ReconcileCloudSessionUseCase
 import run.ostrom.server.runners.domain.CloudSessionsRepository
 import run.ostrom.server.runners.domain.DesiredState
@@ -188,6 +190,31 @@ class CloudSessionsPostgresTest {
         }
         assertEquals(5, results.count { it })
     }
+
+    @Test
+    fun theRetainedCapCountsTheOwnersKeptCloudSessionsAndNoneLiftsIt() = serverTest(listOf(RunnersModule)) { server ->
+        val repository = server.koin.get<CloudSessionsRepository>()
+        // A paused session counts; a failed one, another member's and another organization's do not.
+        assertTrue(repository.createWithinCap(paused(), 100, null, 2))
+        assertTrue(repository.createWithinCap(session(SessionState.FAILED, DesiredState.PAUSED, createdAt = t0), 100))
+        assertTrue(repository.createWithinCap(session(ownerId = "bob", createdAt = t0), 100))
+        assertTrue(repository.createWithinCap(session(orgId = ORG_B, createdAt = t0), 100))
+        assertTrue(repository.createWithinCap(session(createdAt = t0), 100, null, 2))
+        val over = assertFailsWith<CloudSessionRetainedLimitException> {
+            repository.createWithinCap(session(createdAt = t0), 100, null, 2)
+        }
+        assertEquals("cloud_session_limit", over.type)
+        assertFailsWith<CloudSessionRetainedLimitException> {
+            repository.createKeyed(session(createdAt = t0), 100, CreateKey("k", "d", t0 + 60.seconds), null, 2)
+        }
+        // An automation's session is outside the cap, and not counted.
+        val run = session(createdAt = t0).copy(automationId = Uuid.random())
+        assertTrue(repository.createWithinCap(run, 100, null, 2))
+        // 0 removes the retained cap (Int.MAX_VALUE): the same member keeps creating sessions.
+        assertTrue(repository.createWithinCap(session(createdAt = t0), 100, null, Int.MAX_VALUE))
+    }
+
+    private fun paused() = session(SessionState.PAUSED, DesiredState.PAUSED, createdAt = t0)
 
     @Test
     fun resumeWithinCapCountsOnlyOtherHoldingSessions() = serverTest(listOf(RunnersModule)) { server ->

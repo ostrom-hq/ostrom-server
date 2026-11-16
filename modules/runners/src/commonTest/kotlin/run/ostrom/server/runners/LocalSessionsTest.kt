@@ -144,6 +144,7 @@ class LocalSessionsTest {
                 session: CloudSession,
                 maxRunning: Int,
                 journal: run.ostrom.server.kernel.audit.OrgAuditRecord?,
+                maxRetained: Int,
             ): Boolean {
                 if (first !in repository.sessions) repository.createWithinCap(session.copy(id = first), maxRunning)
                 return repository.createWithinCap(session, maxRunning, journal)
@@ -162,6 +163,7 @@ class LocalSessionsTest {
                 session: CloudSession,
                 maxRunning: Int,
                 journal: run.ostrom.server.kernel.audit.OrgAuditRecord?,
+                maxRetained: Int,
             ): Boolean = error("database down")
         }
         val error = assertFailsWith<IllegalStateException> {
@@ -178,6 +180,7 @@ class LocalSessionsTest {
                 session: CloudSession,
                 maxRunning: Int,
                 journal: run.ostrom.server.kernel.audit.OrgAuditRecord?,
+                maxRetained: Int,
             ): Boolean = throw CancellationException("stopped")
         }
         repository.sessions.clear()

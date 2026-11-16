@@ -108,6 +108,9 @@ class CloudRuntimeTest {
                 noLimit.updatedAt,
             ).let { it.maxRunningSessionsPerMember to it.maxRetainedSessionsPerMember },
         )
+        // TeamCode's zeroMeansNoSessionLimit: 0 compares as no limit, the defaults as themselves.
+        assertEquals(Int.MAX_VALUE, noLimit.let { minOf(it.runningLimit, it.retainedLimit) })
+        assertEquals(2 to 20, CloudRuntime().let { it.runningLimit to it.retainedLimit })
         // A blank session image is the default one, the CLI's ostrom-session.
         assertEquals("docker.io/ostromhq/ostrom-session:latest", saved.sessionImage)
     }

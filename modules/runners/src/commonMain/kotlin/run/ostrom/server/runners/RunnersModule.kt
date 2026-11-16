@@ -20,6 +20,8 @@ import run.ostrom.server.runners.domain.CatalogSessionProfiles
 import run.ostrom.server.runners.domain.KeepPausedSessions
 import run.ostrom.server.runners.domain.PausedRetention
 import run.ostrom.server.runners.domain.NoSessionProfiles
+import run.ostrom.server.runners.domain.MemberSessionCaps
+import run.ostrom.server.runners.domain.NoMemberSessionCaps
 import run.ostrom.server.runners.domain.SessionProfiles
 import run.ostrom.server.runners.infrastructure.CloudKubernetesClusters
 import run.ostrom.server.runners.infrastructure.CloudProfileCatalogImpl
@@ -28,6 +30,7 @@ import run.ostrom.server.runners.infrastructure.RunnersConfig.DriverKind.KUBERNE
 import run.ostrom.server.runners.domain.RunnerDeliverySource
 import run.ostrom.server.runners.infrastructure.CLOUD_ACCESS_SETTINGS
 import run.ostrom.server.runners.infrastructure.CloudRuntimePausedRetention
+import run.ostrom.server.runners.infrastructure.CloudRuntimeMemberSessionCaps
 import run.ostrom.server.runners.infrastructure.CloudRuntimeRunnerDelivery
 import run.ostrom.server.runners.infrastructure.SettingsAllowedOrgs
 import run.ostrom.core.api.models.ServerFeatures
@@ -297,8 +300,12 @@ object RunnersModule : ServerModule {
                 CloudKubernetesClusters(get())
             }
         }
+        // The console's per-member caps; none without the cloud module.
+        single<MemberSessionCaps> {
+            getOrNull<CloudRuntimeSource>()?.let { CloudRuntimeMemberSessionCaps(it) } ?: NoMemberSessionCaps
+        }
         single<CreateCloudSessionUseCase> {
-            MeteredCreateCloudSession(CreateCloudSessionUseCaseImpl(get(), get(), get(), get(), get()), get())
+            MeteredCreateCloudSession(CreateCloudSessionUseCaseImpl(get(), get(), get(), get(), get(), get()), get())
         }
         single<GetCloudSessionUseCase> { GetCloudSessionUseCaseImpl(get(), get()) }
         single<ListCloudSessionsUseCase> { ListCloudSessionsUseCaseImpl(get()) }
@@ -375,7 +382,7 @@ object RunnersModule : ServerModule {
                 val policy = RuntimeMemberTransferPolicy(getOrNull<CloudRuntimeSource>())
                 TransferWiring(
                     CloudTransfersRoutesDependencies(
-                        CloudTransfersUseCaseImpl(get(), transfers, recipients, policy, get(), get()),
+                        CloudTransfersUseCaseImpl(get(), transfers, recipients, policy, get(), get(), get()),
                         get(),
                         get(),
                     ),
@@ -387,6 +394,7 @@ object RunnersModule : ServerModule {
                         get(),
                         get(),
                         get<PausedRetention>(),
+                        get(),
                     ),
                 )
             }

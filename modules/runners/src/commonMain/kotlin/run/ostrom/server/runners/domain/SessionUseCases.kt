@@ -53,6 +53,7 @@ interface CreateCloudSessionUseCase {
      *
      * @throws InvalidCloudSessionRequestException When the request is malformed.
      * @throws CloudSessionLimitException When the organization runs as many sessions as its plan allows.
+     * @throws CloudSessionRetainedLimitException When the member already keeps as many cloud sessions as allowed.
      * @throws CloudHoursExhaustedException When the organization used its hours of the period.
      * @throws SessionProfileNotFoundException When a Kubernetes session names no profile of the organization; and
      *   the other refusals of [SessionProfiles.choose].
@@ -100,13 +101,17 @@ data class KeyedCreation(val session: CloudSession, val replayed: Boolean)
  * @param usage The hours used.
  * @param clock The time.
  * @param profiles The profile a Kubernetes session runs on; none elsewhere.
+ * @param caps The per-member caps: a creation is refused at the owner's retained one (409 `cloud_session_limit`,
+ *   TeamCode's). An automation's session is bounded by its automation instead.
  */
+@Suppress("LongParameterList") // The ports a creation reads, each named at its one call site.
 class CreateCloudSessionUseCaseImpl(
     private val repository: CloudSessionsRepository,
     private val plans: CloudPlanProvider,
     private val usage: CloudUsageMeter,
     private val clock: Clock,
     private val profiles: SessionProfiles = NoSessionProfiles,
+    private val caps: MemberSessionCaps = NoMemberSessionCaps,
 ) : CreateCloudSessionUseCase {
     override suspend fun invoke(caller: Caller, payload: CreateCloudSessionPayload): CloudSession =
         existing(caller, payload) ?: created(caller, payload)
@@ -121,7 +126,8 @@ class CreateCloudSessionUseCaseImpl(
         // Scoped to the member who sent it, whoever the session is for (TeamCode's idempotency scope).
         val record = CreateKey(key, requestDigest, session.createdAt + IDEMPOTENCY_RETENTION, caller.initiatorId)
         val journal = caller.journal(session, CREATED)
-        return when (val outcome = repository.createKeyed(session, plan.maxRunningSessions, record, journal)) {
+        val outcome = repository.createKeyed(session, plan.maxRunningSessions, record, journal, caps.retainedLimit())
+        return when (outcome) {
             KeyedCreateOutcome.Created -> KeyedCreation(session, replayed = false)
             is KeyedCreateOutcome.Replayed -> KeyedCreation(outcome.session, replayed = true)
             KeyedCreateOutcome.Conflict -> throw CloudSessionIdempotencyConflictException(
@@ -133,7 +139,8 @@ class CreateCloudSessionUseCaseImpl(
 
     private suspend fun created(caller: Caller, payload: CreateCloudSessionPayload): CloudSession {
         val (session, plan) = drafted(caller, payload)
-        if (!repository.createWithinCap(session, plan.maxRunningSessions, caller.journal(session, CREATED))) {
+        val journal = caller.journal(session, CREATED)
+        if (!repository.createWithinCap(session, plan.maxRunningSessions, journal, caps.retainedLimit())) {
             throw CloudSessionLimitException(plan.maxRunningSessions)
         }
         return session
