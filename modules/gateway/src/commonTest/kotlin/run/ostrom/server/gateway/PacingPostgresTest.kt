@@ -19,12 +19,23 @@ import run.ostrom.server.gateway.domain.QueueRefusedException
 import run.ostrom.server.gateway.domain.RefusalKind
 import run.ostrom.server.gateway.domain.Workload
 import run.ostrom.server.gateway.infrastructure.DirectiveRepositoryImpl
+import run.ostrom.server.gateway.infrastructure.GatewayAdmissions
+import run.ostrom.server.gateway.infrastructure.GatewayDirectiveDeliveries
+import run.ostrom.server.gateway.infrastructure.GatewayDirectiveReceipts
 import run.ostrom.server.gateway.infrastructure.sessionDigest
 import run.ostrom.server.secrets.SecretsModule
 import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import run.ostrom.server.sharing.SharingModule
+import run.ostrom.server.kernel.database.databaseNow
+import run.ostrom.server.kernel.database.databaseNowPlus
 import run.ostrom.server.testing.serverTest
+import org.jetbrains.exposed.v1.core.IntegerColumnType
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.jdbc.deleteAll
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -117,8 +128,8 @@ class PacingPostgresTest {
         directives.acknowledge(Gw.orgA, ada, id, DeliveryStage.EMITTED_TO_HOOK, "s1", claim.claimId, "tok")
         directives.acknowledge(Gw.orgA, ada, id, DeliveryStage.EMITTED_TO_HOOK, "s1", claim.claimId, "tok")
         assertNull(directives.claim(Gw.orgA, ada, "s1", DeliveryStage.EMITTED_TO_HOOK, "tok"), "Delivered: never again")
-        val receipts = server.database.superuser.fetchAll("SELECT stage FROM gateway_directive_receipts").getOrThrow()
-        assertEquals(1, receipts.size, "Idempotent")
+        val receipts = server.asSuperuser { GatewayDirectiveReceipts.selectAll().count() }
+        assertEquals(1L, receipts, "Idempotent")
         assertFailsWith<DirectiveExpiredException> {
             directives.acknowledge(Gw.orgA, ada, "gone", DeliveryStage.EMITTED_TO_HOOK, null, null, "tok")
         }
@@ -132,31 +143,31 @@ class PacingPostgresTest {
         assertEquals(next.directive.id, again.directive.id)
         // An expired claim settles nothing.
         val pending = assertNotNull(directives.claim(Gw.orgA, ada, "s1", DeliveryStage.RECEIVED_BY_CLI, "tok"))
-        server.database.superuser.execute("UPDATE gateway_directive_deliveries SET claimed_until = now()").getOrThrow()
+        server.superuserSql("UPDATE gateway_directive_deliveries SET claimed_until = now()")
         assertFailsWith<ClaimExpiredException> {
             val stage = DeliveryStage.RECEIVED_BY_CLI
             directives.acknowledge(Gw.orgA, ada, next.directive.id, stage, "s1", pending.claimId, "tok")
         }
         // Old deliveries go with the purge, and a member holds at most the bound.
-        server.database.superuser.execute(
-            "UPDATE gateway_directive_deliveries SET updated_at = now() - INTERVAL '8 days'",
-        ).getOrThrow()
+        server.superuserSql("UPDATE gateway_directive_deliveries SET updated_at = now() - INTERVAL '8 days'")
         directives.save(Gw.orgA, emptyList())
-        val left = server.database.superuser.fetchAll("SELECT stage FROM gateway_directive_deliveries").getOrThrow()
-        assertEquals(0, left.size)
-        server.database.superuser.execute(
+        val left = server.asSuperuser { GatewayDirectiveDeliveries.selectAll().count() }
+        assertEquals(0L, left)
+        server.superuserSql(
             "INSERT INTO gateway_directive_deliveries SELECT org_id, member_id, md5(i::text), 'EMITTED_TO_HOOK', " +
-                "'d', 'c', 't', now(), now(), now() FROM gateway_directives, generate_series(1, " +
-                "${DirectiveRepository.MAX_MEMBER_DELIVERIES}) AS i WHERE scope_key = ''",
-        ).getOrThrow()
+                "'d', 'c', 't', now(), now(), now() FROM gateway_directives, generate_series(1, ?) AS i " +
+                "WHERE scope_key = ''",
+            listOf(IntegerColumnType() to DirectiveRepository.MAX_MEMBER_DELIVERIES),
+        )
         assertNull(directives.claim(Gw.orgA, ada, "s1", DeliveryStage.EMITTED_TO_HOOK, "tok"), "Past the bound")
         // The org's bound holds across its members.
-        server.database.superuser.execute("DELETE FROM gateway_directive_deliveries").getOrThrow()
-        server.database.superuser.execute(
+        server.asSuperuser { GatewayDirectiveDeliveries.deleteAll() }
+        server.superuserSql(
             "INSERT INTO gateway_directive_deliveries SELECT org_id, gen_random_uuid(), md5(i::text), " +
-                "'EMITTED_TO_HOOK', 'd', 'c', 't', now(), now(), now() FROM gateway_directives, generate_series(1, " +
-                "${DirectiveRepository.MAX_DELIVERIES}) AS i WHERE scope_key = ''",
-        ).getOrThrow()
+                "'EMITTED_TO_HOOK', 'd', 'c', 't', now(), now(), now() FROM gateway_directives, " +
+                "generate_series(1, ?) AS i WHERE scope_key = ''",
+            listOf(IntegerColumnType() to DirectiveRepository.MAX_DELIVERIES),
+        )
         assertNull(directives.claim(Gw.orgA, ada, "s1", DeliveryStage.EMITTED_TO_HOOK, "tok"), "Past the org's bound")
     }
 
@@ -180,9 +191,7 @@ class PacingPostgresTest {
         server.koin.get<PacingSettingsRepository>().update(Gw.orgA, true, null)
         assertEquals(AdmissionEntry.Admitted, queue.enter(call(null), first = true), "Observation mode spaces nothing")
         server.koin.get<PacingSettingsRepository>().update(Gw.orgA, false, null)
-        server.database.superuser.execute(
-            "UPDATE gateway_directives SET last_admitted_at = now() - INTERVAL '1 minute'",
-        ).getOrThrow()
+        server.superuserSql("UPDATE gateway_directives SET last_admitted_at = now() - INTERVAL '1 minute'")
         val admitted = call(null)
         assertEquals(AdmissionEntry.Admitted, queue.enter(admitted, first = true), "The interval passed")
         // The call admitted last goes back to wait (the accounts were busy): its own admission never spaces it.
@@ -190,16 +199,25 @@ class PacingPostgresTest {
         assertEquals(AdmissionEntry.Admitted, queue.enter(admitted, first = false), "Its own admission")
         // A waiting call whose turn comes too soon is refused; its decision rolls back, AwaitAdmission releases it.
         val waiting = call(null)
-        server.database.superuser.execute(
-            "INSERT INTO gateway_admissions (id, org_id, member_id, scope, workload, running, created_at, ready_at, " +
-                "polled_at, expires_at) VALUES ('${waiting.id}', '${Gw.orgA}', '$ada', 'claude', 'INTERACTIVE', " +
-                "false, " +
-                "now(), now(), now(), now() + INTERVAL '1 minute')",
-        ).getOrThrow()
+        server.asSuperuser {
+            GatewayAdmissions.insert {
+                it[id] = waiting.id
+                it[orgId] = Gw.orgA
+                it[memberId] = ada
+                it[scope] = "claude"
+                it[workload] = "INTERACTIVE"
+                it[running] = false
+                it[createdAt] = databaseNow()
+                it[readyAt] = databaseNow()
+                it[polledAt] = databaseNow()
+                it[expiresAt] = databaseNowPlus(1.minutes)
+            }
+        }
         assertFailsWith<QueueRefusedException> { queue.enter(waiting, first = false) }
-        val left = server.database.superuser.fetchAll(
-            "SELECT id FROM gateway_admissions WHERE running = false AND id = '${waiting.id}'",
-        ).getOrThrow()
-        assertEquals(1, left.size, "Still waiting until released")
+        val waitingLeft = server.asSuperuser {
+            GatewayAdmissions.selectAll()
+                .where { (GatewayAdmissions.running eq false) and (GatewayAdmissions.id eq waiting.id) }.count()
+        }
+        assertEquals(1L, waitingLeft, "Still waiting until released")
     }
 }

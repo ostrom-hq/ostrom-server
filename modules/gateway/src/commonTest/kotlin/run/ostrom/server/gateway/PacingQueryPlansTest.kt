@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.gateway
 
+import kotlin.time.Duration.Companion.minutes
 import run.ostrom.server.gateway.domain.AdmissionRequest
 import run.ostrom.server.gateway.domain.Workload
+import run.ostrom.server.gateway.infrastructure.GatewayDirectives
 import run.ostrom.server.gateway.infrastructure.pacingAdmittedUpdate
 import run.ostrom.server.gateway.infrastructure.pacingRead
 import run.ostrom.server.gateway.infrastructure.sessionDigest
+import run.ostrom.server.kernel.database.databaseNow
+import run.ostrom.server.kernel.database.databaseNowPlus
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.secrets.SecretsModule
 import run.ostrom.server.secrets.domain.SecretCipher
@@ -13,6 +17,8 @@ import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import run.ostrom.server.sharing.SharingModule
 import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
+import org.jetbrains.exposed.v1.core.UuidColumnType
+import org.jetbrains.exposed.v1.jdbc.insert
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertFalse
@@ -31,24 +37,34 @@ class PacingQueryPlansTest {
     @Test
     fun theSpacingOfACallReadsAndWritesItsScopeByItsKey() = serverTest(modules, overrides) { server ->
         // Fixtures only: other orgs' advice, other members' of the org, and the statistics, which no request writes.
-        val fixtures = server.database.superuser
-        fixtures.execute(
+        server.superuserSql(
             "INSERT INTO gateway_directives (org_id, member_id, scope_key, id, pace, max_concurrent, " +
                 "min_interval_ms, message, created_at, expires_at, context_key) " +
-                "SELECT CASE WHEN n % 10 = 0 THEN '${Gw.orgA}'::uuid ELSE gen_random_uuid() END, gen_random_uuid(), " +
+                "SELECT CASE WHEN n % 10 = 0 THEN ? ELSE gen_random_uuid() END, gen_random_uuid(), " +
                 "CASE WHEN n % 2 = 0 THEN '' ELSE md5(n::text) END, 'dir_' || n, 'SLOW_DOWN', 1, 30000, 'm', now(), " +
                 "now() + interval '3 minutes', 'k' FROM generate_series(1, 5000) n",
-        ).getOrThrow()
+            listOf(UuidColumnType() to Gw.orgA),
+        )
         val member = Gw.memberA.memberId
         for (scope in listOf("", sessionDigest(session))) {
-            fixtures.execute(
-                "INSERT INTO gateway_directives (org_id, member_id, scope_key, id, pace, max_concurrent, " +
-                    "min_interval_ms, message, created_at, expires_at, context_key, last_admitted_at) VALUES " +
-                    "('${Gw.orgA}', '$member', '$scope', 'dir_a_$scope', 'SLOW_DOWN', 1, 30000, 'm', now(), " +
-                    "now() + interval '3 minutes', 'k', now())",
-            ).getOrThrow()
+            server.asSuperuser {
+                GatewayDirectives.insert {
+                    it[orgId] = Gw.orgA
+                    it[memberId] = member
+                    it[scopeKey] = scope
+                    it[id] = "dir_a_$scope"
+                    it[pace] = "SLOW_DOWN"
+                    it[maxConcurrent] = 1
+                    it[minIntervalMs] = 30_000
+                    it[message] = "m"
+                    it[createdAt] = databaseNow()
+                    it[expiresAt] = databaseNowPlus(3.minutes)
+                    it[contextKey] = "k"
+                    it[lastAdmittedAt] = databaseNow()
+                }
+            }
         }
-        fixtures.execute("VACUUM ANALYZE gateway_directives").getOrThrow()
+        server.vacuumAnalyze("gateway_directives")
         val database = server.koin.get<JdbcDatabase>()
         for (call in listOf(request(member, null), request(member, session))) {
             val read = database.inOrg(Gw.orgA) { plan { pacingRead(call) } }

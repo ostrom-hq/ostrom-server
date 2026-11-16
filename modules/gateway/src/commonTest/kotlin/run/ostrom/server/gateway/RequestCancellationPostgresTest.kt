@@ -19,9 +19,12 @@ import run.ostrom.server.sharing.SharingModule
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
+import org.jetbrains.exposed.v1.core.IntegerColumnType
+import org.jetbrains.exposed.v1.core.UuidColumnType
 import org.jetbrains.exposed.v1.core.statements.Statement
 import org.jetbrains.exposed.v1.core.statements.StatementBuilder
 import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -44,10 +47,12 @@ class RequestCancellationPostgresTest {
         listOf(koin.get<RequestCancellationRepository>(), RequestCancellationRepositoryImpl(koin.get<JdbcDatabase>()))
 
     /** [count] markers of [org], one member each unless [member] is given, alive for a minute. */
-    private fun markers(org: Uuid, count: Int, member: Uuid? = null) =
+    private suspend fun TestServer.markers(org: Uuid, count: Int, member: Uuid? = null) = superuserSql(
         "INSERT INTO gateway_cancellations (org_id, member_id, request_id, expires_at) " +
-            "SELECT CAST('$org' AS uuid), ${member?.let { "CAST('$it' AS uuid)" } ?: "gen_random_uuid()"}, " +
-            "gen_random_uuid(), now() + INTERVAL '1 minute' FROM generate_series(1, $count) AS i"
+            "SELECT ?, COALESCE(?, gen_random_uuid()), gen_random_uuid(), now() + INTERVAL '1 minute' " +
+            "FROM generate_series(1, ?) AS i",
+        listOf(UuidColumnType() to org, UuidColumnType() to member, IntegerColumnType() to count),
+    )
 
     @Test
     fun aMarkerOneReplicaLeavesTheOtherReadsForItsMemberOnly() = serverTest(modules, overrides) { server ->
@@ -59,15 +64,15 @@ class RequestCancellationPostgresTest {
         assertTrue(two.isCancelled(Gw.orgA, ada, id))
         assertFalse(two.isCancelled(Gw.orgA, bob, id), "Another member's call of the same id goes on")
         assertFalse(two.isCancelled(Gw.orgB, ada, id), "Another org sees nothing")
-        val rows = server.database.superuser.fetchAll("SELECT request_id FROM gateway_cancellations").getOrThrow()
-        assertEquals(1, rows.size, "Sent twice, one marker")
+        val rows = server.asSuperuser { GatewayCancellations.selectAll().count() }
+        assertEquals(1L, rows, "Sent twice, one marker")
 
         // An expired marker stops nothing and is dropped as the next one is written.
-        server.database.superuser.execute("UPDATE gateway_cancellations SET expires_at = now()").getOrThrow()
+        server.superuserSql("UPDATE gateway_cancellations SET expires_at = now()")
         assertFalse(two.isCancelled(Gw.orgA, ada, id))
         one.cancel(Gw.orgA, bob, Uuid.random())
-        val left = server.database.superuser.fetchAll("SELECT member_id FROM gateway_cancellations").getOrThrow()
-        assertEquals(1, left.size)
+        val left = server.asSuperuser { GatewayCancellations.selectAll().count() }
+        assertEquals(1L, left)
 
         val unfiltered = server.koin.get<JdbcDatabase>().inOrg(Gw.orgB) {
             GatewayCancellations.select(GatewayCancellations.orgId).count()
@@ -79,22 +84,20 @@ class RequestCancellationPostgresTest {
     fun aMemberHoldsTwoHundredAndFiftySixMarkersAndAnOrgFourThousandAndNinetySix() =
         serverTest(modules, overrides) { server ->
             val (one, _) = server.replicas()
-            val fixtures = server.database.superuser
-            fixtures.execute(markers(Gw.orgA, RequestCancellationRepository.MEMBER_LIMIT, member = ada)).getOrThrow()
+            server.markers(Gw.orgA, RequestCancellationRepository.MEMBER_LIMIT, member = ada)
             assertFailsWith<CancellationLimitException> { one.cancel(Gw.orgA, ada, Uuid.random()) }
             one.cancel(Gw.orgA, bob, Uuid.random())
 
             val rest = RequestCancellationRepository.ORG_LIMIT - RequestCancellationRepository.MEMBER_LIMIT - 1
-            fixtures.execute(markers(Gw.orgA, rest)).getOrThrow()
+            server.markers(Gw.orgA, rest)
             assertFailsWith<CancellationLimitException> { one.cancel(Gw.orgA, bob, Uuid.random()) }
             one.cancel(Gw.orgB, ada, Uuid.random())
         }
 
     @Test
     fun theQueriesOfACancellationScanNoTable() = serverTest(modules, overrides) { server ->
-        val fixtures = server.database.superuser
-        fixtures.execute(markers(Gw.orgB, count = 5_000)).getOrThrow()
-        fixtures.execute("VACUUM ANALYZE gateway_cancellations").getOrThrow()
+        server.markers(Gw.orgB, count = 5_000)
+        server.vacuumAnalyze("gateway_cancellations")
         val requestId = Uuid.random()
         val statements: List<StatementBuilder.() -> Statement<*>> = listOf(
             { advisoryLock(cancellationLockKey(Gw.orgA)) },

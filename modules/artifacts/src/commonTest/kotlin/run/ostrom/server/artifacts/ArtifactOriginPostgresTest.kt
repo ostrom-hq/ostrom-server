@@ -24,8 +24,8 @@ import run.ostrom.server.artifacts.presentation.CreateArtifactUploadRequest
 import run.ostrom.server.artifacts.presentation.FileDto
 import run.ostrom.server.artifacts.presentation.PublishArtifactRequest
 import run.ostrom.server.artifacts.presentation.PublishVersionRequest
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
@@ -90,11 +90,11 @@ class ArtifactOriginPostgresTest {
 
     @Test
     fun theVersionsSessionColumnIsIndexed() = serverTest(listOf(ArtifactsModule)) { server ->
-        val indexes = server.driver.fetchAll(
-            Statement.create(
-                "SELECT indexdef FROM pg_indexes WHERE tablename = 'artifacts_versions'",
-            ),
-        ).getOrThrow().map { it.get("indexdef").asString() }
+        val indexes = server.koin.get<JdbcDatabase>().query {
+            exec("SELECT indexdef FROM pg_indexes WHERE tablename = 'artifacts_versions'") { rs ->
+                buildList { while (rs.next()) add(rs.getString("indexdef")) }
+            }.orEmpty()
+        }
         assertTrue(indexes.any { "origin_session_id" in it }, indexes.toString())
     }
 

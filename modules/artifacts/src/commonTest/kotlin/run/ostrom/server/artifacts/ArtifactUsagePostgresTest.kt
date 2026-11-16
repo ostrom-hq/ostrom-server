@@ -18,7 +18,8 @@ import run.ostrom.server.artifacts.fakes.DAVE
 import run.ostrom.server.artifacts.fakes.ORG_A
 import run.ostrom.server.artifacts.fakes.ORG_B
 import run.ostrom.server.artifacts.fakes.activateArtifacts
-import run.ostrom.server.artifacts.fakes.fetchInOrg
+import run.ostrom.server.artifacts.fakes.superuserSql
+import run.ostrom.server.artifacts.fakes.vacuumAnalyze
 import run.ostrom.server.artifacts.fakes.testIdentities
 import run.ostrom.server.artifacts.infrastructure.ownedArtifacts
 import run.ostrom.server.artifacts.infrastructure.publishedBytes
@@ -27,7 +28,6 @@ import run.ostrom.server.artifacts.infrastructure.usageOwners
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
 import io.ktor.client.request.post
@@ -131,20 +131,17 @@ class ArtifactUsagePostgresTest {
 
     @Test
     fun theUsageReadsItsIndexes() = serverTest(listOf(ArtifactsModule)) { server ->
-        val fixtures = server.database.superuser
         // 20 000 artifacts of 2 000 organizations, each with a content.
-        fixtures.execute(
+        server.superuserSql(
             "INSERT INTO artifacts_artifacts (id, org_id, owner_id, title, access, latest_version, created_at, " +
                 "updated_at) SELECT CAST(md5('a' || i) AS uuid), CAST(md5('o' || (i % 2000)) AS uuid), 'm' || " +
                 "(i % 7), 'T', 'team', 1, now(), now() FROM generate_series(0, 19999) AS i",
-        ).getOrThrow()
-        fixtures.execute(
+        )
+        server.superuserSql(
             "INSERT INTO artifacts_blobs (artifact_id, org_id, sha256, size) SELECT CAST(md5('a' || i) AS uuid), " +
                 "CAST(md5('o' || (i % 2000)) AS uuid), 'x', 10 FROM generate_series(0, 19999) AS i",
-        ).getOrThrow()
-        for (table in listOf("artifacts_artifacts", "artifacts_blobs")) {
-            fixtures.execute("VACUUM ANALYZE $table").getOrThrow()
-        }
+        )
+        server.vacuumAnalyze("artifacts_artifacts", "artifacts_blobs")
         val plans = server.koin.get<JdbcDatabase>().inOrg(ORG_A) {
             listOf(
                 plan { usageBytes(ORG_A, ALICE.toString()).query },

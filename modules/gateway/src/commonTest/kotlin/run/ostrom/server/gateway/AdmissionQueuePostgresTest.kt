@@ -9,6 +9,7 @@ import run.ostrom.server.gateway.domain.QueueRefusedException
 import run.ostrom.server.gateway.domain.RefusalKind
 import run.ostrom.server.gateway.domain.Workload
 import run.ostrom.server.gateway.infrastructure.AdmissionQueueRepositoryImpl
+import run.ostrom.server.gateway.infrastructure.GatewayAdmissionTurns
 import run.ostrom.server.gateway.infrastructure.admissionCandidates
 import run.ostrom.server.gateway.infrastructure.admissionCounts
 import run.ostrom.server.gateway.infrastructure.admissionGiveBack
@@ -40,8 +41,12 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
+import org.jetbrains.exposed.v1.core.IntegerColumnType
+import org.jetbrains.exposed.v1.core.UuidColumnType
+import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.statements.Statement
 import org.jetbrains.exposed.v1.core.statements.StatementBuilder
+import org.jetbrains.exposed.v1.jdbc.select
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -163,7 +168,7 @@ class AdmissionQueuePostgresTest {
         assertEquals(AdmissionEntry.Admitted, two.enter(call(ada, limited = emptySet()), first = true))
         assertTrue(bobs.all { two.enter(it, first = false) == AdmissionEntry.Admitted }, "Every waiting call runs")
 
-        server.database.superuser.execute(waiting(Gw.orgA, count = 128, polledSecondsAgo = 0)).getOrThrow()
+        server.waiting(Gw.orgA, count = 128, polledSecondsAgo = 0)
         val full = assertFailsWith<QueueRefusedException> { one.enter(call(ada, limited = emptySet()), first = true) }
         assertEquals(RefusalKind.QUEUE_FULL, full.kind, "An arrival is bounded even when it would run")
     }
@@ -190,9 +195,10 @@ class AdmissionQueuePostgresTest {
         one.release(Gw.orgA, bobs.id)
         assertEquals(AdmissionEntry.Admitted, one.enter(call(ada), first = true))
         two.requeue(Gw.orgA, busy.id)
-        val turn = server.database.superuser.fetchAll(
-            "SELECT turn FROM gateway_admission_turns WHERE member_id = CAST('$ada' AS uuid)",
-        ).getOrThrow().single().get("turn").asString().toLong()
+        val turn = server.asSuperuser {
+            GatewayAdmissionTurns.select(GatewayAdmissionTurns.turn).where { GatewayAdmissionTurns.memberId eq ada }
+                .single()[GatewayAdmissionTurns.turn]
+        }
         assertEquals(4L, turn)
     }
 
@@ -212,17 +218,16 @@ class AdmissionQueuePostgresTest {
     fun theOrgQueueHoldsAHundredAndTwentyEightCallsAndADeadReplicasCallNeverHoldsTheTurn() =
         serverTest(modules, overrides) { server ->
             val (one, _) = server.replicas()
-            val fixtures = server.database.superuser
             // A call whose replica stopped polling ten seconds ago: older, interactive, still within its lease.
-            fixtures.execute(waiting(Gw.orgA, count = 1, polledSecondsAgo = 10)).getOrThrow()
+            server.waiting(Gw.orgA, count = 1, polledSecondsAgo = 10)
             assertEquals(AdmissionEntry.Admitted, one.enter(call(bob), first = true))
 
-            fixtures.execute(waiting(Gw.orgA, count = 127, polledSecondsAgo = 0)).getOrThrow()
+            server.waiting(Gw.orgA, count = 127, polledSecondsAgo = 0)
             val full = assertFailsWith<QueueRefusedException> { one.enter(call(ada), first = true) }
             assertEquals(RefusalKind.QUEUE_FULL, full.kind)
 
             // Expired places are dropped as the next call enters.
-            fixtures.execute("UPDATE gateway_admissions SET expires_at = now() WHERE NOT running").getOrThrow()
+            server.superuserSql("UPDATE gateway_admissions SET expires_at = now() WHERE NOT running")
             assertEquals(AdmissionEntry.Admitted, one.enter(call(ada), first = true))
             assertEquals(QueueCounts(0, 0), one.counts(Gw.orgA, ada))
         }
@@ -232,35 +237,33 @@ class AdmissionQueuePostgresTest {
         val (one, _) = server.replicas()
         val running = call(ada)
         one.enter(running, first = true)
-        server.database.superuser.execute("UPDATE gateway_admissions SET expires_at = now() + INTERVAL '1 minute'")
-            .getOrThrow()
+        server.superuserSql("UPDATE gateway_admissions SET expires_at = now() + INTERVAL '1 minute'")
         one.renew(Gw.orgA, running.id)
-        val minutes = server.database.superuser.fetchAll(
-            "SELECT CAST(EXTRACT(EPOCH FROM (expires_at - now())) / 60 AS BIGINT) AS m FROM gateway_admissions",
-        ).getOrThrow().first().get("m").asString().toLong()
+        val minutes = server.asSuperuser {
+            texts("SELECT CAST(EXTRACT(EPOCH FROM (expires_at - now())) / 60 AS BIGINT) FROM gateway_admissions")
+        }.first().toLong()
         assertTrue(minutes in 14..15, "Renewed for 15 minutes: $minutes")
     }
 
     /** [count] waiting interactive calls of [org], arrived a minute ago, last polled [polledSecondsAgo] ago. */
-    private fun waiting(org: Uuid, count: Int, polledSecondsAgo: Int) =
+    private suspend fun TestServer.waiting(org: Uuid, count: Int, polledSecondsAgo: Int) = superuserSql(
         "INSERT INTO gateway_admissions (id, org_id, member_id, scope, workload, running, created_at, ready_at, " +
-            "polled_at, expires_at) SELECT gen_random_uuid(), CAST('$org' AS uuid), gen_random_uuid(), 'claude', " +
+            "polled_at, expires_at) SELECT gen_random_uuid(), ?, gen_random_uuid(), 'claude', " +
             "'INTERACTIVE', FALSE, now() - INTERVAL '1 minute', now() - INTERVAL '1 minute', " +
-            "now() - INTERVAL '$polledSecondsAgo seconds', now() + INTERVAL '10 seconds' " +
-            "FROM generate_series(1, $count) AS i"
+            "now() - make_interval(secs => ?), now() + INTERVAL '10 seconds' " +
+            "FROM generate_series(1, ?) AS i",
+        listOf(UuidColumnType() to org, IntegerColumnType() to polledSecondsAgo, IntegerColumnType() to count),
+    )
 
     @Test
     fun theQueriesOfAnAdmissionScanNoTable() = serverTest(modules, overrides) { server ->
         // Fixtures only: thousands of calls and turns of another org, and the statistics.
-        val fixtures = server.database.superuser
-        fixtures.execute(waiting(Gw.orgB, count = 5_000, polledSecondsAgo = 0)).getOrThrow()
-        fixtures.execute(
+        server.waiting(Gw.orgB, count = 5_000, polledSecondsAgo = 0)
+        server.superuserSql(
             "INSERT INTO gateway_admission_turns (org_id, scope, member_id, turn) " +
                 "SELECT org_id, scope, member_id, 1 FROM gateway_admissions",
-        ).getOrThrow()
-        listOf("gateway_admissions", "gateway_admission_turns").forEach {
-            fixtures.execute("VACUUM ANALYZE $it").getOrThrow()
-        }
+        )
+        server.vacuumAnalyze("gateway_admissions", "gateway_admission_turns")
         val request = call(ada, limit = 1)
         val id = Uuid.random()
         val statements: Map<String, StatementBuilder.() -> Statement<*>> = mapOf(

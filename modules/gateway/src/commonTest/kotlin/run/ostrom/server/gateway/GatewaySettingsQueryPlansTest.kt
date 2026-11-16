@@ -27,23 +27,20 @@ class GatewaySettingsQueryPlansTest {
     @Test
     fun theReadsOfACallLookUpTheOrgByItsKey() = serverTest(modules, overrides) { server ->
         // Fixtures only: other orgs' rows and the statistics, which no request writes.
-        val fixtures = server.database.superuser
-        fixtures.execute(
+        server.superuserSql(
             "INSERT INTO gateway_settings (org_id, use_shared_accounts, member_concurrency) " +
                 "SELECT gen_random_uuid(), true, '{}' FROM generate_series(1, 5000)",
-        ).getOrThrow()
-        fixtures.execute(
+        )
+        server.superuserSql(
             "INSERT INTO gateway_model_policies (org_id, allowed, by_member) " +
                 "SELECT gen_random_uuid(), '[]', '{}' FROM generate_series(1, 5000)",
-        ).getOrThrow()
-        fixtures.execute(
+        )
+        server.superuserSql(
             "INSERT INTO gateway_api_prices (org_id, provider, model, effective_from_day, input_micros, " +
                 "cache_write_micros, cache_read_micros, output_micros) " +
                 "SELECT gen_random_uuid(), 'anthropic', 'm' || n, 20000, 1, 1, 1, 1 FROM generate_series(1, 5000) n",
-        ).getOrThrow()
-        listOf("gateway_settings", "gateway_model_policies", "gateway_api_prices").forEach {
-            fixtures.execute("VACUUM ANALYZE $it").getOrThrow()
-        }
+        )
+        server.vacuumAnalyze("gateway_settings", "gateway_model_policies", "gateway_api_prices")
         val database = server.koin.get<JdbcDatabase>()
         val reads = listOf(
             "gateway_settings" to settingsRead(Gw.orgA),

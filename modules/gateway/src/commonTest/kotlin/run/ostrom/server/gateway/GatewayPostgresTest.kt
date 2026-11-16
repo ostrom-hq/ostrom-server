@@ -4,6 +4,8 @@ package run.ostrom.server.gateway
 import run.ostrom.server.gateway.domain.InferenceProvider
 import run.ostrom.server.gateway.domain.TokenUsage
 import run.ostrom.server.gateway.domain.UpstreamRequests
+import run.ostrom.server.gateway.infrastructure.GatewayModelPolicies
+import run.ostrom.server.gateway.infrastructure.GatewaySettingsTable
 import run.ostrom.server.gateway.presentation.InferenceSettingsDto
 import run.ostrom.server.gateway.presentation.MAX_INFERENCE_REQUEST_BYTES
 import run.ostrom.server.gateway.presentation.ModelPolicyDto
@@ -14,16 +16,14 @@ import run.ostrom.server.kernel.auth.GovernanceConfirmer
 import run.ostrom.server.kernel.auth.OrgPrincipal
 import run.ostrom.server.kernel.auth.OrgRole
 import run.ostrom.server.kernel.auth.PrincipalKind
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.errors.OstromException
 import run.ostrom.server.kernel.http.CallKind
 import run.ostrom.server.kernel.http.OstromJson
 import run.ostrom.server.secrets.domain.RelayScopes
-import run.ostrom.server.secrets.infrastructure.executeInOrg
-import run.ostrom.server.secrets.infrastructure.fetchInOrg
 import run.ostrom.server.secrets.presentation.SecretWriteRequest
 import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.call.body
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.bearerAuth
@@ -49,6 +49,9 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import org.jetbrains.exposed.v1.jdbc.deleteAll
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
 import kotlin.test.Test
@@ -451,17 +454,24 @@ class GatewayPostgresTest : GatewayHttpFixture() {
             assertEquals(HttpStatusCode.ServiceUnavailable, other.status, "Org A's account never serves org B")
             assertTrue(received.isEmpty())
 
-            for (table in listOf("gateway_settings", "gateway_model_policies")) {
-                val unfiltered = Statement.create("SELECT org_id FROM $table")
-                assertEquals(1, driver.fetchInOrg(Gw.orgA, unfiltered).getOrThrow().size, table)
-                assertEquals(0, driver.fetchInOrg(Gw.orgB, unfiltered).getOrThrow().size, "No WHERE, no leak: $table")
-                val stolen = Statement.create("DELETE FROM $table")
-                assertEquals(0L, driver.executeInOrg(Gw.orgB, stolen).getOrThrow(), table)
+            val database = koin.get<JdbcDatabase>()
+            for (table in listOf(GatewaySettingsTable, GatewayModelPolicies)) {
+                assertEquals(1L, database.inOrg(Gw.orgA) { table.selectAll().count() }, table.tableName)
+                assertEquals(
+                    0L,
+                    database.inOrg(Gw.orgB) { table.selectAll().count() },
+                    "No WHERE, no leak: ${table.tableName}",
+                )
+                assertEquals(0, database.inOrg(Gw.orgB) { table.deleteAll() }, table.tableName)
             }
-            val planted = Statement.create(
-                "INSERT INTO gateway_settings (org_id, use_shared_accounts) VALUES (:org, false)",
-            ).bind("org", Gw.orgA)
-            assertFails("Another org's row is refused") { driver.executeInOrg(Gw.orgB, planted).getOrThrow() }
+            assertFails("Another org's row is refused") {
+                database.inOrg(Gw.orgB) {
+                    GatewaySettingsTable.insert {
+                        it[orgId] = Gw.orgA
+                        it[useSharedAccounts] = false
+                    }
+                }
+            }
             val kept = client.get("/api/v1/inference/settings") { bearerAuth("admin-a") }.body<InferenceSettingsDto>()
             assertEquals("a-key", kept.anthropicKeySecret)
         }
