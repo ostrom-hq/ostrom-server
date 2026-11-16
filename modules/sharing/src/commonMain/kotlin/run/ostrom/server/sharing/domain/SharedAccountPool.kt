@@ -157,9 +157,11 @@ sealed interface LeaseResult {
 /**
  * The org's pool of shared personal accounts, as TeamCode runs it: an account serves when READY, out of cool-down,
  * under its own limits (concurrency, utilization ceiling of every current window, monthly and daily budgets), in the
- * member's home pool (TeamCode's placement: the same `poolId`, or none for a member in no pool) and allowed for them.
- * Among those, a session sticks to its account (the provider's prompt cache lives there), otherwise the least used
- * account wins, then the higher priority. An account whose tokens cannot be renewed is skipped for the next one.
+ * member's home pool (TeamCode's placement: the same `poolId`, or none for a member in no pool) or, for a member
+ * allowed overflow, in a shared overflow pool whose daily budget still covers the request, and allowed for them. Among
+ * those, a session sticks to its account (the provider's prompt cache lives there), otherwise a home account before an
+ * overflow one (TeamCode's `SelectPoolAccountUseCase`), then the least used account, then the higher priority. An
+ * account whose tokens cannot be renewed is skipped for the next one.
  *
  * Concurrency and affinity are in the database ([AccountSlotRepository]), shared by every replica: a slot is taken
  * under the candidates' row locks, so two replicas never fill an account past its limit together, and a session finds
@@ -177,8 +179,9 @@ sealed interface LeaseResult {
  * @param logger Where an account resting until its owner acts is reported.
  * @param history The windows' readings over time, which the forecasts read: each observation is recorded there too.
  * @param pools The members' home pools, read once per lease.
+ * @param overflow The shared overflow pools that still cover a request, read once per lease of a member allowed them.
  */
-// One port per owner: accounts, windows, tokens, slots, headers, spend, time, groups, logs, history, pools.
+// One port per owner: accounts, windows, tokens, slots, headers, spend, time, groups, logs, history, pools, overflow.
 @Suppress("LongParameterList")
 class SharedAccountPool(
     internal val accounts: SharedAccountRepository,
@@ -192,6 +195,7 @@ class SharedAccountPool(
     internal val logger: Logger,
     private val history: QuotaHistoryRepository = NoQuotaHistory,
     private val pools: MemberPoolRepository = NoMemberPools,
+    private val overflow: OverflowPools = NoOverflowPools,
 ) {
     /**
      * Leases an account.
@@ -200,11 +204,21 @@ class SharedAccountPool(
      * @param memberId The member asking.
      * @param provider The subscription the request needs.
      * @param sessionKey The agent session, for affinity, if known.
+     * @param estimateMicros What the request may cost at most, USD millionths: asked only of a member allowed overflow
+     *   when a pool is shared, whose budget left today must cover it (TeamCode's `input.units <= budget - spend`).
      */
-    suspend fun lease(orgId: Uuid, memberId: Uuid, provider: AccountProvider, sessionKey: String?): LeaseResult {
-        // The agent names its session; the repository scopes it to the org and the member. The member's home pool is
-        // read once: every turn of the loop below keeps to it.
-        val request = Request(orgId, memberId, provider, sessionKey, pools.poolOf(orgId, memberId))
+    suspend fun lease(
+        orgId: Uuid,
+        memberId: Uuid,
+        provider: AccountProvider,
+        sessionKey: String?,
+        estimateMicros: suspend () -> Long = { 0 },
+    ): LeaseResult {
+        // The agent names its session; the repository scopes it to the org and the member. The member's policy and
+        // the overflow pools open to them are read once: every turn of the loop below keeps to them.
+        val policy = pools.policyOf(orgId, memberId)
+        val borrowed = if (policy.allowSharedOverflow) overflow.funded(orgId, estimateMicros) else emptySet()
+        val request = Request(orgId, memberId, provider, sessionKey, policy.poolId, borrowed)
         val tried = mutableSetOf<Uuid>()
         // Each turn either answers or adds one account to `tried`: the loop ends within the org's account count.
         while (true) {
@@ -218,6 +232,7 @@ class SharedAccountPool(
         val provider: AccountProvider,
         val sessionKey: String?,
         val home: String?,
+        val overflow: Set<String>,
     )
 
     /** The accounts that may serve now with their load, and when a blocked one frees up. */
@@ -227,7 +242,7 @@ class SharedAccountPool(
     private suspend fun attempt(request: Request, tried: MutableSet<Uuid>): LeaseResult? {
         val now = clock.now()
         val ready = accounts.ready(request.orgId, request.provider)
-            .filter { it.id !in tried && it.inPool(request.home) }
+            .filter { it.id !in tried && it.inPools(request.home, request.overflow) }
         val usable = groups.allowed(request.orgId, request.memberId, ready, now)
         val candidates = candidates(request.orgId, usable, now)
         // Not cancellable: a slot committed must reach serve(), which gives it back if the request is cancelled.
@@ -289,9 +304,13 @@ class SharedAccountPool(
         }
     }
 
-    /** Takes a slot on the session's account if it has room, otherwise on the least used one that has. */
+    /**
+     * Takes a slot on the session's account if it has room, otherwise on a home account before an overflow one, the
+     * least used first.
+     */
     private suspend fun take(request: Request, open: List<Pair<SharedAccount, Double>>): AccountSlot? {
-        val ordered = open.sortedWith(ORDER).map { it.first }
+        val home = compareBy<Pair<SharedAccount, Double>> { !it.first.inPool(request.home) }
+        val ordered = open.sortedWith(home.then(ORDER)).map { it.first }
         return slots.take(request.orgId, request.memberId, request.sessionKey, ordered) { view ->
             val free = ordered.filter { it.id in view.serving && it.limits.hasRoom(view.active[it.id] ?: 0) }
             free.firstOrNull { it.id == view.remembered } ?: free.firstOrNull()

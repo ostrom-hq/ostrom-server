@@ -127,7 +127,22 @@ internal object SharingQuotaHistory : Table("sharing_quota_history") {
 internal object SharingMemberPools : Table("sharing_member_pools") {
     val orgId = uuid("org_id")
     val memberId = uuid("member_id")
-    val poolId = text("pool_id")
+
+    // Optional since version 15.
+    val poolId = text("pool_id").nullable()
+
+    // Version 15.
+    val allowSharedOverflow = bool("allow_shared_overflow")
 
     override val primaryKey = PrimaryKey(orgId, memberId)
+}
+
+/** Each named pool's daily budget and whether it lends to members of other pools (version 15). */
+internal object SharingPoolBudgets : Table("sharing_pool_budgets") {
+    val orgId = uuid("org_id")
+    val poolId = text("pool_id")
+    val dailyMicros = long("daily_micros")
+    val sharedOverflow = bool("shared_overflow")
+
+    override val primaryKey = PrimaryKey(orgId, poolId)
 }

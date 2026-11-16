@@ -89,7 +89,9 @@ import run.ostrom.server.sharing.domain.AccountGroups
 import run.ostrom.server.sharing.domain.MemberPoolRepository
 import run.ostrom.server.sharing.domain.NoAccountGroups
 import run.ostrom.server.sharing.domain.NoMemberPools
+import run.ostrom.server.sharing.domain.NoOverflowPools
 import run.ostrom.server.sharing.domain.NoQuotaHistory
+import run.ostrom.server.sharing.domain.OverflowPools
 import run.ostrom.server.sharing.domain.QuotaHistoryRepository
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeout
@@ -185,6 +187,7 @@ object GatewayModule : ServerModule {
                 settings = get(),
                 spend = getOrNull<SpendGuard>() ?: AllowAllSpend,
                 pools = getOrNull<MemberPoolRepository>() ?: NoMemberPools,
+                overflow = getOrNull<OverflowPools>() ?: NoOverflowPools,
             )
             UpdateDirectivesUseCaseImpl(sources, get(), get())
         }

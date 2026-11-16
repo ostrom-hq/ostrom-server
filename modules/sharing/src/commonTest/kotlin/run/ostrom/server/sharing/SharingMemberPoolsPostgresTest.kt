@@ -28,6 +28,7 @@ import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import run.ostrom.server.sharing.domain.AccountProvider
 import run.ostrom.server.sharing.domain.LeaseResult
 import run.ostrom.server.sharing.domain.MemberPoolRepository
+import run.ostrom.server.sharing.domain.PoolPolicy
 import run.ostrom.server.sharing.domain.SharedAccountPool
 import run.ostrom.server.sharing.presentation.AccountLimitsDto
 import run.ostrom.server.sharing.presentation.ShareAccountRequest
@@ -209,7 +210,14 @@ class SharingMemberPoolsPostgresTest {
             team()
             val none = send("GET", "liam", policy("liam"))
             assertStatus(HttpStatusCode.OK, none, none.bodyAsText())
-            assertEquals(buildJsonObject { put("member", "liam") }, none.json(), "No pool: poolId is absent")
+            assertEquals(
+                buildJsonObject {
+                    put("member", "liam")
+                    put("allowSharedOverflow", false)
+                },
+                none.json(),
+                "No pool: poolId is absent",
+            )
 
             val set = send("PATCH", "ana", policy("liam"), pool("eu"))
             assertStatus(HttpStatusCode.OK, set, set.bodyAsText())
@@ -219,7 +227,7 @@ class SharingMemberPoolsPostgresTest {
             val record = audited.single()
             assertEquals("policy.updated", record.event)
             assertEquals("member" to "liam", record.subjectType to record.subjectId)
-            assertEquals(mapOf("pool_id" to "eu"), record.details)
+            assertEquals(mapOf("pool_id" to "eu", "allow_shared_overflow" to "false"), record.details)
 
             val moved = send("PATCH", "kira", policy("liam"), pool("us")).json()
             assertEquals("us", moved.getValue("poolId").jsonPrimitive.content, "An owner moves them")
@@ -227,7 +235,7 @@ class SharingMemberPoolsPostgresTest {
             assertStatus(HttpStatusCode.OK, cleared, cleared.bodyAsText())
             assertNull(cleared.json()["poolId"], "An empty string clears the pool")
             assertNull(send("GET", "liam", policy("liam")).json()["poolId"])
-            assertEquals(emptyMap(), audited.last().details)
+            assertEquals(mapOf("allow_shared_overflow" to "false"), audited.last().details, "A revoke is written too")
         }
     }
 
@@ -308,10 +316,13 @@ class SharingMemberPoolsPostgresTest {
 
             // Row-level security: the other organization's confinement reads none of liam's row, even by its id.
             val pools = koin.get<MemberPoolRepository>()
-            assertNull(pools.poolOf(other, team.liam))
-            assertEquals(emptyMap(), pools.poolsOf(other, listOf(team.liam)))
-            assertEquals(mapOf(team.liam to "eu"), pools.poolsOf(team.org, listOf(team.liam, team.kira)))
-            assertEquals(emptyMap(), pools.poolsOf(team.org, emptyList()))
+            assertEquals(PoolPolicy.NONE, pools.policyOf(other, team.liam))
+            assertEquals(emptyMap(), pools.policiesOf(other, listOf(team.liam)))
+            assertEquals(
+                mapOf(team.liam to PoolPolicy("eu", false)),
+                pools.policiesOf(team.org, listOf(team.liam, team.kira)),
+            )
+            assertEquals(emptyMap(), pools.policiesOf(team.org, emptyList()))
             assertFalse(audited.any { it.orgId == other })
         }
     }

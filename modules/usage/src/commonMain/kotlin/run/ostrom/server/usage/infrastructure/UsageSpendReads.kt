@@ -3,6 +3,7 @@ package run.ostrom.server.usage.infrastructure
 
 import run.ostrom.server.kernel.database.Read
 import run.ostrom.server.kernel.database.asBigint
+import run.ostrom.server.kernel.database.present
 import run.ostrom.server.kernel.database.sumOrZero
 import run.ostrom.server.usage.domain.HoldWindow
 import run.ostrom.server.usage.domain.SpendHold
@@ -16,6 +17,7 @@ import org.jetbrains.exposed.v1.core.coalesce
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greater
 import org.jetbrains.exposed.v1.core.greaterEq
+import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.less
 import org.jetbrains.exposed.v1.core.lessEq
 import org.jetbrains.exposed.v1.core.longLiteral
@@ -67,6 +69,19 @@ internal fun accountSpentRead(orgId: Uuid, accountId: Uuid, since: Instant): Rea
     val query = e.select(spent)
         .where { (e.orgId eq orgId) and (e.accountId eq accountId) and (e.at greaterEq since) }
     return Read(query) { it[spent] }
+}
+
+/**
+ * What some pooled accounts served since [since], by account (the sharing module's overflow pools): one read on the
+ * index `usage_events_account_at`, whose `account_id IS NOT NULL` the list implies.
+ */
+internal fun accountsSpentRead(orgId: Uuid, accountIds: Collection<Uuid>, since: Instant): Read<Pair<Uuid, Long>> {
+    val e = UsageEvents
+    val spent = coalesce(e.costMicros.sum(), longLiteral(0)).asBigint()
+    val query = e.select(e.accountId, spent)
+        .where { (e.orgId eq orgId) and (e.accountId inList accountIds) and (e.at greaterEq since) }
+        .groupBy(e.accountId)
+    return Read(query) { it.present(e.accountId, e.orgId) to it[spent] }
 }
 
 /**

@@ -28,6 +28,8 @@ import run.ostrom.server.sharing.domain.AccountLimits
 import run.ostrom.server.sharing.domain.AccountProvider
 import run.ostrom.server.sharing.domain.ActiveSession
 import run.ostrom.server.sharing.domain.MemberPoolRepository
+import run.ostrom.server.sharing.domain.OverflowPools
+import run.ostrom.server.sharing.domain.PoolPolicy
 import run.ostrom.server.sharing.domain.NoAccountGroups
 import run.ostrom.server.sharing.domain.QuotaHistoryRepository
 import run.ostrom.server.sharing.domain.QuotaWindow
@@ -128,20 +130,26 @@ class DirectivesTest {
 
         override suspend fun available(orgId: Uuid, memberId: Uuid) = available
     }
-    private val homes = mutableMapOf<Uuid, String>()
+    private val homes = mutableMapOf<Uuid, PoolPolicy>()
     private val reads = mutableListOf<Set<Uuid>>()
     private val pools = object : MemberPoolRepository {
-        override suspend fun poolOf(orgId: Uuid, memberId: Uuid) = homes[memberId]
+        override suspend fun policyOf(orgId: Uuid, memberId: Uuid) = homes[memberId] ?: PoolPolicy.NONE
 
-        override suspend fun poolsOf(orgId: Uuid, memberIds: Collection<Uuid>): Map<Uuid, String> {
+        override suspend fun policiesOf(orgId: Uuid, memberIds: Collection<Uuid>): Map<Uuid, PoolPolicy> {
             reads += memberIds.toSet()
             return homes.filterKeys { it in memberIds }
         }
 
-        override suspend fun setPool(orgId: Uuid, memberId: Uuid, poolId: String?) = Unit
+        override suspend fun setPolicy(orgId: Uuid, memberId: Uuid, poolId: String?, allowSharedOverflow: Boolean?) =
+            null
     }
+
+    /** The shared overflow pools with budget left, and what each read of them asked. */
+    private var funded = setOf<String>()
+    private val needs = mutableListOf<Long>()
+    private val overflow = OverflowPools { _, need -> funded.also { needs += need() } }
     private val update = UpdateDirectivesUseCaseImpl(
-        PacingSources(accounts, history, slots, NoAccountGroups, settings, spend, pools),
+        PacingSources(accounts, history, slots, NoAccountGroups, settings, spend, pools, overflow),
         directives,
         clock,
     )
@@ -233,7 +241,7 @@ class DirectivesTest {
     @Test
     fun aMemberIsPacedOnTheAccountsOfTheirHomePoolOnly() = runTest {
         val other = Gw.otherA.memberId
-        homes[member] = "eu"
+        homes[member] = PoolPolicy("eu", false)
         val outside = accounts.share(AccountProvider.CLAUDE, "a", clock)
         readings[outside.id] = listOf(QuotaWindow("five_hour", .99, clock.now + 1.hours, clock.now))
         val eu = accounts.share(AccountProvider.CODEX, "b", clock)
@@ -249,6 +257,33 @@ class DirectivesTest {
         assertEquals(Pace.CAN_INCREASE, directives.rows.getValue(member to "s2").directive.advice.pace)
         assertEquals(Pace.PAUSE, directives.rows.getValue(other to "s3").directive.advice.pace)
         assertEquals(listOf(setOf(member, other)), reads, "The pools of the members advised, read once a pass")
+        assertEquals(emptyList(), needs, "Nobody allowed overflow: the overflow pools are not read")
+    }
+
+    @Test
+    fun aMemberAllowedOverflowIsPacedOnTheFundedOverflowPoolsToo() = runTest {
+        val other = Gw.otherA.memberId
+        homes[member] = PoolPolicy("eu", true)
+        homes[other] = PoolPolicy("eu", false)
+        val eu = accounts.share(AccountProvider.CLAUDE, "eu", clock)
+        accounts.update(eu.copy(poolId = "eu"))
+        readings[eu.id] = listOf(QuotaWindow("five_hour", .99, clock.now + 1.hours, clock.now))
+        val reserve = accounts.share(AccountProvider.CLAUDE, "reserve", clock)
+        accounts.update(reserve.copy(poolId = "reserve"))
+        readings[reserve.id] = rising(.3, 0.0, "five_hour", clock.now + 1.hours) +
+            rising(.1, 0.0, "seven_day", clock.now + 5.hours)
+        slots.sessions += ActiveSession(member, "s1", eu.id)
+        slots.sessions += ActiveSession(other, "s2", eu.id)
+        funded = setOf("reserve")
+        update(Gw.orgA)
+        // The reserve's room keeps the borrower going; the member not allowed it is paused on their spent pool.
+        assertNotEquals(Pace.PAUSE, directives.rows.getValue(member to "").directive.advice.pace)
+        assertEquals(Pace.PAUSE, directives.rows.getValue(other to "").directive.advice.pace)
+        assertEquals(listOf(1L), needs, "Read once a pass, open while not spent")
+        // Its budget spent today, the reserve no longer counts.
+        funded = emptySet()
+        update(Gw.orgA)
+        assertEquals(Pace.PAUSE, directives.rows.getValue(member to "").directive.advice.pace)
     }
 
     @Test

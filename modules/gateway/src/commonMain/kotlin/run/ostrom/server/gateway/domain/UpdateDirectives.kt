@@ -8,12 +8,14 @@ import run.ostrom.server.sharing.domain.ActiveSession
 import run.ostrom.server.sharing.domain.FORECAST_HISTORY
 import run.ostrom.server.sharing.domain.ForecastHistoryUseCase
 import run.ostrom.server.sharing.domain.MemberPoolRepository
+import run.ostrom.server.sharing.domain.OverflowPools
+import run.ostrom.server.sharing.domain.PoolPolicy
 import run.ostrom.server.sharing.domain.QuotaHistoryRepository
 import run.ostrom.server.sharing.domain.SharedAccount
 import run.ostrom.server.sharing.domain.SharedAccountRepository
 import run.ostrom.server.sharing.domain.SharingOrgs
 import run.ostrom.server.sharing.domain.WindowPacing
-import run.ostrom.server.sharing.domain.inPool
+import run.ostrom.server.sharing.domain.inPools
 import kotlinx.coroutines.CancellationException
 import kotlin.time.Clock
 import kotlin.time.Duration
@@ -37,8 +39,10 @@ fun interface UpdateDirectivesUseCase {
  * @param settings The members' concurrency limits and whether shared accounts serve.
  * @param spend Whether a member's budgets still let a call through.
  * @param pools The members' home pools: a member is paced on the accounts of their pool only, as they are served.
+ * @param overflow The shared overflow pools with budget left today: a member allowed them is paced on them too
+ *   (TeamCode's `SqlDirectiveService`, `accessible`).
  */
-// One port per owner: accounts, history, slots, groups, settings, spend, pools.
+// One port per owner: accounts, history, slots, groups, settings, spend, pools, overflow.
 @Suppress("LongParameterList")
 class PacingSources(
     val accounts: SharedAccountRepository,
@@ -48,6 +52,7 @@ class PacingSources(
     val settings: GatewaySettingsRepository,
     val spend: SpendGuard,
     val pools: MemberPoolRepository,
+    val overflow: OverflowPools,
 )
 
 /**
@@ -82,10 +87,14 @@ class UpdateDirectivesUseCaseImpl(
         val pacings = pacings(orgId, accounts, now)
         val stored = directives.stored(orgId)
         val bySession = sessions.groupBy { it.memberId }
-        // One read for every member advised: TeamCode's `accessible`, the accounts of the member's home pool.
-        val homes = sources.pools.poolsOf(orgId, bySession.keys)
+        // One read for every member advised: TeamCode's `accessible`, the accounts of the member's home pool and, for a
+        // member allowed overflow, of the shared pools whose budget is not spent today (read once a pass).
+        val policies = sources.pools.policiesOf(orgId, bySession.keys)
+        val funded = if (policies.values.any { it.allowSharedOverflow }) sources.overflow.funded(orgId) { 1 } else null
         return bySession.flatMap { (member, mine) ->
-            val allowed = allowed(orgId, member, accounts.filter { it.inPool(homes[member]) }, now)
+            val policy = policies[member] ?: PoolPolicy.NONE
+            val borrowed = funded?.takeIf { policy.allowSharedOverflow }.orEmpty()
+            val allowed = allowed(orgId, member, accounts.filter { it.inPools(policy.poolId, borrowed) }, now)
             val context = MemberContext(
                 member = member,
                 maximum = config.memberConcurrency[member.toString()]?.coerceAtLeast(0) ?: 0,

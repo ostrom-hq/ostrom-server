@@ -20,6 +20,7 @@ import run.ostrom.server.sharing.domain.NoAccountSpendReader
 import run.ostrom.server.sharing.domain.NoMemberPools
 import run.ostrom.server.sharing.domain.NoQuotaHistory
 import run.ostrom.server.sharing.domain.OrgMemberNotFoundException
+import run.ostrom.server.sharing.domain.PoolPolicy
 import run.ostrom.server.sharing.domain.RefreshResult
 import run.ostrom.server.sharing.domain.SharedAccount
 import run.ostrom.server.sharing.domain.SharedAccountPool
@@ -33,21 +34,39 @@ import kotlin.test.assertNull
 import kotlin.time.Duration.Companion.days
 import kotlin.uuid.Uuid
 
-/** The members' home pools in memory, counting the reads of one member's pool. */
+/**
+ * The members' policies in memory, counting the reads of one member's; a pool named in [reserves] is a shared overflow
+ * pool, which no member may call home.
+ */
 class InMemoryMemberPools : MemberPoolRepository {
-    val pools = mutableMapOf<Pair<Uuid, Uuid>, String>()
+    val pools = mutableMapOf<Pair<Uuid, Uuid>, PoolPolicy>()
+    val reserves = mutableSetOf<String>()
     var reads = 0
 
-    override suspend fun poolOf(orgId: Uuid, memberId: Uuid): String? {
+    override suspend fun policyOf(orgId: Uuid, memberId: Uuid): PoolPolicy {
         reads++
-        return pools[orgId to memberId]
+        return pools[orgId to memberId] ?: PoolPolicy.NONE
     }
 
-    override suspend fun poolsOf(orgId: Uuid, memberIds: Collection<Uuid>): Map<Uuid, String> =
+    override suspend fun policiesOf(orgId: Uuid, memberIds: Collection<Uuid>): Map<Uuid, PoolPolicy> =
         memberIds.mapNotNull { id -> pools[orgId to id]?.let { id to it } }.toMap()
 
-    override suspend fun setPool(orgId: Uuid, memberId: Uuid, poolId: String?) {
-        if (poolId == null) pools -= orgId to memberId else pools[orgId to memberId] = poolId
+    override suspend fun setPolicy(
+        orgId: Uuid,
+        memberId: Uuid,
+        poolId: String?,
+        allowSharedOverflow: Boolean?,
+    ): PoolPolicy? {
+        if (poolId in reserves) return null
+        val allow = allowSharedOverflow ?: (pools[orgId to memberId]?.allowSharedOverflow == true)
+        val policy = PoolPolicy(poolId, allow)
+        if (policy == PoolPolicy.NONE) pools -= orgId to memberId else pools[orgId to memberId] = policy
+        return policy
+    }
+
+    /** Puts [memberId] of org A in [poolId], overflow off. */
+    suspend fun setPool(memberId: Uuid, poolId: String?) {
+        setPolicy(Sharing.orgA, memberId, poolId, false)
     }
 }
 
@@ -103,19 +122,19 @@ class MemberPoolsTest {
 
     @Test
     fun anAdminSetsAMembersPoolAndAnEmptyStringClearsIt() = runTest {
-        val set = policies.setPool(Sharing.adminA, "mia", "eu-1_a")
-        assertEquals(MemberPolicy("mia", Sharing.memberA.memberId, "eu-1_a"), set)
-        assertEquals("eu-1_a", pools.pools[Sharing.orgA to Sharing.memberA.memberId])
+        val set = policies.setPolicy(Sharing.adminA, "mia", "eu-1_a", null)
+        assertEquals(MemberPolicy("mia", Sharing.memberA.memberId, "eu-1_a", false), set)
+        assertEquals(PoolPolicy("eu-1_a", false), pools.pools[Sharing.orgA to Sharing.memberA.memberId])
         assertEquals(set, policies.get(Sharing.adminA, "mia"), "An admin reads any member's")
         assertEquals(set, policies.get(Sharing.memberA, "mia"), "A member reads their own")
-        assertNull(policies.setPool(Sharing.adminA, "mia", "").poolId)
+        assertNull(policies.setPolicy(Sharing.adminA, "mia", "", null).poolId)
         assertEquals(emptyMap(), pools.pools)
         assertNull(policies.get(Sharing.memberA, "mia").poolId)
     }
 
     @Test
     fun aMemberChangesNoPoolAndReadsNoOtherMembers() = runTest {
-        assertFailsWith<AdminRequiredException> { policies.setPool(Sharing.memberA, "mia", "eu") }
+        assertFailsWith<AdminRequiredException> { policies.setPolicy(Sharing.memberA, "mia", "eu", true) }
         assertFailsWith<AdminRequiredException> { policies.get(Sharing.memberA, "ada") }
         assertFailsWith<AdminRequiredException>("No login enumeration") { policies.get(Sharing.memberA, "ghost") }
         assertEquals(emptyMap(), pools.pools)
@@ -124,11 +143,11 @@ class MemberPoolsTest {
     @Test
     fun aMalformedPoolOrAnUnknownLoginIsRefused() = runTest {
         for (value in listOf("eu west", "a".repeat(37), "eu/1", "é")) {
-            assertFailsWith<InvalidPolicyException>(value) { policies.setPool(Sharing.adminA, "mia", value) }
+            assertFailsWith<InvalidPolicyException>(value) { policies.setPolicy(Sharing.adminA, "mia", value, null) }
         }
         assertEquals("invalid_policy", InvalidPolicyException().type)
-        assertEquals("a".repeat(36), policies.setPool(Sharing.adminA, "mia", "a".repeat(36)).poolId)
-        assertFailsWith<OrgMemberNotFoundException> { policies.setPool(Sharing.adminA, "ghost", "eu") }
+        assertEquals("a".repeat(36), policies.setPolicy(Sharing.adminA, "mia", "a".repeat(36), null).poolId)
+        assertFailsWith<OrgMemberNotFoundException> { policies.setPolicy(Sharing.adminA, "ghost", "eu", null) }
         assertFailsWith<OrgMemberNotFoundException> { policies.get(Sharing.adminA, "ghost") }
     }
 
@@ -137,10 +156,10 @@ class MemberPoolsTest {
         account("none", null)
         account("eu", "eu")
         account("us", "us")
-        pools.setPool(Sharing.orgA, Sharing.memberA.memberId, "eu")
+        pools.setPool(Sharing.memberA.memberId, "eu")
         repeat(3) { assertEquals("eu", leased(), "A member of eu leases only eu") }
         assertEquals("none", leased(Sharing.adminA.memberId), "A member in no pool leases only the accounts in none")
-        pools.setPool(Sharing.orgA, Sharing.memberA.memberId, "asia")
+        pools.setPool(Sharing.memberA.memberId, "asia")
         val refused = assertIs<LeaseResult.Refused>(
             pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, null),
         )
@@ -154,7 +173,7 @@ class MemberPoolsTest {
         account("a", "eu", priority = 10)
         account("b", "eu", priority = 5)
         account("c", "eu")
-        pools.setPool(Sharing.orgA, Sharing.memberA.memberId, "eu")
+        pools.setPool(Sharing.memberA.memberId, "eu")
         pools.reads = 0
         assertEquals("c", leased())
         assertEquals(1, pools.reads)
@@ -162,8 +181,15 @@ class MemberPoolsTest {
 
     @Test
     fun noMemberPoolsPutsEveryoneInNone() = runTest {
-        NoMemberPools.setPool(Sharing.orgA, Sharing.memberA.memberId, "eu")
-        assertNull(NoMemberPools.poolOf(Sharing.orgA, Sharing.memberA.memberId))
-        assertEquals(emptyMap(), NoMemberPools.poolsOf(Sharing.orgA, listOf(Sharing.memberA.memberId)))
+        assertEquals(
+            PoolPolicy("eu", true),
+            NoMemberPools.setPolicy(Sharing.orgA, Sharing.memberA.memberId, "eu", true),
+        )
+        assertEquals(
+            PoolPolicy(null, false),
+            NoMemberPools.setPolicy(Sharing.orgA, Sharing.memberA.memberId, null, null),
+        )
+        assertEquals(PoolPolicy.NONE, NoMemberPools.policyOf(Sharing.orgA, Sharing.memberA.memberId))
+        assertEquals(emptyMap(), NoMemberPools.policiesOf(Sharing.orgA, listOf(Sharing.memberA.memberId)))
     }
 }

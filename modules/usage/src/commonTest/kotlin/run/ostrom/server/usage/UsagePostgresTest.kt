@@ -2,6 +2,7 @@
 package run.ostrom.server.usage
 
 import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.sharing.SharedAccountSpend
 import run.ostrom.server.usage.infrastructure.UsageEvents
 import kotlin.test.assertFailsWith
 import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
@@ -185,6 +186,28 @@ class UsagePostgresTest {
         assertEquals(HttpStatusCode.BadRequest, notJson.status)
         val stored = server.koin.get<JdbcDatabase>().inOrg(TestCallers.orgA) { UsageEvents.selectAll().count() }
         assertEquals(0, stored)
+    }
+
+    @Test
+    fun theSharingModuleReadsWhatSeveralAccountsServedInOneRead() = serverTest(modules, overrides) { server ->
+        val recorder = server.koin.get<UsageRecorder>()
+        val busy = Uuid.random()
+        val idle = Uuid.random()
+        recorder.record(modelEvent(1_500, memberId = TestCallers.adminA.memberId).copy(accountId = busy))
+        recorder.record(modelEvent(300, memberId = TestCallers.memberA.memberId).copy(accountId = idle))
+        recorder.record(modelEvent(700, memberId = null, at = TestCallers.epoch - 40.days).copy(accountId = idle))
+        recorder.record(
+            modelEvent(16_000, orgId = TestCallers.orgB, memberId = TestCallers.adminB.memberId).copy(accountId = busy),
+        )
+        val shared = server.koin.get<SharedAccountSpend>()
+        val month = TestCallers.epoch - 30.days
+        assertEquals(
+            mapOf(busy to 1_500L, idle to 300L),
+            shared.spentMicros(TestCallers.orgA, listOf(busy, idle, Uuid.random()), month),
+            "Since the instant asked, by account, an account with nothing absent",
+        )
+        assertEquals(mapOf(busy to 16_000L), shared.spentMicros(TestCallers.orgB, listOf(busy, idle), month))
+        assertEquals(emptyMap(), shared.spentMicros(TestCallers.orgA, emptyList(), month), "No account, no read")
     }
 
     @Test

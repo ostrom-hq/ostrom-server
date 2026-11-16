@@ -110,7 +110,12 @@ class InferencePlanner(
         org: GatewayOrgConfig,
     ): InferencePlan {
         val lease = call.protocol.shared?.takeIf { org.settings.useSharedAccounts }
-            ?.let { pool.lease(caller.orgId, caller.memberId, it, call.sessionId) }
+            ?.let { provider ->
+                // What the call may cost, priced only for a member allowed to borrow a shared overflow pool.
+                pool.lease(caller.orgId, caller.memberId, provider, call.sessionId) {
+                    spend.reserveMicros(caller.orgId, call.protocol.keyProvider(body.model), body)
+                }
+            }
         return when (lease) {
             is LeaseResult.Leased -> UpstreamRequests(org.providers.endpoints).shared(call, body, lease.lease)
             is LeaseResult.Refused -> byKey(caller, call, body, org, lease.refusal)
