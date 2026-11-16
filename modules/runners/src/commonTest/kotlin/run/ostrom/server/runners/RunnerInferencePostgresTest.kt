@@ -244,13 +244,13 @@ class RunnerInferencePostgresTest {
         for ((session, token) in listOf(expiring to expiringToken, orphaned to orphanedToken, live to liveToken)) {
             assertEquals(HttpStatusCode.OK, server.ask("Bearer $token", claim(session)).status)
         }
-        val fixtures = server.database.superuser
-        fixtures.execute(
+        val fixtures = server.database
+        fixtures.superuserOutsideTransaction(
             "UPDATE runners_inference_credentials SET expires_at = now() - INTERVAL '1 second' " +
                 "WHERE session_id = '${expiring.id}'",
-        ).getOrThrow()
+        )
         // Moved on without the repository (a crash between the write and its revocation).
-        fixtures.execute("UPDATE runners_sessions SET epoch = 3 WHERE id = '${orphaned.id}'").getOrThrow()
+        fixtures.superuserOutsideTransaction("UPDATE runners_sessions SET epoch = 3 WHERE id = '${orphaned.id}'")
 
         assertEquals(2, store.purge(100))
         assertEquals(listOf("osa_3"), launches.live())
@@ -263,7 +263,7 @@ class RunnerInferencePostgresTest {
     fun theModulePurgesStaleCredentialsOnItsOwn() = inferenceTest { server ->
         val (lost, token) = server.running()
         assertEquals(HttpStatusCode.OK, server.ask("Bearer $token", claim(lost)).status)
-        server.database.superuser.execute("UPDATE runners_sessions SET epoch = 3 WHERE id = '${lost.id}'").getOrThrow()
+        server.database.superuserOutsideTransaction("UPDATE runners_sessions SET epoch = 3 WHERE id = '${lost.id}'")
         val job = Job()
         RunnersModule.start(CoroutineScope(currentCoroutineContext() + job), server.koin)
         withTimeout(20.seconds) {

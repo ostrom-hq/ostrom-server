@@ -63,7 +63,11 @@ import run.ostrom.server.workflowruns.domain.repositories.RunAudience
 import run.ostrom.server.workflowruns.domain.repositories.RunQuery
 import run.ostrom.server.workflowruns.domain.repositories.WorkflowRunsRepository
 import run.ostrom.server.workflowruns.domain.services.RunSessions
+import run.ostrom.server.workflowruns.infrastructure.RunRows
 import run.ostrom.server.workflowruns.infrastructure.WorkflowRunsChecks
+import run.ostrom.server.workflowruns.infrastructure.WorkflowRunsNotifications
+import org.jetbrains.exposed.v1.jdbc.selectAll
+import org.jetbrains.exposed.v1.jdbc.update
 import run.ostrom.server.workflowruns.infrastructure.attestedChecks
 import run.ostrom.server.workflowruns.infrastructure.checksPage
 import run.ostrom.server.workflowruns.infrastructure.firstNotification
@@ -546,14 +550,13 @@ class WorkflowRunsPostgresTest {
             assertEquals(HttpStatusCode.NotFound, adasBundle.status, "Ada's session receipt is not in Bob's org")
 
             // The database itself: without its organization set, a transaction reads no run and changes none. The test
-            // server's driver is the serving role, as in production: row level security applies to it.
-            val seen = server.driver.transaction {
-                listOf("workflow_runs_checks", "workflow_runs_notifications").map { table ->
-                    val count = fetchAll("SELECT COUNT(*) AS n FROM $table").getOrThrow().first().get("n").asString()
-                    count to execute("UPDATE $table SET session_id = 'x'").getOrThrow()
+            // server's pool is the serving role, as in production: row level security applies to it.
+            val seen = server.koin.get<JdbcDatabase>().query {
+                listOf<RunRows>(WorkflowRunsChecks, WorkflowRunsNotifications).map { table ->
+                    table.selectAll().count() to table.update { it[table.sessionId] = "x" }
                 }
             }
-            assertEquals(listOf("0" to 0L, "0" to 0L), seen)
+            assertEquals(listOf(0L to 0, 0L to 0), seen)
         }
 
     @Test
@@ -637,8 +640,8 @@ class WorkflowRunsPostgresTest {
             assertTrue(repository.hasNotification(ada.org.id, notified, own))
             assertFalse(repository.hasNotification(ada.org.id, notified, stranger))
             // Statistics only: the serving role owns no table, the owner analyzes them.
-            server.database.owner.execute("ANALYZE workflow_runs_checks").getOrThrow()
-            server.database.owner.execute("ANALYZE workflow_runs_notifications").getOrThrow()
+            server.database.ownerJdbc.query { exec("ANALYZE workflow_runs_checks") }
+            server.database.ownerJdbc.query { exec("ANALYZE workflow_runs_notifications") }
             val org = ada.org.id
             val plans = listOf<Triple<String, () -> Query, String>>(
                 Triple("checks of a session", { checksPage(org, RunQuery(sessionId = "s-1")).query }, "session"),

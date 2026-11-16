@@ -64,7 +64,7 @@ class CloudConversationRoutesPostgresTest {
 
     private suspend fun TestServer.running(path: String) {
         val id = path.substringAfterLast('/')
-        database.superuser.execute("UPDATE runners_sessions SET state = 'running' WHERE id = '$id'").getOrThrow()
+        database.superuserOutsideTransaction("UPDATE runners_sessions SET state = 'running' WHERE id = '$id'")
     }
 
     private suspend fun HttpResponse.type(): String =
@@ -147,15 +147,15 @@ class CloudConversationRoutesPostgresTest {
     fun theTranscriptIsReadPagedAndStreamed() = serverTest(listOf(RunnersModule), testIdentities) { server ->
         val path = server.conversation()
         val id = path.substringAfterLast('/')
-        server.database.superuser.execute(
+        server.database.superuserOutsideTransaction(
             "INSERT INTO runners_session_events (session_id, seq, org_id, epoch, runner_seq, type, at, data, feed) " +
                 "SELECT id, 1, org_id, 1, 1, 'message.agent', now(), '{\"text\":\"Hi\"}', '' FROM runners_sessions " +
                 "WHERE id = '$id'",
-        ).getOrThrow()
-        server.database.superuser.execute(
+        )
+        server.database.superuserOutsideTransaction(
             "INSERT INTO runners_session_transcripts (session_id, org_id, last_seq, runner_epoch, runner_seq) " +
                 "SELECT id, org_id, 1, 1, 1 FROM runners_sessions WHERE id = '$id'",
-        ).getOrThrow()
+        )
         val page = server.client.get("$path/events?after=0&limit=10&feed=main") { bearerAuth("alice") }
             .body<CloudEventPageDto>()
         assertEquals("Hi", page.events.single().data.getValue("text").jsonPrimitive.content)
@@ -165,8 +165,7 @@ class CloudConversationRoutesPostgresTest {
         assertTrue(agents.agents.isEmpty())
 
         // The session ends: the stream sends what is there, then says so.
-        server.database.superuser.execute("UPDATE runners_sessions SET state = 'terminated' WHERE id = '$id'")
-            .getOrThrow()
+        server.database.superuserOutsideTransaction("UPDATE runners_sessions SET state = 'terminated' WHERE id = '$id'")
         val stream = server.client.get("$path/events/stream") {
             bearerAuth("alice")
             header("Last-Event-ID", "0")
@@ -199,12 +198,12 @@ class CloudConversationRoutesPostgresTest {
         assertEquals("unknown_permission_request", answer(AnswerCloudPermissionBody("r1", "deny")).type())
         assertEquals("invalid_permission_answer", answer(AnswerCloudPermissionBody("r1", "maybe")).type())
         val id = path.substringAfterLast('/')
-        server.database.superuser.execute(
+        server.database.superuserOutsideTransaction(
             "INSERT INTO runners_session_events (session_id, seq, org_id, epoch, runner_seq, type, at, data, feed) " +
                 "SELECT id, 1, org_id, 0, 1, 'permission.request', now(), " +
                 "'{\"requestId\":\"q1\",\"question\":true,\"input\":{\"questions\":[{\"options\":[{},{}]}]}}', '' " +
                 "FROM runners_sessions WHERE id = '$id'",
-        ).getOrThrow()
+        )
         val answered = answer(
             AnswerCloudPermissionBody("q1", "allow", "Thanks", listOf(CloudQuestionAnswerDto(0, text = "Blue"))),
         )
@@ -284,8 +283,7 @@ class CloudConversationRoutesPostgresTest {
         val path = server.conversation()
         val id = path.substringAfterLast('/')
         server.send(path, SendCloudMessageBody("Hi"))
-        server.database.superuser.execute("UPDATE runners_sessions SET state = 'terminated' WHERE id = '$id'")
-            .getOrThrow()
+        server.database.superuserOutsideTransaction("UPDATE runners_sessions SET state = 'terminated' WHERE id = '$id'")
         server.koin.get<CloudConversationMaintenance>().run()
         val inputs = server.client.get("$path/messages") { bearerAuth("alice") }.body<CloudInputPageDto>().inputs
         assertEquals("cancelled", inputs.single().status)

@@ -400,7 +400,7 @@ class StartRunPostgresTest {
         // Two starters, as a member has at most MAX_UNFINISHED unfinished runs.
         repeat(ROWS) { server.call("user:a:lead${it % 2}", RUNS, """{"inputs":{"branch":"b$it"}}""") }
         // Statistics only: the serving role owns no table, the owner analyzes it.
-        server.database.owner.execute("ANALYZE workflow_runs_started").getOrThrow()
+        server.database.ownerJdbc.query { exec("ANALYZE workflow_runs_started") }
         // Each page is read in its order from an index: with sorting priced out, a page that needs a sort says so.
         val plans = listOf(
             Triple("runs of the organization", RunsQuery(), "workflow_runs_started_at"),
@@ -441,7 +441,7 @@ class StartRunPostgresTest {
         assertEquals(RunStatus.CANCELLED, cancel.cancelAsStarter(orgA, "bob", first.run.id).status)
         assertFalse(start.startFor(member("k-after")).replayed, "An ended run frees a place")
         assertFailsWith<RunWorkflowNotFoundException> { start.startFor(member("k-b", org = orgB)) }
-        server.database.owner.execute("ANALYZE workflow_runs_started").getOrThrow()
+        server.database.ownerJdbc.query { exec("ANALYZE workflow_runs_started") }
         val plans = listOf(
             "the run of a key" to { keyedRun(orgA, "bob", "k1").query },
             "the unfinished runs of a starter" to { unfinishedRuns(orgA, "bob", MAX_UNFINISHED) },

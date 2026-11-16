@@ -64,7 +64,7 @@ class TerminalTicketsPostgresTest {
         val late = tickets.issue(alice, session)
         val forgotten = tickets.issue(alice, session)
         // A minute later, by the database's clock.
-        server.database.superuser.execute("UPDATE runners_terminal_tickets SET expires_at = now()").getOrThrow()
+        server.database.superuserOutsideTransaction("UPDATE runners_terminal_tickets SET expires_at = now()")
         assertNull(tickets.redeem(late.value, session))
         val kept = tickets.issue(alice, session)
         assertEquals(1L, server.count(ORG_A), "The tickets past their end are dropped at the next issue")
@@ -86,15 +86,15 @@ class TerminalTicketsPostgresTest {
     @Test
     fun theQueriesOfATicketScanNoTable() = serverTest(listOf(RunnersModule), testIdentities) { server ->
         // Fixtures only: the tickets of two organizations at once and the statistics, which no request writes.
-        val fixtures = server.database.superuser
+        val fixtures = server.database
         listOf(ORG_B to 20_000, ORG_A to 200).forEach { (org, count) ->
-            fixtures.execute(
+            fixtures.superuserOutsideTransaction(
                 "INSERT INTO runners_terminal_tickets (token_hash, org_id, session_id, member_id, admin, expires_at) " +
                     "SELECT md5('$org' || i), CAST('$org' AS uuid), gen_random_uuid(), 'm', false, " +
                     "now() + (i % 120) * INTERVAL '1 second' FROM generate_series(1, $count) AS i",
-            ).getOrThrow()
+            )
         }
-        fixtures.execute("VACUUM ANALYZE runners_terminal_tickets").getOrThrow()
+        fixtures.superuserOutsideTransaction("VACUUM ANALYZE runners_terminal_tickets")
 
         val database = server.koin.get<JdbcDatabase>()
         val alice = Caller(ORG_A, "alice", admin = true)

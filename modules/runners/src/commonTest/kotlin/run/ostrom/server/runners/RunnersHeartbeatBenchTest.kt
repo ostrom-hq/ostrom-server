@@ -74,15 +74,15 @@ class RunnersHeartbeatBenchTest {
     fun aHeartbeatScansNothingAndAMachinesHistoryAddsNoQuery() = benchTest(listOf(RunnersModule), overrides) { server ->
         val busy = server.register("machine-busy")
         val idle = server.register("machine-idle")
-        val fixtures = server.database.superuser
-        (others + held(busy.id)).forEach { fixtures.execute(it).getOrThrow() }
+        val fixtures = server.database
+        (others + held(busy.id)).forEach { fixtures.superuserOutsideTransaction(it) }
         listOf("runners_registered", "runners_sessions", "runners_assignments").forEach {
-            fixtures.execute("VACUUM ANALYZE $it").getOrThrow()
+            fixtures.superuserOutsideTransaction("VACUUM ANALYZE $it")
         }
-        val ids = fixtures.fetchAll(
+        val ids = fixtures.superuserTexts(
             "SELECT CAST(session_id AS text) AS id FROM runners_assignments WHERE runner_id = '${busy.id}' " +
                 "AND stopped_at IS NULL ORDER BY 1",
-        ).getOrThrow().map { it.get("id").asString() }
+        ).map { checkNotNull(it) { "A running assignment without a session id" } }
         val reported = ids.map { ReportedExecutionDto(it, HISTORY.toLong(), "running") }
         val running = RegisteredRunnerHeartbeatRequest(reported, ids)
 

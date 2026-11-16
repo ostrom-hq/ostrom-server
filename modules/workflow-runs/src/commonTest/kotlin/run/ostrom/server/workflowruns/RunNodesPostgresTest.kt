@@ -172,13 +172,13 @@ class RunNodesPostgresTest {
         return tick()
     }
 
-    private suspend fun TestServer.audit(orgId: Uuid, runId: String): List<String> = database.superuser.fetchAll(
+    private suspend fun TestServer.audit(orgId: Uuid, runId: String): List<String> = database.superuserTexts(
         "SELECT action FROM identity_audit_events WHERE org_id = CAST('$orgId' AS uuid) " +
             "AND target_type = 'workflow_run' AND target_id = '$runId' ORDER BY sequence",
-    ).getOrThrow().map { it.get("action").asString() }
+    ).map { checkNotNull(it) { "An audit event without an action" } }
 
     private suspend fun TestServer.count(sql: String): Long =
-        database.superuser.fetchAll(sql).getOrThrow().first().get("n").asString().toLong()
+        checkNotNull(database.superuserTexts(sql).first()) { "A count is never null" }.toLong()
 
     @Test
     fun aWaitNodeAsksItsApproverAndTheRunGoesOnWithTheAnswerAlsoOnAnotherReplicaAfterARestart() = nodesTest { server ->
@@ -289,7 +289,7 @@ class RunNodesPostgresTest {
         assertEquals(RunStatus.SUCCEEDED, server.stored(team, childId).status)
         // The child of a visit is found through its index; with statistics, as the other plans are read: without them,
         // the planner may take any index that starts with the organization.
-        server.database.owner.execute("ANALYZE workflow_runs_started").getOrThrow()
+        server.database.ownerJdbc.query { exec("ANALYZE workflow_runs_started") }
         val plan = server.koin.get<JdbcDatabase>().withOrganization(team.org.id) {
             exec("SET LOCAL enable_seqscan = off")
             plan { childOf(team.org.id, run.id, 1).query }.also { rollback() }

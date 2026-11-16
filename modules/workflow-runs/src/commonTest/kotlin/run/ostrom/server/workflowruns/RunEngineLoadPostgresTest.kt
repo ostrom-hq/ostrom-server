@@ -288,15 +288,17 @@ class RunEngineLoadPostgresTest {
     private suspend fun TestServer.stored(orgId: Uuid, id: String): WorkflowRun =
         assertNotNull(koin.get<StartedRunsRepository>().find(orgId, id))
 
-    private suspend fun TestServer.deadlocks(): Long = database.superuser.fetchAll(
-        "SELECT deadlocks FROM pg_stat_database WHERE datname = current_database()",
-    ).getOrThrow().first().get("deadlocks").asString().toLong()
+    private suspend fun TestServer.deadlocks(): Long = checkNotNull(
+        database.superuserTexts("SELECT deadlocks FROM pg_stat_database WHERE datname = current_database()").first(),
+    ) { "The database has a statistics row" }.toLong()
 
     private suspend fun TestServer.count(table: String, orgs: List<Uuid>, where: String = ""): Long =
-        database.superuser.fetchAll(
-            "SELECT COUNT(*) AS n FROM $table WHERE $where org_id IN (" +
-                orgs.joinToString { "CAST('$it' AS uuid)" } + ")",
-        ).getOrThrow().first().get("n").asString().toLong()
+        checkNotNull(
+            database.superuserTexts(
+                "SELECT COUNT(*) AS n FROM $table WHERE $where org_id IN (" +
+                    orgs.joinToString { "CAST('$it' AS uuid)" } + ")",
+            ).first(),
+        ) { "A count is never null" }.toLong()
 
     private fun write(name: String, report: String) {
         SystemFileSystem.createDirectories(Path("build/reports/perf"))
