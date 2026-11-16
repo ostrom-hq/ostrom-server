@@ -75,6 +75,9 @@ import kotlin.uuid.Uuid
  * @property launchId The `ostrom <agent>` launch a local session is attached to (`runners.cloud.local.v1`); null for
  *   every other kind.
  * @property automationId The automation whose run started it (TeamCode's `automationId`); null for any other session.
+ * @property capacityWaitingSince Since when a start waits for its owner's running cap (phase
+ *   [CloudSession.WAITING_CAPACITY], TeamCode's `waitingSince`): its place in the owner's queue, oldest first; null
+ *   while it does not wait.
  */
 data class CloudSession(
     val id: Uuid,
@@ -125,6 +128,7 @@ data class CloudSession(
     val createdBy: CloudAttribution? = null,
     val launchId: String? = null,
     val automationId: Uuid? = null,
+    val capacityWaitingSince: Instant? = null,
 ) {
     /** Its workspace's deletion while it is pending or blocked, and so looked at again until it is proven gone. */
     val cleanup: WorkspaceDeletion?
@@ -145,6 +149,9 @@ data class CloudSession(
 
         /** A paused session whose retention ran out ([expiresAt]). */
         const val TERMINATED_EXPIRED: String = "expired"
+
+        /** The phase of a start that waits for its owner's running cap (TeamCode's). */
+        const val WAITING_CAPACITY: String = "waiting_capacity"
     }
 }
 

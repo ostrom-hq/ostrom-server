@@ -26,6 +26,7 @@ import run.ostrom.server.runners.domain.SessionKind
 import run.ostrom.server.runners.domain.SessionProfile
 import run.ostrom.server.runners.domain.SessionRef
 import run.ostrom.server.runners.domain.SessionState
+import run.ostrom.server.runners.domain.StartOutcome
 import org.jetbrains.exposed.v1.core.Op
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.TextColumnType
@@ -36,6 +37,8 @@ import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.isNotNull
 import org.jetbrains.exposed.v1.core.isNull
+import org.jetbrains.exposed.v1.core.less
+import org.jetbrains.exposed.v1.core.or
 import org.jetbrains.exposed.v1.core.neq
 import org.jetbrains.exposed.v1.core.notInList
 import org.jetbrains.exposed.v1.core.plus
@@ -189,6 +192,29 @@ class CloudSessionsRepositoryImpl(
         ResumeOutcome.Resumed(toSession(updated))
     }
 
+    override suspend fun startWithinCap(
+        current: CloudSession,
+        next: CloudSession,
+        memberRunning: Int,
+        nextReconcileAt: Instant?,
+    ): StartOutcome {
+        // An automation's session has the automation cap, applied before its creation (TeamCode's).
+        if (memberRunning == Int.MAX_VALUE || current.automationId != null) {
+            return compareAndSet(next, nextReconcileAt)?.let { StartOutcome.Started(it) } ?: StartOutcome.Conflict
+        }
+        val outcome = database.inOrg(current.orgId) {
+            lockOrg(current.orgId)
+            val since = current.capacityWaitingSince ?: next.updatedAt
+            when {
+                countRunning(current) >= memberRunning || startsAhead(current, since) -> StartOutcome.WaitingCapacity
+                else -> compareAndSetIn(next, nextReconcileAt)?.let { StartOutcome.Started(it) }
+                    ?: StartOutcome.Conflict
+            }
+        }
+        if (outcome is StartOutcome.Started) written.written(outcome.session)
+        return outcome
+    }
+
     override suspend fun compareAndSet(session: CloudSession, nextReconcileAt: Instant?): CloudSession? =
         database.inOrg(session.orgId) { compareAndSetIn(session, nextReconcileAt) }?.also { written.written(it) }
 
@@ -322,6 +348,38 @@ internal fun JdbcTransaction.countRetained(orgId: Uuid, ownerId: String): Long {
         .single()[kept]
 }
 
+/**
+ * The cloud sessions of [session]'s owner, other than it, with an execution started (TeamCode's executions not ended):
+ * running or pausing, or starting with their execution asked for. A start that waits holds none, and an automation's
+ * sessions have their own cap.
+ */
+private fun JdbcTransaction.countRunning(session: CloudSession): Long {
+    val s = RunnersSessionsTable
+    val running = s.id.count()
+    return s.select(running)
+        .where {
+            (s.orgId eq session.orgId) and (s.ownerId eq session.ownerId) and (s.id neq session.id) and
+                (s.kind eq SessionKind.CLOUD.wire) and s.automationId.isNull() and
+                ((s.state inList EXECUTING) or ((s.state inList STARTING) and s.executionStartedAt.isNotNull()))
+        }
+        .single()[running]
+}
+
+/** Whether an older start of [session]'s owner waits for the cap: it goes first (TeamCode's FIFO admission). */
+private fun JdbcTransaction.startsAhead(session: CloudSession, since: Instant): Boolean {
+    val s = RunnersSessionsTable
+    return !s.select(s.id)
+        .where {
+            (s.orgId eq session.orgId) and (s.ownerId eq session.ownerId) and s.capacityWaitingSince.isNotNull() and
+                (s.id neq session.id) and (s.state inList STARTING) and
+                (s.desiredState eq DesiredState.RUNNING.wire) and (s.kind eq SessionKind.CLOUD.wire) and
+                s.automationId.isNull() and
+                ((s.capacityWaitingSince less since) or ((s.capacityWaitingSince eq since) and (s.id less session.id)))
+        }
+        .limit(1)
+        .empty()
+}
+
 /** Refuses a cloud session whose owner already keeps [maxRetained]; counted only when there is a cap. */
 private fun JdbcTransaction.requireRoom(session: CloudSession, maxRetained: Int) {
     if (session.kind != SessionKind.CLOUD || session.automationId != null || maxRetained == Int.MAX_VALUE) return
@@ -346,6 +404,12 @@ private fun JdbcTransaction.insertSession(session: CloudSession) {
 
 /** The states in which a session holds an execution. */
 private val HOLDING = listOf("creating", "running", "pausing", "resuming")
+
+/** The states in which an execution runs. */
+private val EXECUTING = listOf("running", "pausing")
+
+/** The states in which an execution is being started, or waits to be. */
+private val STARTING = listOf("creating", "resuming")
 
 /** The states a session is over in. */
 private val OVER = listOf("terminated", "failed")
@@ -506,6 +570,7 @@ internal fun StatementBuilder.sessionStored(session: CloudSession): ReturningSta
         it[runnerTokenHash] = session.runnerTokenHash
         it[backgroundSince] = session.backgroundSince
         it[backgroundSeenAt] = session.backgroundSeenAt
+        it[capacityWaitingSince] = session.capacityWaitingSince
         it[profile] = session.profile?.let { spec -> RECIPE_JSON.encodeToString(SessionProfile.serializer(), spec) }
         it[clusterUnreachableSince] = session.clusterUnreachableSince
         it[ownerId] = session.ownerId
