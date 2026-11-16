@@ -66,6 +66,45 @@ fun SharedAccount.inPool(home: String?): Boolean = poolId == home
 fun SharedAccount.inPools(home: String?, overflow: Set<String>): Boolean = inPool(home) || poolId in overflow
 
 /**
+ * The pools whose accounts a member may use (TeamCode's `poolAccounts` for a member): their home pool (null for none)
+ * and, when they may borrow, every shared overflow pool, funded today or not.
+ *
+ * @property home The member's home pool, or null for none.
+ * @property overflow The shared overflow pools they may borrow.
+ */
+data class PoolScope(val home: String?, val overflow: Set<String>) {
+    /** Whether [account] is in it. */
+    fun covers(account: SharedAccount): Boolean = account.inPools(home, overflow)
+}
+
+/** Reads a member's [PoolScope]. */
+fun interface MemberPoolScope {
+    /** The pools of [memberId] in [orgId]: one read of their policy, and of the reserves when they may borrow. */
+    suspend fun of(orgId: Uuid, memberId: Uuid): PoolScope
+}
+
+/** Every member in no pool, without overflow: what the list sees when no scope is given (tests of other features). */
+val NoPoolScope: MemberPoolScope = MemberPoolScope { _, _ -> PoolScope(null, emptySet()) }
+
+/**
+ * [MemberPoolScope] on the members' policies and the pools' budgets (TeamCode's `readMemberPolicy` and
+ * `sharedOverflowBudgets`).
+ *
+ * @param pools The members' policies.
+ * @param budgets The pools' budgets, whose shared reserves a member allowed overflow sees.
+ */
+class MemberPoolScopeImpl(
+    private val pools: MemberPoolRepository,
+    private val budgets: PoolBudgetRepository,
+) : MemberPoolScope {
+    override suspend fun of(orgId: Uuid, memberId: Uuid): PoolScope {
+        val policy = pools.policyOf(orgId, memberId)
+        if (!policy.allowSharedOverflow) return PoolScope(policy.poolId, emptySet())
+        return PoolScope(policy.poolId, budgets.reserves(orgId).mapTo(mutableSetOf()) { it.poolId })
+    }
+}
+
+/**
  * A member's routing policy as the API names it (TeamCode's `MemberPolicy`, its pools only).
  *
  * @property login The member's login.

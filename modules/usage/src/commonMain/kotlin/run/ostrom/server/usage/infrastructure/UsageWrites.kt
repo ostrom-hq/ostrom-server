@@ -38,6 +38,7 @@ internal fun JdbcTransaction.insertEvents(events: List<UsageEvent>) {
         this[UsageEvents.sessionId] = event.sessionId
         this[UsageEvents.launchId] = event.launchId
         this[UsageEvents.workflowId] = event.workflowId
+        this[UsageEvents.poolId] = event.poolId
         this[UsageEvents.inputTokens] = event.inputTokens
         this[UsageEvents.outputTokens] = event.outputTokens
         this[UsageEvents.cacheReadTokens] = event.cacheReadTokens

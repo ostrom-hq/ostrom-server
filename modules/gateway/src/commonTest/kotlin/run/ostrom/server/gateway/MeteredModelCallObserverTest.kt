@@ -24,8 +24,8 @@ class MeteredModelCallObserverTest {
 
     private fun record(provider: InferenceProvider?, usage: TokenUsage?, costMicros: Long, priced: Boolean) =
         ModelCallRecord(
-            Gw.orgA, Gw.orgA, Gw.memberA.memberId, "s-1", WireProtocol.CHAT, provider, null, "m", usage, costMicros,
-            priced, 200, "ok", Instant.parse("2026-11-02T10:00:00Z"), 100, 2_500,
+            Gw.orgA, Gw.orgA, Gw.memberA.memberId, "s-1", WireProtocol.CHAT, provider, null, null, "m", usage,
+            costMicros, priced, 200, "ok", Instant.parse("2026-11-02T10:00:00Z"), 100, 2_500,
         )
 
     private fun points(name: String) = meter.collect().singleOrNull { it.name == name }

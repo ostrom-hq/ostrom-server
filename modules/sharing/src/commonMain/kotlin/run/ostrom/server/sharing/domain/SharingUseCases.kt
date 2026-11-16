@@ -211,7 +211,13 @@ private fun SharedAccount?.sharedAgain(caller: Caller, payload: ShareAccountPayl
     }
 }
 
-/** [ListSharedAccountsUseCase]; [names] names the people of the accounts the caller may change. */
+/**
+ * [ListSharedAccountsUseCase] (TeamCode's `poolAccounts`): an admin, or a `team:read` key, sees every account; a member
+ * the accounts of their home pool, of the shared overflow pools when they may borrow them, and their own, the others'
+ * under a neutral label numbered in priority order. [names] names the people of the accounts the caller may change.
+ */
+// One port per owner: accounts, windows, the pool, spend, time, names, the members' pools.
+@Suppress("LongParameterList")
 class ListSharedAccountsUseCaseImpl(
     private val repository: SharedAccountRepository,
     private val quotas: QuotaWindowRepository,
@@ -219,12 +225,13 @@ class ListSharedAccountsUseCaseImpl(
     private val spend: AccountSpendReader,
     private val clock: Clock,
     private val names: MemberNames = MemberNames(NoMemberLogins),
+    private val scope: MemberPoolScope = NoPoolScope,
 ) : ListSharedAccountsUseCase {
     override suspend fun invoke(caller: Caller): List<SharedAccountView> {
         val now = clock.now()
         val windows = quotas.byAccount(caller.orgId)
         val since = SharedAccountPool.monthStart(now)
-        val accounts = repository.list(caller.orgId)
+        val accounts = visible(caller, repository.list(caller.orgId))
         val changeable = accounts.filter { caller.mayChange(it) }
         val named = names.of(caller.orgId, changeable)
         val groups = names.groupsOf(caller.orgId, changeable)
@@ -255,6 +262,13 @@ class ListSharedAccountsUseCaseImpl(
                 sharedWith = if (visible) named.sharedWithOf(account, groups) else emptyList(),
             )
         }
+    }
+
+    /** Every account for an admin; for a member, those of their pools and their own. */
+    private suspend fun visible(caller: Caller, accounts: List<SharedAccount>): List<SharedAccount> {
+        if (caller.role.isAdmin) return accounts
+        val mine = scope.of(caller.orgId, caller.memberId)
+        return accounts.filter { mine.covers(it) || caller.mayChange(it) }
     }
 }
 

@@ -96,6 +96,8 @@ data class TokenUsage(val input: Long = 0, val output: Long = 0, val cacheRead: 
  * @property protocol The API shape.
  * @property provider Where it went.
  * @property accountId The shared account used, if any.
+ * @property poolId The named pool that account was in when it served the call, or null (TeamCode's reservation source
+ *   pool): what a shared overflow pool lent is read by it, wherever the account is now.
  * @property model The model asked for.
  * @property usage Tokens, when the provider reported them.
  * @property costMicros Equivalent API cost, USD millionths (0 when the model has no price).
@@ -116,6 +118,7 @@ data class ModelCallRecord(
     val protocol: WireProtocol,
     val provider: InferenceProvider?,
     val accountId: Uuid?,
+    val poolId: String?,
     val model: String,
     val usage: TokenUsage?,
     val costMicros: Long,

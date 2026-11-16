@@ -15,7 +15,6 @@ import run.ostrom.server.sharing.infrastructure.memberPoolsOf
 import run.ostrom.server.sharing.infrastructure.otherReserves
 import run.ostrom.server.sharing.infrastructure.poolBudgetPut
 import run.ostrom.server.sharing.infrastructure.poolBudgetsOf
-import run.ostrom.server.sharing.infrastructure.reserveAccounts
 import run.ostrom.server.sharing.infrastructure.reservesOf
 import run.ostrom.server.sharing.infrastructure.sharedPool
 import run.ostrom.server.testing.TestServer
@@ -104,15 +103,13 @@ class MemberPoolsQueryPlansTest {
             "whether a pool is someone's home (a budget)" to { homeOf(orgA, "eu") },
             "the other shared pools (a budget)" to { otherReserves(orgA, "eu") },
             "the reserves no member calls home (a lease)" to { reservesOf(orgA) },
-            "the accounts of the reserves (a lease)" to { reserveAccounts(orgA, List(16) { "reserve-$it" }) },
             "a pool budget saved" to { poolBudgetPut(orgA, PoolBudget("reserve-1", 1_000, true)) },
         ).mapValues { (_, statement) -> database.inOrg(orgA) { plan(statement).also { rollback() } } }
         plans.forEach { (what, plan) -> assertFalse("Seq Scan" in plan, "$what scans a table:\n$plan") }
         assertTrue("sharing_member_pools_pkey" in plans.getValue("a member's pool"), plans.getValue("a member's pool"))
         // The plans of the request-path reads, for the pull request's evidence.
         println("EXPLAIN ANALYZE of a member's pool:\n${plans.getValue("a member's pool")}")
-        for (read in listOf("the reserves no member calls home (a lease)", "the accounts of the reserves (a lease)")) {
-            println("EXPLAIN ANALYZE of $read:\n${plans.getValue(read)}")
-        }
+        val reserves = "the reserves no member calls home (a lease)"
+        println("EXPLAIN ANALYZE of $reserves:\n${plans.getValue(reserves)}")
     }
 }

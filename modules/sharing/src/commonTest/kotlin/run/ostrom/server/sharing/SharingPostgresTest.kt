@@ -221,8 +221,8 @@ class SharingPostgresTest : SharingPostgresHarness() {
             )
             val listed = client.get(base) { bearerAuth("member-a") }.body<SharedAccountsResponse>().items.single()
             assertEquals("team-b_2", listed.poolId, "Its owner sees it")
-            val other = client.get(base) { bearerAuth("other-a") }.body<SharedAccountsResponse>().items.single()
-            assertNull(other.poolId, "Another member does not")
+            val other = client.get(base) { bearerAuth("other-a") }.body<SharedAccountsResponse>().items
+            assertEquals(emptyList(), other, "Another member, in no pool, does not see it (TeamCode's poolAccounts)")
             for (bad in listOf("a b", "x".repeat(37), "é")) {
                 val refused = patchAs("admin-a", path, UpdateAccountRequest(poolId = bad))
                 assertEquals(HttpStatusCode.BadRequest, refused.status, bad)

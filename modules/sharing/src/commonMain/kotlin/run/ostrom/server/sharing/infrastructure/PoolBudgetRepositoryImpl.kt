@@ -11,7 +11,6 @@ import run.ostrom.server.sharing.domain.PoolBudgets
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
-import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.intLiteral
 import org.jetbrains.exposed.v1.core.neq
 import org.jetbrains.exposed.v1.core.notExists
@@ -49,12 +48,7 @@ class PoolBudgetRepositoryImpl(private val database: JdbcDatabase) : PoolBudgetR
 
     override suspend fun reserves(orgId: Uuid): List<OverflowReserve> = database.inOrg(orgId) {
         val b = SharingPoolBudgets
-        val budgets = reservesOf(orgId).associate { it[b.poolId] to it[b.dailyMicros] }
-        if (budgets.isEmpty()) return@inOrg emptyList()
-        val a = SharingAccounts
-        val accounts = reserveAccounts(orgId, budgets.keys)
-            .groupBy({ it[a.poolId] }, { it[a.id] })
-        budgets.map { (pool, daily) -> OverflowReserve(pool, daily, accounts[pool].orEmpty().toSet()) }
+        reservesOf(orgId).map { OverflowReserve(it[b.poolId], it[b.dailyMicros]) }
     }
 }
 
@@ -78,7 +72,8 @@ internal fun otherReserves(orgId: Uuid, poolId: String): Query {
 
 /**
  * The shared pools no member calls home (TeamCode's `sharedOverflowBudgets`), at most
- * [PoolBudgets.MAX_OVERFLOW_POOLS]: the first read of a lease by a member allowed overflow.
+ * [PoolBudgets.MAX_OVERFLOW_POOLS]: the first read of a lease by a member allowed overflow, and what a member's list
+ * of accounts adds for them.
  */
 internal fun reservesOf(orgId: Uuid): Query {
     val b = SharingPoolBudgets
@@ -88,12 +83,6 @@ internal fun reservesOf(orgId: Uuid): Query {
         .where { (b.orgId eq orgId) and (b.sharedOverflow eq true) and notExists(home) }
         .orderBy(b.poolId to SortOrder.ASC)
         .limit(PoolBudgets.MAX_OVERFLOW_POOLS)
-}
-
-/** The accounts of [pools], whatever their provider or state: the second read. */
-internal fun reserveAccounts(orgId: Uuid, pools: Collection<String>): Query {
-    val a = SharingAccounts
-    return a.select(a.id, a.poolId).where { (a.orgId eq orgId) and (a.poolId inList pools) }
 }
 
 /** A pool's budget created or replaced. */

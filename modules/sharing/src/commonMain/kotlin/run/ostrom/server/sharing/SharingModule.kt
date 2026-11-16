@@ -12,7 +12,7 @@ import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.settings.InstanceSettings
 import run.ostrom.server.kernel.settings.SettingsSection
-import run.ostrom.server.kernel.sharing.SharedAccountSpend
+import run.ostrom.server.kernel.sharing.PoolSpend
 import run.ostrom.server.secrets.domain.CallerResolver
 import run.ostrom.server.secrets.domain.OrgPrincipalCallerResolver
 import run.ostrom.server.sharing.domain.AccountGroups
@@ -39,6 +39,8 @@ import run.ostrom.server.sharing.domain.MemberNames
 import run.ostrom.server.sharing.domain.MemberPoliciesUseCase
 import run.ostrom.server.sharing.domain.MemberPoliciesUseCaseImpl
 import run.ostrom.server.sharing.domain.MemberPoolRepository
+import run.ostrom.server.sharing.domain.MemberPoolScope
+import run.ostrom.server.sharing.domain.MemberPoolScopeImpl
 import run.ostrom.server.sharing.domain.NoOverflowPools
 import run.ostrom.server.sharing.domain.NoAccountSpendReader
 import run.ostrom.server.sharing.domain.NoMemberLogins
@@ -142,9 +144,10 @@ object SharingModule : ServerModule {
         single<SharingOrgs> { SharingOrgsImpl(get()) }
         single<MemberPoolRepository> { MemberPoolRepositoryImpl(get()) }
         single<PoolBudgetRepository> { PoolBudgetRepositoryImpl(get()) }
+        single<MemberPoolScope> { MemberPoolScopeImpl(get(), get()) }
         // Without the usage ledger, nothing says what a reserve lent today: none lends (fail closed).
         single<OverflowPools> {
-            val spend = getOrNull<SharedAccountSpend>()
+            val spend = getOrNull<PoolSpend>()
             if (spend == null) NoOverflowPools else OverflowPoolsImpl(get(), spend, get())
         }
         single {
@@ -153,7 +156,7 @@ object SharingModule : ServerModule {
         single<ShareAccountUseCase> { ShareAccountUseCaseImpl(get(), get(), get()) }
         single { MemberNames(logins(), get()) }
         single<ListSharedAccountsUseCase> {
-            ListSharedAccountsUseCaseImpl(get(), get(), get(), spend(), get(), get())
+            ListSharedAccountsUseCaseImpl(get(), get(), get(), spend(), get(), get(), get())
         }
         single<UpdateSharedAccountUseCase> { UpdateSharedAccountUseCaseImpl(get(), get()) }
         single<ViewSharedAccountUseCase> { ViewSharedAccountUseCaseImpl(get()) }

@@ -411,4 +411,16 @@ val UsageMigrations: List<SchemaMigration> = listOf(
                 ON usage_reconciliations (org_id, member_id, reconciled_at, call_id);
         """.trimIndent() + "\n" + tenantTableSql("usage_reconciliations"),
     ),
+    // TeamCode's daily units by the reservation's source pool (`DailyScope.LENT`, « historical reservations retain
+    // their original pool »): a model call served by a pooled account names the pool the account was in, so what a
+    // shared overflow pool lent today stays its own when the account moves. The index reads some pools' day.
+    SchemaMigration(
+        version = 14,
+        name = "usage_names_the_serving_pool",
+        sql = """
+            ALTER TABLE usage_events ADD COLUMN pool_id TEXT;
+            CREATE INDEX usage_events_pool_at ON usage_events (org_id, pool_id, at) INCLUDE (cost_micros)
+                WHERE pool_id IS NOT NULL
+        """.trimIndent(),
+    ),
 )

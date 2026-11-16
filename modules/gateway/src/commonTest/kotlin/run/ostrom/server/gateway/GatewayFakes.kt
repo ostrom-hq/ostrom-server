@@ -40,7 +40,9 @@ import run.ostrom.server.sharing.domain.ActiveSession
 import run.ostrom.server.sharing.domain.AccountStatus
 import run.ostrom.server.sharing.domain.AccountTokenCipher
 import run.ostrom.server.sharing.domain.AccountTokens
+import run.ostrom.server.sharing.domain.MemberPoolRepository
 import run.ostrom.server.sharing.domain.NoAccountSpendReader
+import run.ostrom.server.sharing.domain.NoMemberPools
 import run.ostrom.server.sharing.domain.OAuthRefresher
 import run.ostrom.server.sharing.domain.QuotaWindow
 import run.ostrom.server.sharing.domain.QuotaWindowRepository
@@ -247,11 +249,12 @@ class InMemorySlots : AccountSlotRepository {
     override suspend fun activeSessions(orgId: Uuid, within: Duration): List<ActiveSession> = sessions.toList()
 }
 
-/** The pool over [accounts]. */
+/** The pool over [accounts], the members' pools read from [pools]. */
 fun pool(
     accounts: InMemoryAccounts,
     clock: Clock,
     logger: Logger = JsonLogger(LogLevel.ERROR, sink = {}),
+    pools: MemberPoolRepository = NoMemberPools,
 ) = SharedAccountPool(
     accounts,
     accounts,
@@ -261,6 +264,7 @@ fun pool(
     NoAccountSpendReader(),
     clock,
     logger = logger,
+    pools = pools,
 )
 
 /** Org key secrets by name. */

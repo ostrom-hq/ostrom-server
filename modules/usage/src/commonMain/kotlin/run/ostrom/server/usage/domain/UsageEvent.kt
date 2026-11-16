@@ -21,6 +21,8 @@ enum class UsageKind { MODEL, MCP, SKILL, HOOK, SESSION }
  * @property name The model id, `"server/tool"`, the skill name, the hook event, or the session id.
  * @property provider The provider (anthropic, openai, openrouter, claude-max, codex…), when there is one.
  * @property accountId The pooled personal account used, if any (personal account sharing).
+ * @property poolId The named pool [accountId] was in when it served the call, or null (TeamCode's reservation source
+ *   pool): set by the server for a model call only, never by a client; what a pool lent is read by it.
  * @property sessionId The agent session, when known.
  * @property launchId The launch whose agent token sent it (set by the server from the token, never from the body), or
  *   null for a person's own credential.
@@ -42,6 +44,7 @@ data class UsageEvent(
     val name: String,
     val provider: String? = null,
     val accountId: Uuid? = null,
+    val poolId: String? = null,
     val sessionId: String? = null,
     val launchId: String? = null,
     val workflowId: String? = null,

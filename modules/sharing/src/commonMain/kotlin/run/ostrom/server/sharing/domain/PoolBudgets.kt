@@ -3,7 +3,7 @@ package run.ostrom.server.sharing.domain
 
 import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.OstromException
-import run.ostrom.server.kernel.sharing.SharedAccountSpend
+import run.ostrom.server.kernel.sharing.PoolSpend
 import run.ostrom.server.secrets.domain.AdminRequiredException
 import run.ostrom.server.secrets.domain.Caller
 import kotlin.time.Clock
@@ -23,9 +23,8 @@ data class PoolBudget(val poolId: String, val dailyMicros: Long, val sharedOverf
  *
  * @property poolId The pool.
  * @property dailyMicros Its daily budget, USD millionths.
- * @property accountIds Its accounts, of every provider and state: what any of them served today counts.
  */
-data class OverflowReserve(val poolId: String, val dailyMicros: Long, val accountIds: Set<Uuid>)
+data class OverflowReserve(val poolId: String, val dailyMicros: Long)
 
 /** What saving a pool budget did. */
 enum class PoolBudgetSave {
@@ -82,26 +81,26 @@ object NoOverflowPools : OverflowPools {
 }
 
 /**
- * [OverflowPools] on the reserves and the ledger: two reads of the reserves and one of the spend of their accounts
- * since the start of the UTC day (TeamCode's `poolSpends`; no member calls a reserve home, so only what it lent
- * counts).
+ * [OverflowPools] on the reserves and the ledger: one read of the reserves and one of what was served from them since
+ * the start of the UTC day, by the pool each call was served from (TeamCode's `poolSpends` on `DailyScope.LENT`; no
+ * member calls a reserve home, so only what it lent counts). An account moved out of a reserve leaves its calls of
+ * the day on it, and one moved in brings none.
  *
  * @param budgets The pools' budgets.
- * @param spend What the accounts served.
+ * @param spend What each pool served.
  * @param clock The time.
  */
 class OverflowPoolsImpl(
     private val budgets: PoolBudgetRepository,
-    private val spend: SharedAccountSpend,
+    private val spend: PoolSpend,
     private val clock: Clock,
 ) : OverflowPools {
     override suspend fun funded(orgId: Uuid, needMicros: suspend () -> Long): Set<String> {
         val reserves = budgets.reserves(orgId)
         if (reserves.isEmpty()) return emptySet()
         val need = needMicros().coerceAtLeast(1)
-        val spent = spend.spentMicros(orgId, reserves.flatMap { it.accountIds }, CivilCalendar.dayStart(clock.now()))
-        return reserves.filter { reserve -> need <= reserve.dailyMicros - reserve.accountIds.sumOf { spent[it] ?: 0 } }
-            .mapTo(mutableSetOf()) { it.poolId }
+        val spent = spend.spentMicros(orgId, reserves.map { it.poolId }, CivilCalendar.dayStart(clock.now()))
+        return reserves.filter { need <= it.dailyMicros - (spent[it.poolId] ?: 0) }.mapTo(mutableSetOf()) { it.poolId }
     }
 }
 
