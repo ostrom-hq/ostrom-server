@@ -7,6 +7,7 @@ import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
 import java.net.URLEncoder
 import java.sql.Connection
+import java.sql.DriverManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jetbrains.exposed.v1.jdbc.Database
@@ -29,7 +30,7 @@ import kotlin.uuid.Uuid
  * @param config How to reach PostgreSQL, and as whom.
  * @param poolSize The pool's connections, 2 to 64.
  */
-class JdbcDatabase(config: DatabaseConfig, poolSize: Int) : AutoCloseable {
+class JdbcDatabase(private val config: DatabaseConfig, poolSize: Int) : AutoCloseable {
     private val source = HikariDataSource(hikariConfig(config, poolSize))
     private val exposed = Database.connect(
         source,
@@ -49,10 +50,10 @@ class JdbcDatabase(config: DatabaseConfig, poolSize: Int) : AutoCloseable {
     }
 
     /**
-     * Runs [block] in one transaction confined to one organization, as the sqlx4k [inOrg]: the transaction switches to
-     * [TENANT_ROLE] and sets [TENANT_SETTING] for itself alone (`SET LOCAL`, `set_config(…, true)`), so a tenant
-     * table's row-level security policy only shows and accepts the rows of [orgId], whatever the query says. Both end
-     * with the transaction: the pooled connection goes back with neither.
+     * Runs [block] in one transaction confined to one organization: the transaction switches to [TENANT_ROLE] and sets
+     * [TENANT_SETTING] for itself alone (`SET LOCAL`, `set_config(…, true)`), so a tenant table's row-level security
+     * policy only shows and accepts the rows of [orgId], whatever the query says. Both end with the transaction: the
+     * pooled connection goes back with neither.
      *
      * The queries still filter on `org_id` themselves: the policy is the second wall until a later step drops
      * row-level security for typed org filters (SD-08).
@@ -80,6 +81,13 @@ class JdbcDatabase(config: DatabaseConfig, poolSize: Int) : AutoCloseable {
      * @param logger Where the runner reports.
      */
     fun migrationRunner(logger: Logger): MigrationRunner = FlywayMigrationRunner(source, logger)
+
+    /**
+     * Opens a connection of its own, outside the pool, with the pool's settings and credentials: for a session that
+     * lasts (a `LISTEN`, [PostgresNotifications]). Autocommit, as a fresh JDBC connection is; the caller closes it.
+     */
+    internal fun connectAlone(): Connection =
+        DriverManager.getConnection(jdbcUrl(config), config.username, config.password)
 
     override fun close() {
         TransactionManager.closeAndUnregister(exposed)

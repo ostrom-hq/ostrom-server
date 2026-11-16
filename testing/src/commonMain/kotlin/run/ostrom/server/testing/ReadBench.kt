@@ -74,7 +74,7 @@ suspend fun TestServer.measureRead(
         val serving = koin.get<JdbcDatabase>()
         val plans = List(TRIALS) { serving.replay(statements, explain = true, writes) }
             .sortedBy(::databaseTime)[TRIALS / 2]
-        val latencies = database.withJdbcRole(poolSize = CONCURRENT_CALLS) { role, pool ->
+        val latencies = database.withRole(poolSize = CONCURRENT_CALLS) { role, pool ->
             database.superuserJdbc.query { exec("GRANT ${database.servingRole} TO $role") }
             val callers = 1..CONCURRENT_CALLS
             // Every caller warmed up first, then all timed together: their replays overlap CONCURRENT_CALLS wide.

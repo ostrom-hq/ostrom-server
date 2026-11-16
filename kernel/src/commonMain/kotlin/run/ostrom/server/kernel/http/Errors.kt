@@ -4,7 +4,6 @@ package run.ostrom.server.kernel.http
 import run.ostrom.server.kernel.errors.ErrorKind
 import run.ostrom.server.kernel.errors.OstromException
 import run.ostrom.server.kernel.logging.Logger
-import io.github.smyrgeorge.sqlx4k.SQLError
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCall
@@ -90,24 +89,13 @@ private suspend fun ApplicationCall.answerFailure(cause: Throwable, logger: Logg
             respondError(ErrorKind.INVALID_REQUEST, "The request is malformed.")
         }
         is NotFoundException -> respondError(ErrorKind.NOT_FOUND, "Not found.")
-        is SQLError -> if (cause.kind == SQLError.Kind.UniqueViolation) {
-            respondError(ErrorKind.CONFLICT, "The resource already exists.")
-        } else {
-            // Never the message: PostgreSQL quotes row values in it (AGENTS.md rule 9). The driver's code and the
-            // SQLSTATE carry none, and tell a failure PostgreSQL never saw (a pool, a decoding) from one it reported.
-            val codes = listOfNotNull("sql_code" to cause.code.name, cause.sqlState?.let { "sql_state" to it })
-            logger.error(
-                "database failure",
-                fields + mapOf("error" to "SQLError", "sql_kind" to cause.kind.name) + codes,
-            )
-            respondError(ErrorKind.INTERNAL, "Internal error.")
-        }
         else -> {
             val jdbc = cause.jdbcFailure()
             when {
                 jdbc?.sqlState == UNIQUE_VIOLATION -> respondError(ErrorKind.CONFLICT, "The resource already exists.")
                 jdbc != null -> {
-                    // As for SQLError: the SQLSTATE and the class, never the message (it quotes row values).
+                    // Never the message: PostgreSQL quotes row values in it (AGENTS.md rule 9). The SQLSTATE and the
+                    // class carry none, and tell a failure PostgreSQL never saw (a pool's) from one it reported.
                     val state = listOfNotNull(jdbc.sqlState?.let { "sql_state" to it })
                     logger.error("database failure", fields + mapOf("error" to jdbc::class.simpleName) + state)
                     respondError(ErrorKind.INTERNAL, "Internal error.")
@@ -125,7 +113,7 @@ private suspend fun ApplicationCall.answerFailure(cause: Throwable, logger: Logg
 private const val UNIQUE_VIOLATION = "23505"
 
 /**
- * The JDBC failure behind this one, for the modules on Exposed: an `ExposedSQLException` (a [SQLException] whose
+ * The JDBC failure behind this one: an `ExposedSQLException` (a [SQLException] whose
  * SQLSTATE is its cause's), a [SQLException] itself, or one wrapped in another exception's causes. Null when no
  * cause is a database failure.
  */

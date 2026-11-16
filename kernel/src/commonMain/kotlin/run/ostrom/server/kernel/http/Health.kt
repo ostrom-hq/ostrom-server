@@ -1,17 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.kernel.http
 
-import io.github.smyrgeorge.sqlx4k.Driver
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
-import kotlin.time.Duration
-import kotlin.time.Duration.Companion.seconds
 
 /** One dependency `/ready` checks. Modules may bind more in Koin (`single<HealthCheck>(named("…"))`). */
 interface HealthCheck {
@@ -24,22 +19,6 @@ interface HealthCheck {
      * @return True when it answers.
      */
     suspend fun isUp(): Boolean
-}
-
-/**
- * Checks that PostgreSQL answers `SELECT 1` in time.
- *
- * @param driver The database.
- * @param timeout How long to wait for the answer.
- */
-class DatabaseHealthCheck(private val driver: Driver, private val timeout: Duration = 2.seconds) : HealthCheck {
-    override val name: String = "database"
-
-    override suspend fun isUp(): Boolean = try {
-        withTimeout(timeout) { driver.fetchAll("SELECT 1").isSuccess }
-    } catch (_: TimeoutCancellationException) {
-        false
-    }
 }
 
 /**

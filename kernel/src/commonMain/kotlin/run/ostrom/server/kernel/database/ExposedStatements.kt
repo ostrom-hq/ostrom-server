@@ -23,9 +23,9 @@ import org.jetbrains.exposed.v1.jdbc.statements.toExecutable
 
 /**
  * The read that takes the advisory lock of [key] until the transaction ends:
- * `SELECT pg_advisory_xact_lock(hashtextextended(?, 0))`, the lock the sqlx4k repositories took, so that a replica
- * of the former version and one of this take turns while they both serve. Not the audit chain's lock
- * ([lockUntilCommit], `hashtext`): a module keeps the hash its sqlx4k repository used.
+ * `SELECT pg_advisory_xact_lock(hashtextextended(?, 0))`, the lock the repositories took before Exposed, so that a
+ * replica of the former version and one of this take turns while they both serve. Not the audit chain's lock
+ * ([lockUntilCommit], `hashtext`): a module keeps the hash its former repository used.
  *
  * @param key What is locked: an org's admissions, holds, an action's key…
  *

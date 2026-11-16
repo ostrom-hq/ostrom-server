@@ -7,10 +7,9 @@ import run.ostrom.server.kernel.config.ServerConfig
 import run.ostrom.server.kernel.database.DatabaseNotifications
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.MigrationRunner
-import run.ostrom.server.kernel.database.MigrationRunnerImpl
-import run.ostrom.server.kernel.database.databaseNotifications
+import run.ostrom.server.kernel.database.PoolHealthCheck
+import run.ostrom.server.kernel.database.PostgresNotifications
 import run.ostrom.server.kernel.http.CallsInProgress
-import run.ostrom.server.kernel.http.DatabaseHealthCheck
 import run.ostrom.server.kernel.http.HealthCheck
 import run.ostrom.server.kernel.http.ReadThrottle
 import run.ostrom.server.kernel.http.Readiness
@@ -20,7 +19,6 @@ import run.ostrom.server.kernel.network.TrustedProxies
 import run.ostrom.server.kernel.observability.OstromMetrics
 import run.ostrom.server.kernel.observability.ProcessMemory
 import run.ostrom.server.kernel.signing.InstanceSigner
-import io.github.smyrgeorge.sqlx4k.Driver
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
@@ -30,43 +28,35 @@ import kotlin.time.Clock
  * The kernel's Koin definitions, loaded before every functional module ([serverKoin]).
  *
  * @param logger The root logger.
- * @param driver The database (sqlx4k), for the modules not yet on Exposed.
+ * @param jdbc The database: the JDBC pool (Exposed over HikariCP) every module queries, as the serving role.
  * @param signer The instance signing key.
  * @param config Where modules read their configuration keys ([ServerConfig.source]).
  * @param clock The clock use cases read; tests inject a fixed one.
  * @param telemetry Traces, metrics, logs and product events; disabled (nothing sent) unless configured.
  * @param metrics The server's instruments, created on [telemetry]'s meter.
- * @param notifications What the replicas tell each other through the database ([DatabaseNotifications]); a test
- *   whose [driver] wraps the pool gives the pool's.
- * @param databaseCheck `/ready`'s database check: the JDBC pool's state in the server (CRL-11), `SELECT 1` on [driver]
- *   when none is given.
- * @param migrationRunner Checks the modules' migrations at start: Flyway's histories in the server (CRL-05), sqlx4k's
- *   on [driver] when none is given.
- * @param jdbc The JDBC pool (Exposed over HikariCP) the modules on Exposed query, bound when given: the server and
- *   test server (`serverTest`, testing module) always give one; a kernel test without such a module may not.
+ * @param notifications What the replicas tell each other through the database ([DatabaseNotifications]).
+ * @param migrationRunner Checks the modules' migrations at start: Flyway's histories read through [jdbc] (CRL-05)
+ *   unless a test gives its own.
  *
  * @return The module.
  */
 @Suppress("LongParameterList") // The kernel's composition root: one parameter per shared dependency.
 fun kernelModule(
     logger: Logger,
-    driver: Driver,
+    jdbc: JdbcDatabase,
     signer: InstanceSigner,
     config: ConfigSource,
     clock: Clock = Clock.System,
     telemetry: Telemetry = Telemetry.disabled(clock),
     metrics: OstromMetrics = OstromMetrics(telemetry.meter),
-    notifications: DatabaseNotifications = databaseNotifications(driver),
-    databaseCheck: HealthCheck? = null,
-    migrationRunner: MigrationRunner? = null,
-    jdbc: JdbcDatabase? = null,
+    notifications: DatabaseNotifications = PostgresNotifications(jdbc),
+    migrationRunner: MigrationRunner = jdbc.migrationRunner(logger),
 ): Module = module {
     single { logger }
     single { config }
     single { telemetry }
     single { metrics }
-    single { driver }
-    if (jdbc != null) single { jdbc }
+    single { jdbc }
     single { notifications }
     single { signer }
     single { clock }
@@ -79,6 +69,7 @@ fun kernelModule(
     single { ReadThrottle(get(), ServerConfig.readLimits(config), ReadThrottle.MAX_SUBJECTS) }
     // P1 memory: the calls this replica runs at once, under a ceiling taken from its container's limit.
     single { CallsInProgress(ServerConfig.callCeilings(config), ProcessMemory::limitBytes) }
-    single<MigrationRunner> { migrationRunner ?: MigrationRunnerImpl(get(), get()) }
-    single<HealthCheck>(named("database")) { databaseCheck ?: DatabaseHealthCheck(get()) }
+    single<MigrationRunner> { migrationRunner }
+    // `/ready`'s database check (CRL-11): the pool's state, never a query.
+    single<HealthCheck>(named("database")) { PoolHealthCheck(jdbc::state) }
 }

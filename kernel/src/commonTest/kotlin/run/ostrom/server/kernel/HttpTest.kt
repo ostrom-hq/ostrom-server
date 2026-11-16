@@ -35,7 +35,6 @@ import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.network.TrustedProxies
 import run.ostrom.server.kernel.observability.UNMATCHED_ROUTE
-import io.github.smyrgeorge.sqlx4k.SQLError
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -133,19 +132,7 @@ class HttpTest {
             route.get("/probe/crash") { throw IllegalStateException("database password is hunter2") }
             route.get("/probe/gone") { throw NotFoundException("internal detail") }
             route.get("/probe/huge") { throw PayloadTooLargeException(1) }
-            route.get("/probe/duplicate") {
-                throw SQLError(SQLError.Code.Database, kind = SQLError.Kind.UniqueViolation)
-            }
-            route.get("/probe/deadlock") {
-                throw SQLError(
-                    SQLError.Code.Database,
-                    "Key (email)=(alice@example.com) is locked",
-                    sqlState = "40P01",
-                    kind = SQLError.Kind.Deadlock,
-                )
-            }
-            route.get("/probe/pool") { throw SQLError(SQLError.Code.PoolTimedOut, "pool of alice@example.com") }
-            // The modules on Exposed fail with a JDBC SQLException (ExposedSQLException is one), often wrapped.
+            // The modules fail with a JDBC SQLException (ExposedSQLException is one), often wrapped.
             route.get("/probe/jdbc-duplicate") {
                 throw IllegalStateException("wrapped", SQLException("Key (email)=(alice@example.com) exists", "23505"))
             }
@@ -409,29 +396,7 @@ class HttpTest {
     }
 
     @Test
-    fun aUniqueViolationIsA409AndAnyOtherDatabaseFailureA500() = probeServer {
-        val duplicate = client.get("/probe/duplicate")
-        assertEquals(HttpStatusCode.Conflict, duplicate.status)
-        assertEquals("conflict", duplicate.error().error.type)
-
-        val deadlock = client.get("/probe/deadlock")
-        assertEquals(HttpStatusCode.InternalServerError, deadlock.status)
-        val line = lines.single { "database failure" in it }
-        assertTrue("\"error\":\"SQLError\"" in line, line)
-        assertTrue("\"sql_kind\":\"Deadlock\"" in line, line)
-        assertTrue("\"sql_code\":\"Database\"" in line && "\"sql_state\":\"40P01\"" in line, line)
-        assertFalse("alice@example.com" in line, "A database error message quotes row values: never logged")
-
-        // A failure of the driver itself, which PostgreSQL never saw: its code says which (OrgsReadsBenchTest's 500
-        // of server#283 logged only `Other`).
-        assertEquals(HttpStatusCode.InternalServerError, client.get("/probe/pool").status)
-        val pool = lines.last { "database failure" in it }
-        assertTrue("\"sql_code\":\"PoolTimedOut\"" in pool && "sql_state" !in pool, pool)
-        assertFalse("alice@example.com" in pool, pool)
-    }
-
-    @Test
-    fun aJdbcUniqueViolationEvenWrappedIsA409AndAnyOtherJdbcFailureA500() = probeServer {
+    fun aUniqueViolationEvenWrappedIsA409AndAnyOtherDatabaseFailureA500() = probeServer {
         val duplicate = client.get("/probe/jdbc-duplicate")
         assertEquals(HttpStatusCode.Conflict, duplicate.status)
         assertEquals("conflict", duplicate.error().error.type)

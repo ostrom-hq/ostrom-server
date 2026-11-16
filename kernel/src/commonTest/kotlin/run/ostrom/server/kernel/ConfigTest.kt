@@ -223,24 +223,17 @@ class ConfigTest {
     }
 
     @Test
-    fun boundsTheConnectionsAndSplitsThemBetweenThePools() {
+    fun boundsTheConnectionsAsTheJdbcPool() {
         val tooFew = assertFailsWith<InvalidConfigException> {
-            ServerConfig.from(MapConfigSource(database + ("OSTROM_DATABASE_MAX_CONNECTIONS" to "3")))
+            ServerConfig.from(MapConfigSource(database + ("OSTROM_DATABASE_MAX_CONNECTIONS" to "1")))
         }
-        assertEquals("OSTROM_DATABASE_MAX_CONNECTIONS must be between 4 and 64.", tooFew.message)
+        assertEquals("OSTROM_DATABASE_MAX_CONNECTIONS must be between 2 and 64.", tooFew.message)
         assertFailsWith<InvalidConfigException> {
             ServerConfig.from(MapConfigSource(database + ("OSTROM_DATABASE_MAX_CONNECTIONS" to "65")))
         }
-        val default = ServerConfig.from(MapConfigSource(database)).database
-        assertEquals(5 to 5, default.jdbcConnections to default.driverConnections)
-        val odd = ServerConfig.from(MapConfigSource(database + ("OSTROM_DATABASE_MAX_CONNECTIONS" to "11"))).database
-        assertEquals(6 to 5, odd.jdbcConnections to odd.driverConnections, "the JDBC pool takes the larger half")
-        val fewest = ServerConfig.from(MapConfigSource(database + ("OSTROM_DATABASE_MAX_CONNECTIONS" to "4"))).database
-        assertEquals(JdbcDatabase.MIN_POOL_SIZE, fewest.jdbcConnections, "the fewest still opens a valid JDBC pool")
-        val most = ServerConfig.from(MapConfigSource(database + ("OSTROM_DATABASE_MAX_CONNECTIONS" to "64"))).database
-        assertEquals(32 to 32, most.jdbcConnections to most.driverConnections)
-        assertEquals(5, default.forDriver().maxConnections, "sqlx4k's pool opens with its share only")
-        assertEquals(default.url, default.forDriver().url)
+        assertEquals(10, ServerConfig.from(MapConfigSource(database)).database.maxConnections)
+        val fewest = ServerConfig.from(MapConfigSource(database + ("OSTROM_DATABASE_MAX_CONNECTIONS" to "2"))).database
+        assertEquals(JdbcDatabase.MIN_POOL_SIZE, fewest.maxConnections, "the fewest still opens a valid JDBC pool")
     }
 
     @Test

@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.kernel.database
 
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
+import org.jetbrains.exposed.v1.core.statements.StatementType
 
 // pg_has_role(…, 'MEMBER'): the role is the owner or a member of it, inheriting its rights or able to SET ROLE to it.
 private const val BYPASSES = """
@@ -20,7 +19,12 @@ FROM pg_roles r WHERE r.rolname = current_user
  * @throws UnsafeDatabaseRoleException When the role is a superuser, has `BYPASSRLS`, or owns a table of the schema
  *   or is a member of its owner.
  */
-suspend fun Driver.requireRowLevelSecurity() {
-    val bypasses = fetchAll(BYPASSES.trimIndent()).getOrThrow().single().get("bypasses").asBoolean()
-    if (bypasses) throw UnsafeDatabaseRoleException()
+suspend fun JdbcDatabase.requireRowLevelSecurity() {
+    val bypasses = query {
+        exec(BYPASSES.trimIndent(), explicitStatementType = StatementType.SELECT) { rows ->
+            rows.next()
+            rows.getBoolean("bypasses")
+        }
+    }
+    if (bypasses != false) throw UnsafeDatabaseRoleException()
 }

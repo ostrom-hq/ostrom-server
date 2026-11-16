@@ -7,11 +7,10 @@ import run.ostrom.server.kernel.config.EnvironmentConfigSource
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.MigrationRunner
 import run.ostrom.server.kernel.database.TENANT_ROLE
-import run.ostrom.server.kernel.database.connectPostgres
 import run.ostrom.server.kernel.database.ownerMigrationRunner
 import run.ostrom.server.kernel.logging.Logger
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
+import java.sql.Connection
+import java.sql.DriverManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
@@ -28,12 +27,12 @@ import kotlin.uuid.Uuid
  * roles of a deployment (`ci/database-roles.sql`, docs/tenancy.md): the tests and the server run exactly as in
  * production, never as a role that bypasses row-level security.
  *
- * - [owner]: the owner of the database, the schema and every table, `NOSUPERUSER NOBYPASSRLS CREATEROLE`, admin of
+ * - [ownerJdbc]: the owner of the database, the schema and every table, `NOSUPERUSER NOBYPASSRLS CREATEROLE`, admin of
  *   `ostrom_tenant`, `ostrom_router` and `ostrom_member_search`. It runs the migrations, like `ostrom-server migrate`.
- * - [driver]: the serving role, `NOSUPERUSER NOBYPASSRLS`, owner of nothing, member of `ostrom_tenant`, with the rows
- *   of the owner's tables by default privileges. Every test and the test server go through it.
- * - [superuser]: the configured user (CI's PostgreSQL service user), which creates the database and the roles. Only for
- *   what no deployment does: creating roles to test the start check, reading what a test must prove is stored.
+ * - [servingConfig]: the serving role, `NOSUPERUSER NOBYPASSRLS`, owner of nothing, member of `ostrom_tenant`, with the
+ *   rows of the owner's tables by default privileges. The test server's pool connects as it.
+ * - [superuserJdbc]: the configured user (CI's PostgreSQL service user), which creates the database and the roles. Only
+ *   for what no deployment does: creating roles to test the start check, reading what a test must prove is stored.
  *
  * The owner and serving roles are created for this database alone (their attributes are those of
  * `ci/database-roles.sql`, their names unique so tests in parallel never share them) and dropped with it;
@@ -47,16 +46,10 @@ import kotlin.uuid.Uuid
  * database tests are skipped, unless `OSTROM_TEST_DATABASE_REQUIRED=true` (set in CI), which makes them fail instead:
  * CI never passes by skipping them.
  *
- * @property driver The connection pool of the serving role.
- * @property owner The connection pool of the owner, for migrations.
- * @property superuser The connection pool of the configured user, never the path under test.
- * @property ownerConfig How the owner connects, for a migrator on another driver (Flyway).
- * @property servingConfig How the serving role connects, for the JDBC pool.
+ * @property ownerConfig How the owner connects, for a migrator (Flyway).
+ * @property servingConfig How the serving role connects, for the test server's pool.
  */
-class TestDatabase @Suppress("LongParameterList") private constructor( // Each role's pool and credentials.
-    val driver: Driver,
-    val owner: Driver,
-    val superuser: Driver,
+class TestDatabase private constructor(
     val ownerConfig: DatabaseConfig,
     val servingConfig: DatabaseConfig,
     internal val superuserConfig: DatabaseConfig,
@@ -69,10 +62,12 @@ class TestDatabase @Suppress("LongParameterList") private constructor( // Each r
     private val ownerPool = lazy { JdbcDatabase(ownerConfig, JDBC_POOL_SIZE) }
     private val superuserPool = lazy { JdbcDatabase(superuserConfig, JDBC_POOL_SIZE) }
 
-    /** [owner] on JDBC, for a test on Exposed: opened at its first use, closed with the database. */
+    /** The owner's pool, for fixtures a migration would create: opened at its first use, closed with the database. */
     val ownerJdbc: JdbcDatabase by ownerPool
 
-    /** [superuser] on JDBC, for a test on Exposed: opened at its first use, closed with the database. */
+    /**
+     * The configured user's pool, never the path under test: opened at its first use, closed with the database.
+     */
     val superuserJdbc: JdbcDatabase by superuserPool
 
     /**
@@ -112,7 +107,7 @@ class TestDatabase @Suppress("LongParameterList") private constructor( // Each r
     /** The name of the owner role, which owns the database, its schema and its tables. */
     val ownerRole: String get() = ownerRoleName(id)
 
-    /** The name of the serving role, the one [driver] connects as. */
+    /** The name of the serving role, the one [servingConfig] connects as. */
     val servingRole: String get() = servingRoleName(id)
 
     /**
@@ -137,7 +132,7 @@ class TestDatabase @Suppress("LongParameterList") private constructor( // Each r
      * beside every test process's own pools must stay under CI's `max_connections` (a pool of 50 did not, 03/11/2026).
      *
      * @param bypassRowLevelSecurity Whether the role bypasses row-level security.
-     * @param poolSize The connections of the role's pool; 1 makes every query run on the same session.
+     * @param poolSize The connections of the role's pool, from [JdbcDatabase.MIN_POOL_SIZE] to [LARGEST_POOL].
      * @param block The test, given the role's name and a pool connected as the role.
      *
      * @return What [block] returns.
@@ -145,7 +140,7 @@ class TestDatabase @Suppress("LongParameterList") private constructor( // Each r
     suspend fun <T> withRole(
         bypassRowLevelSecurity: Boolean = false,
         poolSize: Int = ROLE_POOL_SIZE,
-        block: suspend (role: String, driver: Driver) -> T,
+        block: suspend (role: String, database: JdbcDatabase) -> T,
     ): T {
         require(poolSize <= LARGEST_POOL) {
             "A pool of $poolSize: at most $LARGEST_POOL beside the other tests' pools."
@@ -158,22 +153,6 @@ class TestDatabase @Suppress("LongParameterList") private constructor( // Each r
     }
 
     /**
-     * [withRole] with a JDBC pool connected as the role ([JdbcDatabase]), for a module on Exposed: the same fresh
-     * login role, always [exclusively] (its one user is the launch path's contended pool, [LARGEST_POOL]).
-     *
-     * @param poolSize The connections of the role's pool, at most [LARGEST_POOL].
-     * @param block The test, given the role's name and a JDBC pool connected as the role.
-     *
-     * @return What [block] returns.
-     */
-    suspend fun <T> withJdbcRole(poolSize: Int, block: suspend (role: String, database: JdbcDatabase) -> T): T =
-        exclusively {
-            asRole(bypassRowLevelSecurity = false, poolSize.coerceAtMost(LARGEST_POOL)) { role, config ->
-                JdbcDatabase(config, config.maxConnections).use { block(role, it) }
-            }
-        }
-
-    /**
      * Runs [block] alone among the test processes that share this PostgreSQL server: it holds the server's lock of the
      * timed and large phases, an advisory lock taken in the configured database (the same for every test database) on
      * a connection of its own, released afterwards, on failure and cancellation too, and by PostgreSQL if the process
@@ -182,8 +161,8 @@ class TestDatabase @Suppress("LongParameterList") private constructor( // Each r
      * bench's large pool inside its timing); another coroutine waits like another process.
      *
      * CI's PostgreSQL service has `max_connections` 100 and Gradle runs the modules' tests in parallel, each test
-     * with pools of its own (up to 12 connections, [create], and the 2 of a test server's JDBC pool, 4 for a
-     * bench's). Two read benches of 20 callers and the launch path's pool of 50 at once ran out of connections
+     * with pools of its own (up to 4 connections, [ownerJdbc] and [superuserJdbc], and the 2 of a test server's pool, 4
+     * for a bench's). Two read benches of 20 callers and the launch path's pool of 50 at once ran out of connections
      * (« sorry, too many clients already », on main and on pull requests, 03/11/2026), and two benches timing at
      * once on the runner's few cores measured each other: a route's p95 went over its budget on a pull request that
      * never touched it (ReportsReadsBenchTest, server#282).
@@ -202,24 +181,17 @@ class TestDatabase @Suppress("LongParameterList") private constructor( // Each r
      */
     internal suspend fun <T> exclusively(onWait: () -> Unit, block: suspend () -> T): T {
         if (currentCoroutineContext()[Holder]?.database === this) return block()
-        val pool = connectPostgres(admin)
+        val lock = withContext(Dispatchers.IO) { connect(admin) }
         try {
-            val lock = pool.acquire().getOrThrow()
-            try {
-                while (!lock.fetchAll(TRY_LOCK).getOrThrow().single().get("held").asBoolean()) {
-                    onWait()
-                    // Real time, also under a test dispatcher's virtual clock.
-                    withContext(Dispatchers.Default) { delay(LOCK_RETRY) }
-                }
-                return withContext(Holder(this)) { block() }
-            } finally {
-                withContext(NonCancellable) {
-                    lock.fetchAll("SELECT pg_advisory_unlock($EXCLUSIVE_LOCK)")
-                    lock.close()
-                }
+            while (!withContext(Dispatchers.IO) { lock.tryLock() }) {
+                onWait()
+                // Real time, also under a test dispatcher's virtual clock.
+                withContext(Dispatchers.Default) { delay(LOCK_RETRY) }
             }
+            return withContext(Holder(this)) { block() }
         } finally {
-            withContext(NonCancellable) { pool.close() }
+            // Closing the session releases its advisory lock.
+            withContext(NonCancellable + Dispatchers.IO) { lock.close() }
         }
     }
 
@@ -231,33 +203,27 @@ class TestDatabase @Suppress("LongParameterList") private constructor( // Each r
     private suspend fun <T> connectedAsRole(
         bypassRowLevelSecurity: Boolean,
         poolSize: Int,
-        block: suspend (role: String, driver: Driver) -> T,
-    ): T = asRole(bypassRowLevelSecurity, poolSize) { role, config ->
-        val connected = connectPostgres(config)
-        try {
-            block(role, connected)
-        } finally {
-            connected.close()
-        }
-    }
-
-    private suspend fun <T> asRole(
-        bypassRowLevelSecurity: Boolean,
-        poolSize: Int,
-        block: suspend (role: String, config: DatabaseConfig) -> T,
+        block: suspend (role: String, database: JdbcDatabase) -> T,
     ): T {
         val role = "ostrom_test_role_" + Uuid.random().toHexString()
         val password = Uuid.random().toHexString()
         val bypass = if (bypassRowLevelSecurity) "BYPASSRLS" else "NOBYPASSRLS"
-        superuser.execute(
-            "CREATE ROLE $role LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION $bypass PASSWORD '$password'",
-        ).getOrThrow()
+        superuserJdbc.query {
+            exec(
+                "CREATE ROLE $role LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION $bypass " +
+                    "PASSWORD '$password'",
+            )
+            exec("GRANT USAGE ON SCHEMA public TO $role")
+        }
         try {
-            superuser.execute("GRANT USAGE ON SCHEMA public TO $role").getOrThrow()
-            return block(role, DatabaseConfig(url, role, password, poolSize))
+            return JdbcDatabase(DatabaseConfig(url, role, password, poolSize), poolSize).use { block(role, it) }
         } finally {
-            superuser.execute("DROP OWNED BY $role").getOrThrow()
-            superuser.execute("DROP ROLE $role").getOrThrow()
+            withContext(NonCancellable) {
+                superuserJdbc.query {
+                    exec("DROP OWNED BY $role")
+                    exec("DROP ROLE $role")
+                }
+            }
         }
     }
 
@@ -266,9 +232,6 @@ class TestDatabase @Suppress("LongParameterList") private constructor( // Each r
         try {
             // Closing a Hikari pool does not throw; the database is dropped WITH (FORCE) whatever is left open.
             listOf(ownerPool, superuserPool).filter { it.isInitialized() }.forEach { it.value.close() }
-            driver.close()
-            owner.close()
-            superuser.close()
         } finally {
             administer(
                 admin,
@@ -294,14 +257,13 @@ class TestDatabase @Suppress("LongParameterList") private constructor( // Each r
 
         /**
          * The largest pool of [withRole]: CI's PostgreSQL service keeps 97 of its 100 connections for roles other than
-         * superusers, and a few test processes at once each hold up to 18 ([create], [ownerJdbc], [superuserJdbc] and
+         * superusers, and a few test processes at once each hold up to 8 ([ownerJdbc], [superuserJdbc] and
          * a test server's JDBC pool) besides the one large pool.
          */
         const val LARGEST_POOL = 20
 
         /** The advisory lock key of [exclusively], in the configured database. */
         internal const val EXCLUSIVE_LOCK = 774_210_001L
-        private const val TRY_LOCK = "SELECT pg_try_advisory_lock($EXCLUSIVE_LOCK) AS held"
         private val LOCK_RETRY = 200.milliseconds
 
         /**
@@ -350,14 +312,11 @@ class TestDatabase @Suppress("LongParameterList") private constructor( // Each r
             )
             val testUrl = config.url.substringBeforeLast('/') + "/" + name
             val superuserConfig = config.copy(url = testUrl, maxConnections = SUPERUSER_POOL_SIZE)
-            val superuser = connectPostgres(superuserConfig)
-            superuser.grantAsADeployment(ownerRole, servingRole)
+            @Suppress("SpreadOperator") // A dozen statements, copied once per test database.
+            administer(superuserConfig, *grantsOfADeployment(ownerRole, servingRole))
             val serving = DatabaseConfig(testUrl, servingRole, servingPassword, POOL_SIZE)
             val owner = DatabaseConfig(testUrl, ownerRole, ownerPassword, OWNER_POOL_SIZE)
             return TestDatabase(
-                driver = connectPostgres(serving),
-                owner = connectPostgres(owner),
-                superuser = superuser,
                 ownerConfig = owner,
                 servingConfig = serving,
                 superuserConfig = superuserConfig,
@@ -385,8 +344,8 @@ class TestDatabase @Suppress("LongParameterList") private constructor( // Each r
             "DO $$ BEGIN $sql; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$"
 
         /** The schema's owner and grants, as ci/database-roles.sql sets them on a deployment's database. */
-        private suspend fun Driver.grantAsADeployment(ownerRole: String, servingRole: String) {
-            listOf(
+        private fun grantsOfADeployment(ownerRole: String, servingRole: String): Array<String> =
+            arrayOf(
                 "ALTER SCHEMA public OWNER TO $ownerRole",
                 "REVOKE ALL ON SCHEMA public FROM PUBLIC",
                 "GRANT USAGE ON SCHEMA public TO $servingRole, $TENANT",
@@ -396,16 +355,31 @@ class TestDatabase @Suppress("LongParameterList") private constructor( // Each r
                     "GRANT USAGE, SELECT ON SEQUENCES TO $servingRole",
                 "ALTER DEFAULT PRIVILEGES FOR ROLE $ownerRole IN SCHEMA public " +
                     "GRANT EXECUTE ON FUNCTIONS TO $servingRole",
-            ).forEach { execute(it).getOrThrow() }
-        }
+            )
 
-        /** Runs [statements] on a connection to the configured database opened for them alone, always closed. */
-        private suspend fun administer(config: DatabaseConfig, vararg statements: String) {
-            val admin = connectPostgres(config)
-            try {
-                statements.forEach { admin.execute(it).getOrThrow() }
-            } finally {
-                admin.close()
+        /**
+         * Runs [statements] on a connection to [config]'s database opened for them alone, one by one outside any
+         * transaction (`CREATE DATABASE` refuses one), always closed.
+         */
+        private suspend fun administer(config: DatabaseConfig, vararg statements: String) =
+            withContext(Dispatchers.IO) {
+                connect(config).use { connection ->
+                    connection.createStatement().use { statement -> statements.forEach { statement.execute(it) } }
+                }
+            }
+
+        /** A connection of its own to [config]'s database, autocommit, outside any pool. */
+        private fun connect(config: DatabaseConfig): Connection = DriverManager.getConnection(
+            "jdbc:postgresql://" + config.url.substringAfter("://"),
+            config.username,
+            config.password,
+        )
+
+        // Tries the lock of exclusively on this session, without waiting in PostgreSQL.
+        private fun Connection.tryLock(): Boolean = createStatement().use { statement ->
+            statement.executeQuery("SELECT pg_try_advisory_lock($EXCLUSIVE_LOCK)").use { rows ->
+                rows.next()
+                rows.getBoolean(1)
             }
         }
     }

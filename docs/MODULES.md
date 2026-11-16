@@ -27,8 +27,7 @@ modules/<name>/
 ```
 
 - **domain** depends on nothing but the kernel's `errors` and `signing` interfaces: no Ktor, no SQL.
-- **infrastructure** implements the domain's interfaces; only it sees `org.jetbrains.exposed` (and, in a module not
-  yet moved, `io.github.smyrgeorge.sqlx4k`).
+- **infrastructure** implements the domain's interfaces; only it sees `org.jetbrains.exposed`.
 - **presentation** maps HTTP to use cases; routes receive a `<Name>RoutesDependencies` data class, in its own file
   (detekt `MatchingDeclarationName`: a file whose only class is not its name fails).
 - A module never imports another module's `infrastructure` or `presentation`, never reads another module's tables.
@@ -67,8 +66,8 @@ rows of `notifications_deliveries`, then up to 50 due ones are sent, each organi
 even share of them before any takes more, so one organization's burst never holds the others back) and
 `notifications/maintain` (each minute).
 
-The kernel binds, for every module: `Logger`, `JdbcDatabase` (Exposed over the HikariCP pool), `Driver` (sqlx4k, for
-the modules not yet on Exposed), `InstanceSigner`, `kotlin.time.Clock`,
+The kernel binds, for every module: `Logger`, `JdbcDatabase` (Exposed over the HikariCP pool), `DatabaseNotifications`
+(PostgreSQL's `LISTEN`/`NOTIFY`), `InstanceSigner`, `kotlin.time.Clock`,
 `TokenAuthenticator`, `PrincipalOrgResolver`, `MigrationRunner`, and the `HealthCheck`s. Use `Clock` from Koin, never `Clock.System`
 directly, so tests can fix the time.
 
@@ -96,7 +95,7 @@ val OrgsMigrations = listOf(
 
 - Each module has its **own** version sequence (1, 2, 3… without gaps) in its own Flyway history table
   `flyway_<name>`: two modules never compete for a number, and a version used twice is refused. A database migrated
-  before by sqlx4k (`_migrations_<name>`) is adopted: Flyway's history starts with a baseline at its last version,
+  before by the server's first migrator (`_migrations_<name>`) is adopted: Flyway's history starts with a baseline at its last version,
   once every version it applied is checked against the code.
 - **Every table starts with the module name** (`orgs_…`, `instance_…`).
 - Migrations are applied by **`ostrom-server migrate`**, with the owner's credentials
@@ -120,7 +119,7 @@ val OrgsMigrations = listOf(
 
 ## 4. Repositories (Exposed)
 
-New code and every module moved off sqlx4k use **Exposed's typed DSL over the kernel's `JdbcDatabase`** (TeamCode's
+Every module uses **Exposed's typed DSL over the kernel's `JdbcDatabase`** (TeamCode's
 stack, [docs/decisions/0001](decisions/0001-jvm-and-teamcode-stack.md)). `modules/todos` is the reference: its
 `infrastructure/TodosTables.kt` and `TodosRepositoryImpl.kt` show every pattern below.
 
@@ -186,8 +185,8 @@ override suspend fun rename(orgId: Uuid, id: Uuid, name: String): Boolean = data
   the kernel's `write { … }`), so the test explains what the repository sends (`AdmissionReads.kt` in the gateway).
 - The kernel's `ExposedStatements.kt` and `ExposedExpressions.kt` hold what every module shares:
   `Read(query) { row -> … }` (a read and its mapping, the query alone for a plan), `write { … }` (and `written { … }`, its result),
-  `lockKeyUntilCommit(key)` (the sqlx4k repositories' `pg_advisory_xact_lock(hashtextextended(key, 0))`, kept so that both versions take turns during a
-  rollout; `advisoryLock(key)` is its read, for a plan), `countWhere`, `maxWhere`, `maxOrZero`, `asBigint`, `sumOrZero`,
+  `lockKeyUntilCommit(key)` (`pg_advisory_xact_lock(hashtextextended(key, 0))`, the former repositories' lock, kept so
+  that both versions took turns during their rollout; `advisoryLock(key)` is its read, for a plan), `countWhere`, `maxWhere`, `maxOrZero`, `asBigint`, `sumOrZero`,
   and the keyset conditions `rowLess(columns, bounds)` and `rowBefore(columns, subquery)`, and
   `ResultRow.present(column, with)` (a nullable column a row holds by construction). `databaseNowPlus(duration)` moves
   the database's clock to the microsecond. A module's migration that grants its tables to the tenant role starts with
@@ -196,10 +195,6 @@ override suspend fun rename(orgId: Uuid, id: Uuid, name: String): Boolean = data
 - JSON columns are `text` written and read by the module's own serializer (`TodoJson`); Exposed's `json` columns are
   not used yet.
 - The domain never sees Exposed types: rows become domain models in the repository (`ResultRow.toX()`).
-
-A module not yet moved keeps its sqlx4k repository (`driver.fetchAll(Statement.create(…).bind(…))`,
-`driver.withOrganization(orgId) { tx -> … }`, `Result.getOrThrow()`) until its own step: move a module whole, every
-repository of it in one PR, its tests on Flyway (section 7).
 
 ## 5. Routes and errors
 
@@ -304,7 +299,7 @@ Every request is already logged once by the kernel (method, route template — n
 | `OSTROM_DATABASE_URL` | required | `postgresql://[user[:password]@]host:5432/db`, no query string |
 | `OSTROM_DATABASE_USER` | the URL's | Database user; wins over the URL's |
 | `OSTROM_DATABASE_PASSWORD` | the URL's | Database password; wins over the URL's (required to use one with `%`, `@`, `:` or `/`) |
-| `OSTROM_DATABASE_MAX_CONNECTIONS` | `10` | 4 to 64: the database connections one replica opens at most, its pools together (see "Database connections" below). Read at start: the pool opens before any setting can be read from the database |
+| `OSTROM_DATABASE_MAX_CONNECTIONS` | `10` | 2 to 64: the size of the one database pool of a replica, its listening connections apart (see "Database connections" below). Read at start: the pool opens before any setting can be read from the database |
 | `OSTROM_SIGNING_KEY_FILE` | `data/instance-key.pem` | Ed25519 key (PKCS#8 PEM), created with mode 0600 at first start; keep it on a persistent volume |
 | `OSTROM_PREVIOUS_SIGNING_KEY_FILE` | — | For a key rotation only: the PEM file of the key the instance signed with before `OSTROM_SIGNING_KEY_FILE`, read (never created) at start to hand the new key over (`rotation` of `GET /receipts/keys`). A missing file stops the start. See [receipt-key-rotation.md](receipt-key-rotation.md) |
 | `OSTROM_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
@@ -482,11 +477,9 @@ registers the same key again at the next push, a 403 (the instance is blocked) a
 
 ### Database connections
 
-One replica opens at most `OSTROM_DATABASE_MAX_CONNECTIONS` connections (10 by default), plus one that listens
-(`DatabaseNotifications`). The bounds are TeamCode's (`TEAMCODE_DATABASE_POOL_SIZE`, 2 to 64), with a floor of 4 while
-two pools share the number: until the last module leaves sqlx4k (JVM step 4), the JDBC pool (HikariCP, Exposed, `/ready`)
-takes the larger half and sqlx4k's pool the smaller (5 and 5 by default, 6 and 5 for 11), each at least 2. Once sqlx4k
-is gone, the JDBC pool takes them all and the floor goes back to 2. The default stays 10, not TeamCode's 16: with the
+One replica opens at most `OSTROM_DATABASE_MAX_CONNECTIONS` connections (10 by default), its one pool (HikariCP,
+Exposed, `/ready`), plus one per listener of `DatabaseNotifications` (the usage feed's). The bounds are TeamCode's
+(`TEAMCODE_DATABASE_POOL_SIZE`, 2 to 64). The default stays 10, not TeamCode's 16: with the
 chart's `max_connections` 200 and 10 replicas at most, 16 would not fit the budget below. It is read from the
 environment, not the console, because the pool opens before any setting can be read from the database.
 
@@ -944,8 +937,6 @@ owner, so the serving role reads the history (the start-up check) and never rewr
   only what they have not seen is sent, as TeamCode's attach resumes after its last event; from another room, or past
   the scrollback (TeamCode's `gap`), the terminal is reset (ESC c) before the scrollback, drawn again, never doubled.
   Unset (one replica), every terminal is served where it is attached.
-- **SQLite** (tests and local mode) is not wired yet: sqlx4k has a SQLite driver with the same `Driver` interface;
-  repositories must stay portable SQL where they can.
 - **The instance signer is provisional** (`kernel/signing`): it moves to `ostrom-core` once published; the
   `InstanceSigner` interface and the key file format (PKCS#8 PEM, `kid` = 16 hex of SHA-256 of the SPKI DER, as the
   prototype) stay.

@@ -21,7 +21,6 @@ import kotlin.time.TimeSource
 /**
  * `/ready`'s database check on a real pool (CRL-11): while every connection is taken and callers keep waiting for
  * one, the replica stays ready for the check's patience, then is not; once the callers are served, it is again.
- * The replicas smoke cannot show it yet: its callers authenticate on sqlx4k first, and fail there.
  */
 class PoolHealthCheckPostgresTest {
     @Test

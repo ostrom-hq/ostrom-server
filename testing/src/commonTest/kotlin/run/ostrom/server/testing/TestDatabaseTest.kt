@@ -10,15 +10,14 @@ import run.ostrom.server.kernel.database.requireRowLevelSecurity
 import run.ostrom.server.kernel.logging.JsonLogger
 import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.kernel.module.ServerModule
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.ktor.client.request.get
 import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.test.runTest
+import org.jetbrains.exposed.v1.core.TextColumnType
+import org.jetbrains.exposed.v1.core.statements.StatementType
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import org.koin.core.module.Module
 import org.koin.dsl.module
@@ -52,10 +51,10 @@ class TestDatabaseTest {
     fun createsAnEmptyDatabaseAndDropsIt() = runTest {
         val database = TestDatabase.create() ?: return@runTest
         try {
-            val tables = database.driver.fetchAll(
-                "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'",
+            val tables = database.ownerJdbc.text(
+                "SELECT CAST(count(*) AS text) FROM information_schema.tables WHERE table_schema = 'public'",
             )
-            assertEquals(0, tables.getOrThrow().size, "A fresh database has no table")
+            assertEquals("0", tables, "A fresh database has no table")
         } finally {
             database.close()
         }
@@ -81,52 +80,36 @@ class TestDatabaseTest {
     private fun JdbcTransaction.currentUser(): String =
         exec("SELECT CAST(current_user AS text) AS value") { rs -> rs.next(); rs.getString("value") }.orEmpty()
 
-    private suspend fun Driver.text(sql: String, role: String? = null): String {
-        val statement = Statement.create(sql).let { if (role == null) it else it.bind("role", role) }
-        return fetchAll(statement).getOrThrow().single().get("value").asString()
+    private suspend fun JdbcDatabase.text(sql: String, role: String? = null): String = query {
+        val args = if (role == null) emptyList() else listOf(TextColumnType() to role)
+        exec(sql, args, StatementType.SELECT) { rows -> rows.next(); rows.getString(1) }.orEmpty()
     }
 
-    private val bypasses = "SELECT CAST(rolbypassrls AS text) AS value FROM pg_roles WHERE rolname = current_user"
-    private val roles = "SELECT CAST(count(*) AS text) AS value FROM pg_roles WHERE rolname = :role"
+    private val bypasses = "SELECT CAST(rolbypassrls AS text) FROM pg_roles WHERE rolname = current_user"
+    private val roles = "SELECT CAST(count(*) AS text) FROM pg_roles WHERE rolname = ?"
 
     @Test
     fun aRoleIsCreatedForTheBlockAndDroppedAfter() = runTest {
         val database = TestDatabase.create() ?: return@runTest
         try {
-            val plain = database.withRole { role, driver ->
-                assertEquals(role, driver.text("SELECT CAST(current_user AS text) AS value"))
-                assertEquals("false", driver.text(bypasses))
+            val plain = database.withRole { role, jdbc ->
+                assertEquals(role, jdbc.text("SELECT CAST(current_user AS text)"))
+                assertEquals("false", jdbc.text(bypasses))
                 role
             }
-            val bypassing = database.withRole(bypassRowLevelSecurity = true) { role, driver ->
-                assertEquals("true", driver.text(bypasses))
+            val bypassing = database.withRole(bypassRowLevelSecurity = true) { role, jdbc ->
+                assertEquals("true", jdbc.text(bypasses))
                 role
             }
-            assertEquals("0", database.driver.text(roles, plain), "The role is dropped")
-            assertEquals("0", database.driver.text(roles, bypassing), "The role is dropped")
-        } finally {
-            database.close()
-        }
-    }
-
-    @Test
-    fun aJdbcPoolConnectsAsAFreshRoleThatIsDroppedAfter() = runTest {
-        val database = TestDatabase.create() ?: return@runTest
-        try {
-            val (role, user) = database.withJdbcRole(poolSize = 2) { role, jdbc ->
-                role to jdbc.query {
-                    exec("SELECT CAST(current_user AS text)") { rows -> rows.next(); rows.getString(1) }
-                }
-            }
-            assertEquals(role, user, "The pool is connected as the role")
-            assertEquals("0", database.driver.text(roles, role), "The role is dropped")
+            assertEquals("0", database.superuserJdbc.text(roles, plain), "The role is dropped")
+            assertEquals("0", database.superuserJdbc.text(roles, bypassing), "The role is dropped")
         } finally {
             database.close()
         }
     }
 
     private fun member(role: String, privilege: String = "MEMBER") =
-        "SELECT CAST(pg_has_role(current_user, '$role', '$privilege') AS text) AS value"
+        "SELECT CAST(pg_has_role(current_user, '$role', '$privilege') AS text)"
 
     @Test
     fun theTestsRunAsTheRolesOfADeployment() = runTest {
@@ -134,30 +117,33 @@ class TestDatabaseTest {
         val owner = database.ownerRole
         val serving = database.servingRole
         try {
-            assertEquals(serving, database.driver.text("SELECT CAST(current_user AS text) AS value"))
-            assertEquals(owner, database.owner.text("SELECT CAST(current_user AS text) AS value"))
-            val databaseOwner = "SELECT CAST(pg_get_userbyid(datdba) AS text) AS value FROM pg_database " +
-                "WHERE datname = current_database()"
-            assertEquals(owner, database.driver.text(databaseOwner))
-            database.driver.requireRowLevelSecurity()
-            assertFailsWith<UnsafeDatabaseRoleException> { database.superuser.requireRowLevelSecurity() }
-            database.owner.execute("CREATE TABLE probe (id int)").getOrThrow()
-            assertFailsWith<UnsafeDatabaseRoleException> { database.owner.requireRowLevelSecurity() }
-            database.driver.requireRowLevelSecurity()
-            database.driver.execute("INSERT INTO probe VALUES (1)").getOrThrow()
-            assertEquals("true", database.driver.text(member("ostrom_tenant")))
-            assertEquals("false", database.driver.text(member("ostrom_router")), "Never granted to the serving role")
-            assertEquals("true", database.owner.text(member("ostrom_tenant", "MEMBER WITH ADMIN OPTION")))
-            assertEquals("true", database.owner.text(member("ostrom_router", "MEMBER WITH ADMIN OPTION")))
-            assertEquals("false", database.driver.text(member("ostrom_member_search")), "Never the serving role's")
-            assertEquals("true", database.owner.text(member("ostrom_member_search", "MEMBER WITH ADMIN OPTION")))
+            JdbcDatabase(database.servingConfig, JdbcDatabase.MIN_POOL_SIZE).use { pool ->
+                assertEquals(serving, pool.text("SELECT CAST(current_user AS text)"))
+                assertEquals(owner, database.ownerJdbc.text("SELECT CAST(current_user AS text)"))
+                val databaseOwner = "SELECT CAST(pg_get_userbyid(datdba) AS text) FROM pg_database " +
+                    "WHERE datname = current_database()"
+                assertEquals(owner, pool.text(databaseOwner))
+                pool.requireRowLevelSecurity()
+                assertFailsWith<UnsafeDatabaseRoleException> { database.superuserJdbc.requireRowLevelSecurity() }
+                database.ownerJdbc.query { exec("CREATE TABLE probe (id int)") }
+                assertFailsWith<UnsafeDatabaseRoleException> { database.ownerJdbc.requireRowLevelSecurity() }
+                pool.requireRowLevelSecurity()
+                pool.query { exec("INSERT INTO probe VALUES (1)") }
+                assertEquals("true", pool.text(member("ostrom_tenant")))
+                assertEquals("false", pool.text(member("ostrom_router")), "Never granted to the serving role")
+                val admin = database.ownerJdbc
+                assertEquals("true", admin.text(member("ostrom_tenant", "MEMBER WITH ADMIN OPTION")))
+                assertEquals("true", admin.text(member("ostrom_router", "MEMBER WITH ADMIN OPTION")))
+                assertEquals("false", pool.text(member("ostrom_member_search")), "Never the serving role's")
+                assertEquals("true", admin.text(member("ostrom_member_search", "MEMBER WITH ADMIN OPTION")))
+            }
         } finally {
             database.close()
         }
         val other = TestDatabase.create() ?: return@runTest
         try {
-            assertEquals("0", other.driver.text(roles, owner), "The owner role is dropped")
-            assertEquals("0", other.driver.text(roles, serving), "The serving role is dropped")
+            assertEquals("0", other.superuserJdbc.text(roles, owner), "The owner role is dropped")
+            assertEquals("0", other.superuserJdbc.text(roles, serving), "The serving role is dropped")
         } finally {
             other.close()
         }
@@ -174,7 +160,7 @@ class TestDatabaseTest {
                     error("test failure")
                 }
             }
-            assertEquals("0", database.driver.text(roles, created))
+            assertEquals("0", database.superuserJdbc.text(roles, created))
         } finally {
             database.close()
         }
@@ -182,7 +168,7 @@ class TestDatabaseTest {
 
     // The lock of TestDatabase.exclusively held in pg_locks, by any test process (a bigint key: classid 0, objsubid 1).
     private val exclusiveLocksHeld =
-        "SELECT CAST(count(*) AS text) AS value FROM pg_locks WHERE locktype = 'advisory' AND classid = 0 " +
+        "SELECT CAST(count(*) AS text) FROM pg_locks WHERE locktype = 'advisory' AND classid = 0 " +
             "AND objid = ${TestDatabase.EXCLUSIVE_LOCK} AND objsubid = 1 AND granted"
 
     @Test
@@ -196,8 +182,11 @@ class TestDatabaseTest {
                 first.withRole(poolSize = LARGE_POOL) { _, _ ->
                     // Taken again at once within, and by a child coroutine: a bench's large pool inside its timing.
                     coroutineScope {
-                        async { first.exclusively { holding.complete(first.superuser.text(exclusiveLocksHeld)) } }
-                            .await()
+                        async {
+                            first.exclusively {
+                                holding.complete(first.superuserTexts(exclusiveLocksHeld).single().orEmpty())
+                            }
+                        }.await()
                     }
                     release.await()
                 }
@@ -232,6 +221,16 @@ class TestDatabaseTest {
     }
 
     @Test
+    fun aPoolSmallerThanTheSmallestIsRefused() = runTest {
+        val database = TestDatabase.create() ?: return@runTest
+        try {
+            assertFailsWith<IllegalArgumentException> { database.withRole(poolSize = 1) { _, _ -> error("never") } }
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
     fun aDatabaseThatCannotBeCreatedReleasesItsConnection() = runTest {
         val url = environment["OSTROM_TEST_DATABASE_URL"] ?: return@runTest
         // A database name that PostgreSQL refuses to create: the creation fails, nothing is left open.
@@ -259,9 +258,8 @@ class TestDatabaseTest {
 
     @Test
     fun serverTestMigratesWithFlyway() = serverTest(listOf(Migrated)) { server ->
-        val history = server.database.owner.fetchAll("SELECT count(*) AS n FROM flyway_probe WHERE success")
-            .getOrThrow().single().get("n").asLong()
-        assertEquals(1L, history, "the probe's migration is in its Flyway history")
+        val history = server.database.ownerJdbc.text("SELECT CAST(count(*) AS text) FROM flyway_probe WHERE success")
+        assertEquals("1", history, "the probe's migration is in its Flyway history")
         assertEquals(HttpStatusCode.OK, server.client.get("/health").status)
     }
 
@@ -272,9 +270,8 @@ class TestDatabaseTest {
         val runner = server.database.migrationRunner(JsonLogger(LogLevel.WARN))
         runner.migrate(Migrated.name, Migrated.migrations)
         runner.migrate(Migrated.name, second)
-        val history = server.database.owner.fetchAll("SELECT count(*) AS n FROM flyway_probe WHERE success")
-            .getOrThrow().single().get("n").asLong()
-        assertEquals(2L, history, "both versions, applied one pass after the other")
+        val history = server.database.ownerJdbc.text("SELECT CAST(count(*) AS text) FROM flyway_probe WHERE success")
+        assertEquals("2", history, "both versions, applied one pass after the other")
     }
 
     /** A module with one migration. */

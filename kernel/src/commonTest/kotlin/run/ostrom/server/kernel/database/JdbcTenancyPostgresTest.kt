@@ -59,7 +59,7 @@ class JdbcTenancyPostgresTest {
                             "USING (org_id = CAST(nullif(current_setting('ostrom.org_id', true), '') AS uuid)) " +
                             "WITH CHECK (org_id = CAST(nullif(current_setting('ostrom.org_id', true), '') AS uuid))",
                         "GRANT SELECT, INSERT, UPDATE, DELETE ON notes TO $TENANT_ROLE",
-                    ).forEach { database.owner.execute(it).getOrThrow() }
+                    ).forEach { sql -> database.ownerJdbc.query { exec(sql) } }
                     val jdbc = JdbcDatabase(database.servingConfig, JdbcDatabase.MIN_POOL_SIZE)
                     try {
                         block(jdbc)

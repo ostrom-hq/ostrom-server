@@ -2,7 +2,6 @@
 package run.ostrom.server.kernel.database
 
 import run.ostrom.server.testing.TestDatabase
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -21,8 +20,8 @@ import kotlin.test.assertNull
 import kotlin.uuid.Uuid
 
 /**
- * [withOrganization] (an organization's rows as the serving role) and [lockUntilCommit] (the advisory lock a sqlx4k
- * transaction takes with the same SQL), on a serving role like a deployment's.
+ * [withOrganization] (an organization's rows as the serving role) and [lockUntilCommit] (an advisory lock held until
+ * the transaction ends), on a serving role like a deployment's.
  */
 class JdbcOrganizationPostgresTest {
     private val alpha = Uuid.random()
@@ -49,7 +48,7 @@ class JdbcOrganizationPostgresTest {
                             "WITH CHECK (org_id = CAST(nullif(current_setting('ostrom.org_id', true), '') AS uuid))",
                         "GRANT SELECT ON notes TO $TENANT_ROLE",
                         "GRANT SELECT, INSERT ON notes TO ${database.servingRole}",
-                    ).forEach { database.owner.execute(it).getOrThrow() }
+                    ).forEach { sql -> database.ownerJdbc.query { exec(sql) } }
                     val jdbc = JdbcDatabase(database.servingConfig, JdbcDatabase.MIN_POOL_SIZE)
                     try {
                         database.block(jdbc)
@@ -97,26 +96,6 @@ class JdbcOrganizationPostgresTest {
             assertEquals(false, jdbc.query { tryLock("chain") }, "taken by the other transaction")
             assertEquals(true, jdbc.query { tryLock("another chain") }, "another key is free")
             tried.countDown()
-            holder.await()
-        }
-        assertEquals(true, jdbc.query { tryLock("chain") }, "released at the commit")
-    }
-
-    @Test
-    fun aSqlx4kTransactionTakesTheSameLock() = asServingRole { jdbc ->
-        val held = CompletableDeferred<Unit>()
-        val tried = CompletableDeferred<Unit>()
-        coroutineScope {
-            val holder = async {
-                driver.transaction {
-                    lockUntilCommit("chain")
-                    held.complete(Unit)
-                    tried.await()
-                }
-            }
-            held.await()
-            assertEquals(false, jdbc.query { tryLock("chain") }, "taken by the sqlx4k transaction")
-            tried.complete(Unit)
             holder.await()
         }
         assertEquals(true, jdbc.query { tryLock("chain") }, "released at the commit")

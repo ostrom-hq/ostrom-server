@@ -58,7 +58,7 @@ class OrgsServingRolePostgresTest {
         serverTest(listOf(IdentityModule, OrgsModule)) { server ->
             val ada = server.user("ada")
             val bob = server.user("bob")
-            server.database.withJdbcRole(JdbcDatabase.MIN_POOL_SIZE) { role, serving ->
+            server.database.withRole(poolSize = JdbcDatabase.MIN_POOL_SIZE) { role, serving ->
                 // What ci/database-roles.sql and the Helm chart grant `ostrom_app`.
                 server.database.superuserOutsideTransaction(
                     "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO $role",
@@ -105,7 +105,7 @@ class OrgsServingRolePostgresTest {
     fun theServingRoleChangesSettingsAndFinishesADeletionAcrossOrganizations() =
         serverTest(listOf(IdentityModule, OrgsModule)) { server ->
             val ada = server.user("ada")
-            server.database.withJdbcRole(JdbcDatabase.MIN_POOL_SIZE) { role, serving ->
+            server.database.withRole(poolSize = JdbcDatabase.MIN_POOL_SIZE) { role, serving ->
                 server.database.superuserOutsideTransaction(
                     "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO $role",
                     "GRANT ostrom_tenant TO $role",
