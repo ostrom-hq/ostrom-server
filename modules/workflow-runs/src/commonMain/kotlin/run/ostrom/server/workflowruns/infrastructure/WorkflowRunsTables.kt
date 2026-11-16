@@ -98,3 +98,15 @@ internal object WorkflowRunsNotifications : RunRows("workflow_runs_notifications
     val status = text("status")
     val actionKey = text("action_key")
 }
+
+/**
+ * The launches module's launches, read only (as the reports module reads the tables it reports on): the cloud session
+ * a launch ran in, so that a segment of the sessions module finds its run through its launch in the same query.
+ */
+internal object RunLaunchesTable : Table("launches_launches") {
+    val orgId = uuid("org_id")
+    val id = text("id")
+    val cloudSessionId = uuid("cloud_session_id").nullable()
+
+    override val primaryKey = PrimaryKey(orgId, id)
+}

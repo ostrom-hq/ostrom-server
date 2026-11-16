@@ -446,7 +446,8 @@ data class SessionLimitsDto(
  * is terminated with its workspace, and `terminatedReason`, on a terminated one, why it ended (`deleted`,
  * `expired`). `createdBy` says who created it (`runners.cloud.onbehalf.v1`), absent for an older session. `launchId`
  * names the `ostrom <agent>` launch a local session is attached to (`runners.cloud.local.v1`). `automationId` names
- * the automation whose run started it (TeamCode's).
+ * the automation whose run started it (TeamCode's). `runId` names the workflow run whose agent node started it
+ * (Ostrom's own, TeamCode has none), absent for any other session.
  */
 @Serializable
 data class CloudSessionResponse(
@@ -487,6 +488,7 @@ data class CloudSessionResponse(
     val createdBy: CloudAttributionDto? = null,
     val launchId: String? = null,
     val automationId: String? = null,
+    val runId: String? = null,
 )
 
 /**

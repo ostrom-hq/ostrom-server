@@ -97,6 +97,8 @@ class SessionsApi(
  * @property activity `working` or `waiting_for_human`, only while the segment is open.
  * @property activitySince When [activity] began.
  * @property labels The labels of its launch, absent when it has none.
+ * @property runId The workflow run it works for (Ostrom's own, TeamCode has none): the run whose agent node started
+ *   the cloud session its launch runs in. Absent when no run started it, and on the answers of the writes.
  */
 @Serializable
 data class SessionDto(
@@ -130,6 +132,7 @@ data class SessionDto(
     val activity: String? = null,
     val activitySince: String? = null,
     val labels: Map<String, String>? = null,
+    val runId: String? = null,
 )
 
 /**

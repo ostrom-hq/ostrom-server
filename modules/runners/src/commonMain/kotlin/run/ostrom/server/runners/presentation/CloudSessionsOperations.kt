@@ -43,7 +43,8 @@ private fun ApiCatalog.cloudSessionListing() {
             "another member's id, a login or `all` is 403 `forbidden`, administrators included. `status` " +
             "(repeatable, TeamCode's `state`) lists only sessions in these statuses: `creating`, `running`, " +
             "`pausing`, `paused`, `resuming`, `transferring`, `terminated` or `failed` (400 `invalid_state` " +
-            "otherwise); every status without it. A session an automation started names it in `automationId`. " +
+            "otherwise); every status without it. A session an automation started names it in `automationId`, a " +
+            "session a workflow run's agent node started names that run in `runId` (Ostrom's own). " +
             ORG_RESOLUTION
         parameters {
             organizationHeader()
@@ -131,7 +132,8 @@ private fun ApiCatalog.cloudSessionReading() {
         operationId = "getCloudSession"
         tag(TAG)
         summary = "A cloud session."
-        description = "The session as it is now. $ORG_RESOLUTION"
+        description = "The session as it is now; `runId` names the workflow run whose agent node started it " +
+            "(Ostrom's own), absent otherwise. $ORG_RESOLUTION"
         parameters {
             organizationHeader()
             pathId("id", SESSION_ID)

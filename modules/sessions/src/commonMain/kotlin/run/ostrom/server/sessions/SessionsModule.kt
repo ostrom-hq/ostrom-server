@@ -16,10 +16,12 @@ import run.ostrom.server.kernel.sessions.AgentSessions
 import run.ostrom.server.kernel.sessions.CloudAgentSessions
 import run.ostrom.server.kernel.sessions.LaunchLabels
 import run.ostrom.server.kernel.sessions.SessionEndListener
+import run.ostrom.server.kernel.workflows.SessionRunIds
 import run.ostrom.server.receipts.domain.services.ReceiptOwners
 import run.ostrom.server.sessions.domain.repositories.SessionsRepository
 import run.ostrom.server.sessions.domain.services.NoSessionCosts
 import run.ostrom.server.sessions.domain.services.SessionCosts
+import run.ostrom.server.sessions.domain.services.SessionRunLinks
 import run.ostrom.server.sessions.domain.usecases.CloseSessionUseCase
 import run.ostrom.server.sessions.domain.usecases.CloseSessionUseCaseImpl
 import run.ostrom.server.sessions.domain.usecases.EndSessionUseCase
@@ -88,7 +90,8 @@ object SessionsModule : ServerModule {
         single<ListSessionsUseCase> { ListSessionsUseCaseImpl(get()) }
         single<SweepStaleSessionsUseCase> { SweepStaleSessionsUseCaseImpl(get(), get(), get(), get()) }
         single(named(ACTIVE_SESSIONS)) { CachedCount(ActiveSessionsCount(get(), get())::read) }
-        single { SessionsRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        single { SessionRunLinks(getOrNull<SessionRunIds>()) }
+        single { SessionsRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     }
 
     override val migrations: List<SchemaMigration> = SessionsMigrations

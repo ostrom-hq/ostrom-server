@@ -2,6 +2,7 @@
 package run.ostrom.server.sessions.presentation
 
 import run.ostrom.server.gates.domain.services.GateActorResolver
+import run.ostrom.server.sessions.domain.services.SessionRunLinks
 import run.ostrom.server.sessions.domain.usecases.EndSessionUseCase
 import run.ostrom.server.sessions.domain.usecases.GetSessionUseCase
 import run.ostrom.server.sessions.domain.usecases.ListSessionsUseCase
@@ -23,6 +24,7 @@ import run.ostrom.server.sessions.domain.usecases.StartSessionUseCase
  * @property get Reads one.
  * @property list Lists them.
  * @property activity Records whether the agent works or waits for a person.
+ * @property runs The workflow run of each segment a run started.
  */
 data class SessionsRoutesDependencies(
     val actors: GateActorResolver,
@@ -34,4 +36,5 @@ data class SessionsRoutesDependencies(
     val get: GetSessionUseCase,
     val list: ListSessionsUseCase,
     val activity: ReportSessionActivityUseCase,
+    val runs: SessionRunLinks,
 )

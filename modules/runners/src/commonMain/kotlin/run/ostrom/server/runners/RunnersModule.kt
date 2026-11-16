@@ -212,6 +212,7 @@ import run.ostrom.server.kernel.sessions.CloudAgentSessions
 import run.ostrom.server.kernel.sessions.CloudSessionWakes
 import run.ostrom.server.kernel.sessions.PendingWaitAnswers
 import run.ostrom.server.kernel.sessions.SessionEndListener
+import run.ostrom.server.kernel.workflows.SessionRunIds
 import run.ostrom.server.runners.infrastructure.RunnersCloudAgentSessions
 import run.ostrom.server.runners.infrastructure.RunnersSessionNames
 import run.ostrom.server.runners.infrastructure.RunnersCloudSessionWakes
@@ -342,7 +343,7 @@ object RunnersModule : ServerModule {
         single<HostRemoteSessionUseCase> { HostRemoteSessionUseCaseImpl(get(), getOrNull<SignedInDevices>(), get()) }
         // Local sessions: of a launch the launches module keeps (runners.cloud.local.v1).
         single<CreateLocalSessionUseCase> { CreateLocalSessionUseCaseImpl(get(), getOrNull<LocalLaunches>(), get()) }
-        single { RemoteHostViews(getOrNull<SignedInDevices>(), get()) }
+        single { RemoteHostViews(getOrNull<SignedInDevices>(), getOrNull<SessionRunIds>(), get()) }
         // A removed device ends the remote sessions it hosted (the identity module calls it).
         single<DeviceRemovalListener> { EndRemovedDeviceSessions(get(), get(), get<Logger>()) }
         single<RecordCloudSessionActivityUseCase> { RecordCloudSessionActivityUseCaseImpl(get(), get()) }

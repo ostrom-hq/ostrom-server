@@ -7,6 +7,7 @@ import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.sessions.CloudProfileDirectory
+import run.ostrom.server.kernel.workflows.SessionRunIds
 import run.ostrom.server.todos.domain.TodosRepository
 import run.ostrom.server.workflowruns.domain.engine.NodePlayers
 import run.ostrom.server.workflowruns.domain.engine.PlayRunUseCase
@@ -71,6 +72,7 @@ import run.ostrom.server.workflowruns.infrastructure.GatesRunGates
 import run.ostrom.server.workflowruns.infrastructure.LaunchesRunLaunches
 import run.ostrom.server.workflowruns.infrastructure.LogChannels
 import run.ostrom.server.workflowruns.infrastructure.PostgresRunEngineRepository
+import run.ostrom.server.workflowruns.infrastructure.PostgresSessionRunIds
 import run.ostrom.server.workflowruns.infrastructure.PostgresStartedRunsRepository
 import run.ostrom.server.workflowruns.infrastructure.PostgresWorkflowRunsRepository
 import run.ostrom.server.workflowruns.infrastructure.RunEngineWorker
@@ -96,7 +98,8 @@ import org.koin.dsl.module
  * cancels the runs of the workflows, read from the compiler module, and plays them: an engine on every replica leases
  * each run due to one replica, starts an agent node's cloud session through the runners module, opens a gate node's
  * gate through the gates module, asks a wait node's question through the automations module's waits, starts a
- * workflow node's child run, and writes each step with its audit line (the identity module's log).
+ * workflow node's child run, and writes each step with its audit line (the identity module's log). It binds
+ * [SessionRunIds], so that a cloud session and a segment its launch opened name the run that started them.
  */
 object WorkflowRunsModule : ServerModule {
     override val name: String = "workflow-runs"
@@ -121,6 +124,7 @@ object WorkflowRunsModule : ServerModule {
         single<StartedRunsRepository> { get<PostgresStartedRunsRepository>() }
         single<KeyedRunsRepository> { get<PostgresStartedRunsRepository>() }
         single<RunEngineRepository> { PostgresRunEngineRepository(get(), get()) }
+        single<SessionRunIds> { PostgresSessionRunIds(get()) }
         single<RunAgents> { CloudRunAgents(get(), get(), get(), get()) }
         single<RunGates> { GatesRunGates(get(), get()) }
         single<RunWaits> { AutomationsRunWaits(get(), get(), get(), get()) }

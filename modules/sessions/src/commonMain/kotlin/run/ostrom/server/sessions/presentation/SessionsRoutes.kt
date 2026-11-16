@@ -52,10 +52,14 @@ fun Route.sessionsRoutes(dependencies: SessionsRoutesDependencies, throttle: Rea
                 val query = SessionQuery(params.repo, params.dev, params.open, params.before, null, limit, labels)
                 val items = list(actor, query)
                 val next = if (items.size == query.limit) items.last().id else null
-                call.respond(SessionsPage(items.map { it.toDto() }, next))
+                val runIds = runs.of(actor.orgId, items)
+                call.respond(SessionsPage(items.map { it.toDto(runId = runIds[it.id]) }, next))
             }
             get<SessionsApi.Id> { params ->
-                call.respond(get(call.actor(actors, SessionScopes.reading), params.id).toResponse())
+                val actor = call.actor(actors, SessionScopes.reading)
+                val view = get(actor, params.id)
+                val runId = runs.of(actor.orgId, listOf(view.session))[view.session.id]
+                call.respond(view.toResponse(runId = runId))
             }
         }
         post<SessionsApi.Id.Alive> { params ->
@@ -113,8 +117,8 @@ object SessionScopes {
 private fun StartSessionRequest.toStart() =
     StartSession(id, launchId, repo, realRepo, cwd, agent, harnessVersion, packageDigest, model)
 
-private fun SessionView.toResponse(reopened: Boolean? = null) =
-    SessionResponse(session.toDto(gates, answers?.map { it.toDto() }), receipt, reopened)
+private fun SessionView.toResponse(reopened: Boolean? = null, runId: String? = null) =
+    SessionResponse(session.toDto(gates, answers?.map { it.toDto() }, runId), receipt, reopened)
 
 private fun GateAnswer.toDto() =
     SessionGateAnswerDto(gateId, actionClass, if (approved) "approved" else "refused", by, at.toString(), receiptId)
@@ -124,9 +128,14 @@ private fun GateAnswer.toDto() =
  *
  * @param gates Its gates, on single reads.
  * @param gateAnswers The answers to its gates, on single reads.
+ * @param runId The workflow run it works for, on reads.
  * @return The DTO.
  */
-internal fun Session.toDto(gates: List<String>? = null, gateAnswers: List<SessionGateAnswerDto>? = null) = SessionDto(
+internal fun Session.toDto(
+    gates: List<String>? = null,
+    gateAnswers: List<SessionGateAnswerDto>? = null,
+    runId: String? = null,
+) = SessionDto(
     id = id,
     agentSessionId = rootId.takeIf { segment > 1 },
     segment = segment.takeIf { it > 1 },
@@ -157,6 +166,7 @@ internal fun Session.toDto(gates: List<String>? = null, gateAnswers: List<Sessio
     activity = activity?.wire.takeIf { endedAt == null },
     activitySince = activityAt?.toString().takeIf { endedAt == null },
     labels = labels.takeIf { it.isNotEmpty() },
+    runId = runId,
 )
 
 private fun ActivityChange.toDto() = SessionActivityDto(id, state?.wire, since?.toString(), superseded)
