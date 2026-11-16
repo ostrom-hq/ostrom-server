@@ -162,9 +162,9 @@ class MemoryProposalsPostgresTest {
         val editedWait = waitOf.getValue(edited.id)
         waits.states[editedWait] = ProposalWait(editedWait, open = false, "accept", mapOf("title" to "Fixed"), ADA)
         waits.states[waitOf.getValue(eves.id)] = ProposalWait(waitOf.getValue(eves.id), open = false, "reject")
-        val superuser = server.database.superuser
-        superuser.execute("UPDATE memory_entries SET updated_at = now() - INTERVAL '15 days' WHERE id = '${stale.id}'")
-            .getOrThrow()
+        server.database.superuserOutsideTransaction(
+            "UPDATE memory_entries SET updated_at = now() - INTERVAL '15 days' WHERE id = '${stale.id}'",
+        )
         assertEquals(setOf(ORG_A, ORG_B), store.organizations(null, 10).toSet())
         val oldest = store.pending(ORG_A, null, 1).single().entry
         assertEquals(stale.id, oldest.id, "oldest first")
@@ -181,15 +181,17 @@ class MemoryProposalsPostgresTest {
         assertEquals(listOf("Fixed"), server.koin.get<MemoryRepository>().index(ada, null, emptyList(), null, 50)
             .entries.map { it.title })
         assertEquals(listOf(ADA to waitOf.getValue(stale.id)), waits.cancelled)
-        val statuses = superuser.fetchAll("SELECT title, status FROM memory_entries ORDER BY title").getOrThrow()
-            .map { it.get("title").asString() to it.get("status").asString() }
+        val statuses = server.database.superuserTexts(
+            "SELECT title || '|' || status FROM memory_entries ORDER BY title",
+        ).map { checkNotNull(it).substringBefore('|') to it.substringAfter('|') }
         assertEquals(listOf("Eve's" to "rejected", "Fixed" to "active", "Stale" to "rejected"), statuses)
 
         // The rejected are kept 30 days for the audit, then deleted; an organization with none left is not visited.
-        superuser.execute("UPDATE memory_entries SET updated_at = now() - INTERVAL '31 days' WHERE status = 'rejected'")
-            .getOrThrow()
+        server.database.superuserOutsideTransaction(
+            "UPDATE memory_entries SET updated_at = now() - INTERVAL '31 days' WHERE status = 'rejected'",
+        )
         assertEquals(0, proposals.settle())
-        assertEquals(1L, superuser.fetchAll("SELECT id FROM memory_entries").getOrThrow().toList().size.toLong())
+        assertEquals(1L, server.database.superuserTexts("SELECT id FROM memory_entries").size.toLong())
         assertTrue(store.organizations(null, 10).isEmpty())
         val job = Job()
         MemoryModule.start(CoroutineScope(job), server.koin)

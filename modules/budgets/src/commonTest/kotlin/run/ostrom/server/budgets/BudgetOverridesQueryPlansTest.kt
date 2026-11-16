@@ -31,14 +31,13 @@ class BudgetOverridesQueryPlansTest {
 
     @Test
     fun theOverrideReadsUseTheirIndexes() = serverTest(modules, overrides) { server ->
-        val fixtures = server.database.superuser
-        fixtures.execute(
+        server.database.superuserOutsideTransaction(
             "INSERT INTO budgets_overrides (id, org_id, member_id, micros, created_by, reason, created_at, " +
                 "expires_at, revoked_at) SELECT gen_random_uuid(), CAST(md5('o' || (i % 2000)) AS uuid), " +
                 "CAST(md5('m' || (i % 4000)) AS uuid), i, gen_random_uuid(), 'r', now(), now() + interval '1 hour', " +
                 "CASE WHEN i % 3 = 0 THEN now() END FROM generate_series(0, 19999) AS i",
-        ).getOrThrow()
-        fixtures.execute("VACUUM ANALYZE budgets_overrides").getOrThrow()
+            "VACUUM ANALYZE budgets_overrides",
+        )
         val org = TestCallers.orgA
         val member = TestCallers.memberA.memberId
         val database = server.koin.get<JdbcDatabase>()
@@ -57,12 +56,11 @@ class BudgetOverridesQueryPlansTest {
 
     @Test
     fun theAutomaticDailyBudgetIsReadByItsPrimaryKey() = serverTest(modules, overrides) { server ->
-        val fixtures = server.database.superuser
-        fixtures.execute(
+        server.database.superuserOutsideTransaction(
             "INSERT INTO budgets_automatic_daily (org_id, micros, computed_at) " +
                 "SELECT CAST(md5('o' || i) AS uuid), i, now() FROM generate_series(0, 19999) AS i",
-        ).getOrThrow()
-        fixtures.execute("VACUUM ANALYZE budgets_automatic_daily").getOrThrow()
+            "VACUUM ANALYZE budgets_automatic_daily",
+        )
         val org = TestCallers.orgA
         val plan = server.koin.get<JdbcDatabase>().inOrg(org) {
             explain(analyze = true, options = "BUFFERS") { automaticRead(org).query }

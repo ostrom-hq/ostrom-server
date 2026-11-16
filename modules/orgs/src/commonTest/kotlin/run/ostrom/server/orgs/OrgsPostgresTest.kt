@@ -103,14 +103,17 @@ class OrgsPostgresTest {
         )
 
     private suspend fun TestServer.nameAndZone(id: Uuid): Pair<String, String> =
-        database.superuser.fetchAll(
-            "SELECT name, time_zone FROM orgs_organizations WHERE id = '$id'",
-        ).getOrThrow().single().let { it.get("name").asString() to it.get("time_zone").asString() }
+        database.superuserJdbc.query {
+            val o = OrgOrganizations
+            o.select(o.name, o.timeZone).where { o.id eq id }.single().let { it[o.name] to it[o.timeZone] }
+        }
 
     private suspend fun TestServer.auditLines(orgId: Uuid, action: String): Long =
-        database.superuser.fetchAll(
-            "SELECT count(*) AS n FROM identity_audit_events WHERE org_id = '$orgId' AND action = '$action'",
-        ).getOrThrow().single().get("n").asString().toLong()
+        checkNotNull(
+            database.superuserTexts(
+                "SELECT count(*) FROM identity_audit_events WHERE org_id = '$orgId' AND action = '$action'",
+            ).single(),
+        ).toLong()
 
     private suspend fun TestServer.purgeAfter(id: Uuid): Instant = koin.get<JdbcDatabase>().inOrg(id) {
         val o = OrgOrganizations

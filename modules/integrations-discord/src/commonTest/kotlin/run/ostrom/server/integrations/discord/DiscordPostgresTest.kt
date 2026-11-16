@@ -190,11 +190,11 @@ class DiscordPostgresTest {
         val orgs = koin.get<OrgsRepository>()
         val made = org ?: Org(member.orgId, slug, slug, null, null, now).also { orgs.create(it, member) { false } }
         if (org != null) {
-            database.superuser.execute(
+            database.superuserOutsideTransaction(
                 "INSERT INTO orgs_members (id, org_id, user_id, role, joined_at) VALUES " +
                     "(CAST('${member.id}' AS uuid), CAST('${org.id}' AS uuid), CAST('${user.id}' AS uuid), " +
                     "'member', now())",
-            ).getOrThrow()
+            )
         }
         return made to member.id
     }
@@ -488,24 +488,19 @@ class DiscordPostgresTest {
     @Test
     fun theReadsOfTheLinksAttemptsAndMessagesLookUpTheirIndexes() = serverTest(modules, overrides) { server ->
         // Fixtures only: other organizations' links, attempts and messages, and the statistics.
-        val fixtures = server.database.superuser
-        fixtures.execute(
+        server.database.superuserOutsideTransaction(
             "INSERT INTO discord_links (org_id, member_id, discord_user_id, discord_username, linked_at) " +
                 "SELECT gen_random_uuid(), gen_random_uuid(), n::text, 'u', now() FROM generate_series(1, 5000) n",
-        ).getOrThrow()
-        fixtures.execute(
             "INSERT INTO discord_link_attempts (org_id, state_hash, member_id, binding, expires_at) " +
                 "SELECT gen_random_uuid(), md5(n::text), gen_random_uuid(), 'b', now() " +
                 "FROM generate_series(1, 5000) n",
-        ).getOrThrow()
-        fixtures.execute(
             "INSERT INTO discord_approval_messages (org_id, approval_id, gate_id, channel_id, message_id) " +
                 "SELECT gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), 'C', n::text " +
                 "FROM generate_series(1, 5000) n",
-        ).getOrThrow()
-        listOf("discord_links", "discord_link_attempts", "discord_approval_messages").forEach {
-            fixtures.execute("VACUUM ANALYZE $it").getOrThrow()
-        }
+            "VACUUM ANALYZE discord_links",
+            "VACUUM ANALYZE discord_link_attempts",
+            "VACUUM ANALYZE discord_approval_messages",
+        )
         val database = server.koin.get<JdbcDatabase>()
         val org = Uuid.random()
         val reads = listOf(

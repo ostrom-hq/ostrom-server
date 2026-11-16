@@ -206,7 +206,7 @@ class AutomationsPostgresTest {
         assertEquals(listOf("sess-2"), repository.startedSessions(ORG_A, owner, t0 - 1.minutes, 1))
         assertEquals(listOf("sess-3"), repository.startedSessions(ORG_A, BOB.toString(), t0, 10))
         assertEquals(emptyList(), repository.startedSessions(ORG_B, owner, t0 - 1.minutes, 10))
-        it.database.owner.execute("ANALYZE automations_runs").getOrThrow() // the serving role owns no table
+        it.database.superuserOutsideTransaction("ANALYZE automations_runs") // the serving role owns no table
         val plan = it.koin.get<JdbcDatabase>().inOrg(ORG_A) {
             exec("SET LOCAL enable_seqscan = off")
             plan { startedSessionsQuery(ORG_A, owner, t0, 100) }
@@ -342,8 +342,7 @@ class AutomationsPostgresTest {
             assertTrue(repository.endRun(run.run.copy(status = RunStatus.SUCCEEDED), RunStatus.STARTED))
         }
         assertEquals(emptyList(), repository.followed(t0 + 14.minutes, 10), "Nothing is followed once all ended")
-        it.database.owner.execute("ANALYZE automations_automations").getOrThrow()
-        it.database.owner.execute("ANALYZE automations_runs").getOrThrow()
+        it.database.superuserOutsideTransaction("ANALYZE automations_automations", "ANALYZE automations_runs")
         val jdbc = it.koin.get<JdbcDatabase>()
         suspend fun planOf(query: () -> Query) = jdbc.inOrg(ORG_A) {
             exec("SET LOCAL enable_seqscan = off")

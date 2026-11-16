@@ -53,8 +53,7 @@ class BudgetsQueryPlansTest {
 
     @Test
     fun theLimitsReadsUseTheirIndexes() = serverTest(modules, overrides) { server ->
-        val fixtures = server.database.superuser
-        fixtures.execute(seed(20_000)).getOrThrow()
+        server.database.superuserOutsideTransaction(seed(20_000))
         val repository = server.koin.get<BudgetsRepository>()
         val member = TestCallers.memberA.memberId
         val now = TestCallers.epoch
@@ -64,7 +63,7 @@ class BudgetsQueryPlansTest {
             val limits = listOf(BudgetLimit(3_000), BudgetLimit(300, BudgetWindow.DAY))
             repository.replaceLimits(TestCallers.orgA, BudgetTarget.Workflow("w$n"), limits, now)
         }
-        fixtures.execute("VACUUM ANALYZE budgets_limits").getOrThrow()
+        server.database.superuserOutsideTransaction("VACUUM ANALYZE budgets_limits")
         val database = server.koin.get<JdbcDatabase>()
         val org = TestCallers.orgA
         val plans = linkedMapOf(

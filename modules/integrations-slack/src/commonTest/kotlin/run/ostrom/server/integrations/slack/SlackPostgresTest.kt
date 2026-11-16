@@ -162,11 +162,11 @@ class SlackPostgresTest {
         val orgs = koin.get<OrgsRepository>()
         val made = org ?: Org(member.orgId, slug, slug, null, null, now).also { orgs.create(it, member) { false } }
         if (org != null) {
-            database.superuser.execute(
+            database.superuserOutsideTransaction(
                 "INSERT INTO orgs_members (id, org_id, user_id, role, joined_at) VALUES " +
                     "(CAST('${member.id}' AS uuid), CAST('${org.id}' AS uuid), CAST('${user.id}' AS uuid), " +
                     "'member', now())",
-            ).getOrThrow()
+            )
         }
         return made to member.id
     }
@@ -371,19 +371,15 @@ class SlackPostgresTest {
     @Test
     fun theReadsOfAMessageFromSlackLookUpTheirIndexes() = serverTest(modules, overrides) { server ->
         // Fixtures only: other organizations' links and messages, and the statistics.
-        val fixtures = server.database.superuser
-        fixtures.execute(
+        server.database.superuserOutsideTransaction(
             "INSERT INTO slack_links (org_id, member_id, slack_user_id, linked_at) " +
                 "SELECT gen_random_uuid(), gen_random_uuid(), 'U' || n, now() FROM generate_series(1, 5000) n",
-        ).getOrThrow()
-        fixtures.execute(
             "INSERT INTO slack_approval_messages (org_id, approval_id, gate_id, slack_channel, ts) " +
                 "SELECT gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), 'C', n::text " +
                 "FROM generate_series(1, 5000) n",
-        ).getOrThrow()
-        listOf("slack_links", "slack_approval_messages").forEach {
-            fixtures.execute("VACUUM ANALYZE $it").getOrThrow()
-        }
+            "VACUUM ANALYZE slack_links",
+            "VACUUM ANALYZE slack_approval_messages",
+        )
         val database = server.koin.get<JdbcDatabase>()
         val org = Uuid.random()
         val reads = listOf(

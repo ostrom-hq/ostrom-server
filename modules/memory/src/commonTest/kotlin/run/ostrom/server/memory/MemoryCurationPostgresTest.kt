@@ -109,11 +109,11 @@ class MemoryCurationPostgresTest {
         suspend fun changed() = sql("DELETE FROM memory_curation_state")
 
         suspend fun sql(statement: String) {
-            server.database.superuser.execute(statement).getOrThrow()
+            server.database.superuserOutsideTransaction(statement)
         }
 
         suspend fun count(where: String): Int =
-            server.database.superuser.fetchAll("SELECT id FROM memory_entries WHERE $where").getOrThrow().toList().size
+            server.database.superuserTexts("SELECT id FROM memory_entries WHERE $where").size
 
         suspend fun index(token: String): List<String> =
             client.get("$MEMORY/index") { bearerAuth(token) }.body<MemoryIndexPage>().entries.map { it.id }
@@ -300,10 +300,7 @@ class MemoryCurationPostgresTest {
         answer("ada", reviews("ada").single().id, "dismiss")
         sql("UPDATE memory_reviews SET resolved_at = now() - INTERVAL '31 days'")
         curation.run("run-3")
-        assertEquals(
-            0,
-            server.database.superuser.fetchAll("SELECT id FROM memory_reviews").getOrThrow().toList().size,
-        )
+        assertEquals(0, server.database.superuserTexts("SELECT id FROM memory_reviews").size)
 
         // Turned off again: nothing more is read; the organization's deletion takes its setting with it.
         enable("root", false)
@@ -311,9 +308,9 @@ class MemoryCurationPostgresTest {
         note("Late", "Same.")
         assertEquals(0, curation.run("run-4").scopes)
         server.koin.get<OrgDeletionListener>(named("memory")).purge(ORG_A)
-        val left = server.database.superuser.fetchAll(
+        val left = server.database.superuserTexts(
             "SELECT org_id FROM memory_settings UNION ALL SELECT org_id FROM memory_curation_state",
-        ).getOrThrow().toList()
+        )
         assertTrue(left.isEmpty())
     }
 

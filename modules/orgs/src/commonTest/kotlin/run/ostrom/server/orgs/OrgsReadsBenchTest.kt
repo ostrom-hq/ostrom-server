@@ -44,14 +44,12 @@ class OrgsReadsBenchTest {
         val user = koin.get<ResolveUserUseCase>()(
             VerifiedIdentity(IdentityProvider.GITHUB, login, "$login@example.com", true, login, login = login),
         )
-        database.superuser.execute(
+        database.superuserOutsideTransaction(
             "INSERT INTO orgs_organizations (id, slug, name, created_at) VALUES " +
                 "(CAST(md5('org$index') AS uuid), 'org$index', 'Org $index', now())",
-        ).getOrThrow()
-        database.superuser.execute(
             "INSERT INTO orgs_members (id, org_id, user_id, role, joined_at) VALUES (gen_random_uuid(), " +
                 "CAST(md5('org$index') AS uuid), CAST('${user.id}' AS uuid), 'owner', now())",
-        ).getOrThrow()
+        )
         return koin.get<StartWebSessionUseCase>()(user.id)
     }
 
@@ -73,10 +71,11 @@ class OrgsReadsBenchTest {
     @Test
     fun theMemberListKeepsItsBudget() = benchTest(listOf(IdentityModule, OrgsModule), null) { server ->
         val sessions = (0 until ORGS).map { server.owner(it) }
-        val fixtures = server.database.superuser
-        (0 until ORGS).flatMap { membersOf(it) }.forEach { fixtures.execute(it).getOrThrow() }
-        fixtures.execute("VACUUM ANALYZE identity_users").getOrThrow()
-        fixtures.execute("VACUUM ANALYZE orgs_members").getOrThrow()
+        server.database.superuserOutsideTransaction(
+            *(0 until ORGS).flatMap { membersOf(it) }.toTypedArray(),
+            "VACUUM ANALYZE identity_users",
+            "VACUUM ANALYZE orgs_members",
+        )
 
         val response = server.client.get("/api/v1/orgs/org0/members") { session(sessions.first()) }
         assertTrue(response.status.isSuccess(), response.status.toString())
@@ -103,7 +102,7 @@ class OrgsReadsBenchTest {
     @Test
     fun theMemberListPagesByItsCursor() = benchTest(listOf(IdentityModule, OrgsModule), null) { server ->
         val owner = server.owner(0)
-        membersOf(0, PAGED_MEMBERS).forEach { server.database.superuser.execute(it).getOrThrow() }
+        server.database.superuserOutsideTransaction(*membersOf(0, PAGED_MEMBERS).toTypedArray())
         val base = "/api/v1/orgs/org0/members"
 
         val seen = mutableListOf<String>()
@@ -132,7 +131,7 @@ class OrgsReadsBenchTest {
     @Test
     fun theSearchKeepsTheMembersItsPrefixStarts() = benchTest(listOf(IdentityModule, OrgsModule), null) { server ->
         val owner = server.owner(0)
-        membersOf(0, PAGED_MEMBERS).forEach { server.database.superuser.execute(it).getOrThrow() }
+        server.database.superuserOutsideTransaction(*membersOf(0, PAGED_MEMBERS).toTypedArray())
         val base = "/api/v1/orgs/org0/members"
         // Members 4, 40 to 49 and 400 to 499: login `user0-4…`, name `User 4…`.
         val expected = (2..PAGED_MEMBERS).filter { it.toString().startsWith("4") }.map { "user0-$it" }.toSet()
@@ -167,11 +166,12 @@ class OrgsReadsBenchTest {
     @Test
     fun theSearchOfAFiveThousandTeamKeepsItsBudget() = benchTest(listOf(IdentityModule, OrgsModule), null) { server ->
         val owners = (0 until LARGE_ORGS).map { server.owner(it) }
-        (0 until LARGE_ORGS).flatMap { membersOf(it, LARGE_TEAM) }.forEach {
-            server.database.superuser.execute(it).getOrThrow()
-        }
-        server.database.superuser.execute("VACUUM ANALYZE identity_users").getOrThrow()
-        server.database.superuser.execute("VACUUM ANALYZE orgs_members").getOrThrow()
+        val team = (0 until LARGE_ORGS).flatMap { membersOf(it, LARGE_TEAM) }
+        server.database.superuserOutsideTransaction(
+            *team.toTypedArray(),
+            "VACUUM ANALYZE identity_users",
+            "VACUUM ANALYZE orgs_members",
+        )
         val searches = listOf("u", "user0-4", "user0-4999").map { q ->
             val path = "/api/v1/orgs/org0/members?q=$q&limit=$PAGE"
             // One name for the three trials: the median one is reported, and the Perf workflow pairs a measure
@@ -209,8 +209,8 @@ class OrgsReadsBenchTest {
                     "ORDER BY m.joined_at, m.id LIMIT ${PAGE + 1}"
             }
             for ((step, sql) in listOf("people" to people, "page" to page)) {
-                val plan = database.superuser.fetchAll("EXPLAIN (ANALYZE, BUFFERS) $sql").getOrThrow()
-                    .joinToString("\n") { it.get("QUERY PLAN").asString() }
+                val plan = database.superuserTexts("EXPLAIN (ANALYZE, BUFFERS) $sql")
+                    .joinToString("\n") { checkNotNull(it) }
                 println("== EXPLAIN orgs_search_members q=$q, $step (5 000 members)\n$plan")
                 assertTrue("Seq Scan" !in plan, "q=$q ($step) reads a table whole:\n$plan")
             }

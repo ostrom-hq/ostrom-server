@@ -69,10 +69,10 @@ class OrgsForcedRowLevelSecurityPostgresTest {
             InvitationsRepositoryImpl(server.koin.get()).create(invitation, "hash-acme")
 
             // Row-level security is forced: it binds the tables' owner too (docs/tenancy.md).
-            val forced = server.database.superuser.fetchAll(
+            val forced = server.database.superuserTexts(
                 "SELECT relname FROM pg_class WHERE relname IN ('orgs_organizations', 'orgs_members', " +
                     "'orgs_invitations') AND relrowsecurity AND relforcerowsecurity ORDER BY relname",
-            ).getOrThrow().map { it.get("relname").asString() }
+            ).map { checkNotNull(it) }
             assertEquals(TABLES.sorted(), forced)
 
             // The serving role, the path of every request.
