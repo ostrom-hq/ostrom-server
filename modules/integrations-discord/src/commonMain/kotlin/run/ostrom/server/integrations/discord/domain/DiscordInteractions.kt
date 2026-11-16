@@ -137,7 +137,8 @@ class ReceiveDiscordInteractionUseCaseImpl(
         return try {
             // The gates refuse anyone but the request's approver, and a decided gate.
             val view = approvals(actor, approvalId)
-            answer(actor, view.request.id, Answer.NO, view.gate.shownDigest, AnswerChannel.DISCORD)
+            // A button sends no note to the agent.
+            answer(actor, view.request.id, Answer.NO, view.gate.shownDigest, AnswerChannel.DISCORD, null)
             member.login
         } catch (_: OstromException) {
             // Another approver, a decided gate, an unknown request: the click changes nothing.
