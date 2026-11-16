@@ -305,6 +305,14 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
         body = """{"reason": "Taken"}""",
         admin = true,
     ),
+    // A member's home pool (TeamCode's member policy): B's member, named by login, by A's admin. A member reads their
+    // own, as TeamCode's capacity view shows them their pool.
+    "GET /api/v1/members/{login}/policy" to target("login" to MEMBER_LOGIN),
+    "PATCH /api/v1/members/{login}/policy" to target(
+        "login" to MEMBER_LOGIN,
+        body = """{"poolId": "taken"}""",
+        admin = true,
+    ),
 
     // Secrets.
     "GET /api/v1/secrets" to Case.Target(),

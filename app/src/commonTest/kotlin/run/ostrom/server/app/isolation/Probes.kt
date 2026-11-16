@@ -82,6 +82,7 @@ internal val SERVICE_KEY_ROUTES: Map<String, Set<String>> = mapOf(
         "GET /api/v1/usage", "GET /api/v1/usage/summary", "GET /api/v1/usage/events", "GET /api/v1/usage/live",
         "GET /api/v1/mcp/usage", "GET /api/v1/spending", "GET /api/v1/budgets", "GET /api/v1/accounts",
         "GET /api/v1/capacity", "GET /api/v1/orgs/{org}/members", "GET /api/v1/pools/size",
+        "GET /api/v1/members/{login}/policy",
     ),
 )
 
