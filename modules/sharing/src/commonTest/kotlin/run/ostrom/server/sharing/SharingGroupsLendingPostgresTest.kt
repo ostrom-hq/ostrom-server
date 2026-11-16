@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.sharing
 
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.InstantColumnType
+import org.jetbrains.exposed.v1.core.UuidColumnType
 import run.ostrom.server.identity.IdentityModule
 import run.ostrom.server.identity.domain.IdentityProvider
 import run.ostrom.server.identity.domain.ResolveUserUseCase
@@ -30,7 +33,6 @@ import run.ostrom.server.sharing.domain.LeaseResult
 import run.ostrom.server.sharing.domain.SharedAccountPool
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.delete
@@ -120,13 +122,16 @@ class SharingGroupsLendingPostgresTest {
     private suspend fun TestServer.join(orgId: Uuid, login: String): Uuid {
         val id = Uuid.random()
         val user = person(login)
-        driver.withOrganization(orgId) {
-            it.execute(
-                Statement.create(
-                    "INSERT INTO orgs_members (id, org_id, user_id, role, joined_at) " +
-                        "VALUES (:id, :org, :user, 'member', :at)",
-                ).bind("id", id).bind("org", orgId).bind("user", user.id).bind("at", now),
-            ).getOrThrow()
+        koin.get<JdbcDatabase>().withOrganization(orgId) {
+            exec(
+                "INSERT INTO orgs_members (id, org_id, user_id, role, joined_at) VALUES (?, ?, ?, 'member', ?)",
+                listOf(
+                    UuidColumnType() to id,
+                    UuidColumnType() to orgId,
+                    UuidColumnType() to user.id,
+                    InstantColumnType() to now,
+                ),
+            )
         }
         return id
     }

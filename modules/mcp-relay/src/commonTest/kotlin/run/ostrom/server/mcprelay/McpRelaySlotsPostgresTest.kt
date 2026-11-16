@@ -7,10 +7,18 @@ import run.ostrom.server.mcprelay.domain.McpCallSlot
 import run.ostrom.server.mcprelay.domain.McpLimits
 import run.ostrom.server.mcprelay.infrastructure.McpCallSlotRepositoryImpl
 import run.ostrom.server.secrets.SecretsModule
-import run.ostrom.server.secrets.infrastructure.inTenant
+import run.ostrom.server.mcprelay.infrastructure.McpRelayMinutes
+import run.ostrom.server.mcprelay.infrastructure.McpRelayServers
+import run.ostrom.server.mcprelay.infrastructure.McpRelaySlots
+import run.ostrom.server.kernel.database.databaseNowPlus
+import org.jetbrains.exposed.v1.core.Table
+import org.jetbrains.exposed.v1.core.greater
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.selectAll
+import org.jetbrains.exposed.v1.jdbc.update
+import kotlin.time.Duration.Companion.minutes
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -35,8 +43,7 @@ class McpRelaySlotsPostgresTest : RelayPostgresHarness() {
 
     private suspend fun TestServer.serverId(): Uuid {
         grafana()
-        val row = database.superuser.fetchAll("SELECT CAST(id AS TEXT) AS id FROM mcp_relay_servers").getOrThrow()
-        return Uuid.parse(row.single().get("id").asString())
+        return database.superuserJdbc.query { McpRelayServers.select(McpRelayServers.id).single()[McpRelayServers.id] }
     }
 
     @Test
@@ -60,8 +67,9 @@ class McpRelaySlotsPostgresTest : RelayPostgresHarness() {
         serverTest(listOf(SecretsModule, McpRelayModule), overrides) { server ->
             val serverId = server.serverId()
             // Not across a minute's turn, by the database's clock.
-            val second = server.database.superuser.fetchAll("SELECT CAST(EXTRACT(SECOND FROM now()) AS BIGINT) AS s")
-                .getOrThrow().single().get("s").asLong()
+            val second = server.database.superuserJdbc.query {
+                exec("SELECT CAST(EXTRACT(SECOND FROM now()) AS BIGINT) AS s") { rs -> rs.next(); rs.getLong("s") }
+            }!!
             if (second >= 50) delay((61 - second).seconds)
             val limits = McpLimits(memberPerMinute = 2)
             val (a, b) = server.replica(limits) to server.replica(limits)
@@ -81,25 +89,22 @@ class McpRelaySlotsPostgresTest : RelayPostgresHarness() {
             val alive = server.replica(limits)
             assertNull(alive.acquire(Relay.orgA, member, serverId))
             // A running operation renews its slot for a whole lease, by the database's clock.
-            val id = server.database.superuser.fetchAll("SELECT CAST(id AS TEXT) AS id FROM mcp_relay_slots")
-                .getOrThrow().single().get("id").asString()
-            server.database.superuser.execute("UPDATE mcp_relay_slots SET expires_at = now() + INTERVAL '1 second'")
-                .getOrThrow()
-            McpCallSlotRepositoryImpl(server.koin.get<JdbcDatabase>()).renew(Relay.orgA, McpCallSlot(Uuid.parse(id)))
-            val renewed = server.database.superuser
-                .fetchAll("SELECT id FROM mcp_relay_slots WHERE expires_at > now() + INTERVAL '14 minutes'")
-                .getOrThrow().size
+            val superuser = server.database.superuserJdbc
+            val id = superuser.query { McpRelaySlots.select(McpRelaySlots.id).single()[McpRelaySlots.id] }
+            superuser.query { McpRelaySlots.update { it[expiresAt] = databaseNowPlus(1.seconds) } }
+            McpCallSlotRepositoryImpl(server.koin.get<JdbcDatabase>()).renew(Relay.orgA, McpCallSlot(id))
+            val renewed = superuser.query {
+                McpRelaySlots.select(McpRelaySlots.id)
+                    .where { McpRelaySlots.expiresAt greater databaseNowPlus(14.minutes) }.toList().size
+            }
             assertEquals(1, renewed)
-            server.database.superuser.execute("UPDATE mcp_relay_slots SET expires_at = now() - INTERVAL '1 second'")
-                .getOrThrow()
+            superuser.query { McpRelaySlots.update { it[expiresAt] = databaseNowPlus((-1).seconds) } }
             assertNotNull(alive.acquire(Relay.orgA, member, serverId), "The expired slot no longer counts")
 
             assertNull(alive.acquire(Relay.orgB, Relay.adminB.memberId, serverId), "Org B cannot admit on A's server")
-            listOf("mcp_relay_slots", "mcp_relay_minutes").forEach { table ->
-                val seen = server.driver.inTenant(Relay.orgB) {
-                    fetchAll("SELECT count(*) AS n FROM $table").getOrThrow().single().get("n").asLong()
-                }
-                assertEquals(0L, seen, "Org B sees none of A's $table")
+            listOf<Table>(McpRelaySlots, McpRelayMinutes).forEach { table ->
+                val seen = server.koin.get<JdbcDatabase>().inOrg(Relay.orgB) { table.selectAll().count() }
+                assertEquals(0L, seen, "Org B sees none of A's ${table.tableName}")
             }
         }
 }

@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.sharing
 
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.InstantColumnType
+import org.jetbrains.exposed.v1.core.UuidColumnType
+import org.jetbrains.exposed.v1.core.TextColumnType
 import run.ostrom.server.identity.IdentityModule
 import run.ostrom.server.identity.domain.IdentityProvider
 import run.ostrom.server.identity.domain.ResolveUserUseCase
@@ -28,7 +32,6 @@ import run.ostrom.server.sharing.domain.SharedAccount
 import run.ostrom.server.sharing.domain.SharedAccountRepository
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.delete
@@ -110,13 +113,17 @@ class SharingGroupsPostgresTest {
 
     private suspend fun TestServer.join(orgId: Uuid, user: User, role: String = "member"): Uuid {
         val id = Uuid.random()
-        driver.withOrganization(orgId) {
-            it.execute(
-                Statement.create(
-                    "INSERT INTO orgs_members (id, org_id, user_id, role, joined_at) " +
-                        "VALUES (:id, :org, :user, :role, :at)",
-                ).bind("id", id).bind("org", orgId).bind("user", user.id).bind("role", role).bind("at", now),
-            ).getOrThrow()
+        koin.get<JdbcDatabase>().withOrganization(orgId) {
+            exec(
+                "INSERT INTO orgs_members (id, org_id, user_id, role, joined_at) VALUES (?, ?, ?, ?, ?)",
+                listOf(
+                    UuidColumnType() to id,
+                    UuidColumnType() to orgId,
+                    UuidColumnType() to user.id,
+                    TextColumnType() to role,
+                    InstantColumnType() to now,
+                ),
+            )
         }
         return id
     }
@@ -359,7 +366,9 @@ class SharingGroupsPostgresTest {
             val liamMember = join(org, person("liam"))
             val id = send("POST", "kira", base, group("Backend", listOf("liam"))).json().text("id")
             // Fixture only: the member leaves without the orgs module's use case.
-            database.superuser.execute("DELETE FROM orgs_members WHERE id = '$liamMember'").getOrThrow()
+            database.superuserJdbc.query {
+                exec("DELETE FROM orgs_members WHERE id = ?", listOf(UuidColumnType() to liamMember))
+            }
 
             assertEquals(listOf(liamMember.toString()), send("GET", "kira", "$base/$id").json().strings("members"))
             assertStatus(

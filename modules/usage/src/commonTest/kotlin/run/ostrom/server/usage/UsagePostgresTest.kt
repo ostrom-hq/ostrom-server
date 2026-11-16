@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.usage
 
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.usage.infrastructure.UsageEvents
+import kotlin.test.assertFailsWith
+import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
+import org.jetbrains.exposed.v1.jdbc.deleteAll
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.selectAll
 import run.ostrom.server.secrets.SecretsModule
 import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
-import run.ostrom.server.secrets.infrastructure.executeInOrg
-import run.ostrom.server.secrets.infrastructure.fetchInOrg
 import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
@@ -22,9 +27,6 @@ import run.ostrom.server.usage.presentation.UsageEventsPageResponse
 import run.ostrom.server.usage.presentation.UsageEventsRequest
 import run.ostrom.server.usage.presentation.UsageResponse
 import run.ostrom.server.usage.presentation.UsageSummaryResponse
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
@@ -46,7 +48,6 @@ import org.koin.core.module.Module
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFails
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.minutes
@@ -89,14 +90,13 @@ class UsagePostgresTest {
         assertEquals(HttpStatusCode.Accepted, declared.status, declared.bodyAsText())
         assertEquals(3, declared.body<UsageAcceptedResponse>().accepted)
 
-        val stored = server.driver.fetchInOrg(
-            TestCallers.orgA,
-            Statement.create("SELECT org_id, member_id, cost_micros FROM usage_events"),
-        ).getOrThrow()
+        val stored = server.koin.get<JdbcDatabase>().inOrg(TestCallers.orgA) {
+            UsageEvents.select(UsageEvents.orgId, UsageEvents.memberId, UsageEvents.costMicros).toList()
+        }
         assertEquals(3, stored.size)
-        assertTrue(stored.all { it.get("org_id").asUuid() == TestCallers.orgA }, "The org comes from the token")
-        assertTrue(stored.all { it.get("member_id").asUuid() == TestCallers.memberA.memberId }, "The member too")
-        assertTrue(stored.all { it.get("cost_micros").asLong() == 0L }, "Clients never declare a cost")
+        assertTrue(stored.all { it[UsageEvents.orgId] == TestCallers.orgA }, "The org comes from the token")
+        assertTrue(stored.all { it[UsageEvents.memberId] == TestCallers.memberA.memberId }, "The member too")
+        assertTrue(stored.all { it[UsageEvents.costMicros] == 0L }, "Clients never declare a cost")
 
         val summary = server.client.get("$orgA/summary?days=1&groupBy=kind") { bearerAuth("admin-a") }
             .body<UsageSummaryResponse>()
@@ -183,8 +183,8 @@ class UsagePostgresTest {
             setBody("not json")
         }
         assertEquals(HttpStatusCode.BadRequest, notJson.status)
-        val stored = server.driver.fetchInOrg(TestCallers.orgA, Statement.create("SELECT id FROM usage_events"))
-        assertEquals(0, stored.getOrThrow().size)
+        val stored = server.koin.get<JdbcDatabase>().inOrg(TestCallers.orgA) { UsageEvents.selectAll().count() }
+        assertEquals(0, stored)
     }
 
     @Test
@@ -306,11 +306,11 @@ class UsagePostgresTest {
         )
 
         // The old retention setting opens nothing any more (RLS audit R4): only usage_purge deletes across orgs.
-        val opened = server.driver.transaction {
-            execute("SELECT set_config('ostrom.usage_retention', 'on', true)").getOrThrow()
-            execute("DELETE FROM usage_events").getOrThrow()
+        val opened = server.koin.get<JdbcDatabase>().query {
+            exec("SELECT set_config('ostrom.usage_retention', 'on', true)") {}
+            UsageEvents.deleteAll()
         }
-        assertEquals(0L, opened)
+        assertEquals(0, opened)
         assertEquals(1L, repository.purge(TestCallers.epoch - 400.days, 10))
         assertEquals(0L, repository.purge(TestCallers.epoch - 400.days, 10))
         assertEquals(3, repository.list(TestCallers.orgA, null, null, 10).size)
@@ -354,17 +354,17 @@ class UsagePostgresTest {
     fun rowLevelSecurityConfinesEveryQueryToItsOrg() = serverTest(modules, overrides) { server ->
         val repository = server.koin.get<UsageRepository>()
         repository.insert(TestCallers.orgA, listOf(modelEvent(1_000)))
-        val count = Statement.create("SELECT COUNT(*) AS n FROM usage_events")
-        suspend fun visibleTo(org: Uuid) = server.driver.fetchInOrg(org, count).getOrThrow().first().get("n").asLong()
+        val database = server.koin.get<JdbcDatabase>()
+        suspend fun visibleTo(org: Uuid) = database.inOrg(org) { UsageEvents.selectAll().count() }
         assertEquals(1L, visibleTo(TestCallers.orgA))
         assertEquals(0L, visibleTo(TestCallers.orgB), "Even a query without an org filter sees only its org")
-        assertFails("A row of another org is refused") {
+        val refused = assertFailsWith<ExposedSQLException>("A row of another org is refused") {
             repository.insert(TestCallers.orgB, listOf(modelEvent(5, orgId = TestCallers.orgA)))
         }
+        assertTrue("row-level security" in refused.message.orEmpty(), refused.message)
         assertEquals(
-            0L,
-            server.driver.executeInOrg(TestCallers.orgB, Statement.create("DELETE FROM usage_events"))
-                .getOrThrow(),
+            0,
+            database.inOrg(TestCallers.orgB) { UsageEvents.deleteAll() },
             "Nor deleted by another org",
         )
         assertEquals(1L, visibleTo(TestCallers.orgA))

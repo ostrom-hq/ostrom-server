@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.sharing
 
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.databaseNowPlus
+import run.ostrom.server.sharing.infrastructure.SharingAccounts
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.update
 import run.ostrom.server.kernel.logging.JsonLogger
 import run.ostrom.server.kernel.logging.LogLevel
-import run.ostrom.server.secrets.infrastructure.executeInOrg
-import run.ostrom.server.secrets.infrastructure.fetchInOrg
 import run.ostrom.server.sharing.domain.AccountCredentials
 import run.ostrom.server.sharing.domain.AccountOwnedByAnotherMemberException
 import run.ostrom.server.sharing.domain.AccountRefreshRepository
@@ -19,9 +23,6 @@ import run.ostrom.server.sharing.domain.SharedAccountRepository
 import run.ostrom.server.sharing.presentation.SharedAccountResponse
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.ktor.client.call.body
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
@@ -61,20 +62,22 @@ class SharingRefreshPostgresTest : SharingPostgresHarness() {
 
     /** Moves the account's refresh intent [ago] into the past, by the database's clock: its owner died. */
     private suspend fun TestServer.ageIntent(id: String, seconds: Int) {
-        driver.executeInOrg(
-            Sharing.orgA,
-            Statement.create(
-                "UPDATE sharing_accounts SET refresh_started_at = now() - :seconds * INTERVAL '1 second' " +
-                    "WHERE id = :id",
-            ).bind("seconds", seconds).bind("id", Uuid.parse(id)),
-        ).getOrThrow()
+        val account = Uuid.parse(id)
+        koin.get<JdbcDatabase>().inOrg(Sharing.orgA) {
+            SharingAccounts.update({ SharingAccounts.id eq account }) {
+                it[refreshStartedAt] = databaseNowPlus((-seconds).seconds)
+            }
+        }
     }
 
-    private suspend fun TestServer.intent(id: String): Pair<Boolean, Long> = driver.fetchInOrg(
-        Sharing.orgA,
-        Statement.create("SELECT refresh_pending, credential_version FROM sharing_accounts WHERE id = :id")
-            .bind("id", Uuid.parse(id)),
-    ).getOrThrow().single().let { it.get("refresh_pending").asBoolean() to it.get("credential_version").asLong() }
+    private suspend fun TestServer.intent(id: String): Pair<Boolean, Long> {
+        val account = Uuid.parse(id)
+        val row = koin.get<JdbcDatabase>().inOrg(Sharing.orgA) {
+            SharingAccounts.select(SharingAccounts.refreshPending, SharingAccounts.credentialVersion)
+                .where { SharingAccounts.id eq account }.single()
+        }
+        return row[SharingAccounts.refreshPending] to row[SharingAccounts.credentialVersion]
+    }
 
     @Test
     fun aDecisionOnAStateThatChangedIsMadeAgainAndOneThatKeepsChangingFails() =

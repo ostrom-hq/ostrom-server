@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.usage
 
+import org.jetbrains.exposed.v1.core.UuidColumnType
+import org.jetbrains.exposed.v1.core.IntegerColumnType
 import run.ostrom.server.kernel.database.DatabaseNotifications
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.secrets.SecretsModule
@@ -78,16 +80,18 @@ class ReplicatedUsageFeedPostgresTest {
     @Test
     fun theReadOfToldEventsScansNoTable() = serverTest(listOf(SecretsModule, UsageModule), overrides) { server ->
         // Fixtures only: the rows of two organizations at once and the statistics, which no request writes.
-        val fixtures = server.database.superuser
-        listOf(TestCallers.orgB to 20_000, TestCallers.orgA to 2_000).forEach { (org, count) ->
-            fixtures.execute(
-                "INSERT INTO usage_events (id, org_id, member_id, kind, name, input_tokens, output_tokens, " +
-                    "cache_read_tokens, cache_write_tokens, cost_micros, duration_ms, outcome, at) " +
-                    "SELECT gen_random_uuid(), CAST('$org' AS uuid), NULL, 'MODEL', 'claude', 1, 1, 0, 0, i, 1, " +
-                    "'ok', now() - i * INTERVAL '1 second' FROM generate_series(1, $count) AS i",
-            ).getOrThrow()
+        server.database.superuserJdbc.query {
+            listOf(TestCallers.orgB to 20_000, TestCallers.orgA to 2_000).forEach { (org, count) ->
+                exec(
+                    "INSERT INTO usage_events (id, org_id, member_id, kind, name, input_tokens, output_tokens, " +
+                        "cache_read_tokens, cache_write_tokens, cost_micros, duration_ms, outcome, at) " +
+                        "SELECT gen_random_uuid(), ?, NULL, 'MODEL', 'claude', 1, 1, 0, 0, i, 1, " +
+                        "'ok', now() - i * INTERVAL '1 second' FROM generate_series(1, ?) AS i",
+                    listOf(UuidColumnType() to org, IntegerColumnType() to count),
+                )
+            }
         }
-        fixtures.execute("VACUUM ANALYZE usage_events").getOrThrow()
+        server.database.superuserOutsideTransaction("VACUUM ANALYZE usage_events")
 
         val read = feedRead(TestCallers.orgA, List(3) { Uuid.random() })
         val plan = server.koin.get<JdbcDatabase>().inOrg(TestCallers.orgA) { plan { read } }

@@ -30,11 +30,17 @@ import run.ostrom.server.secrets.SecretsModule
 import run.ostrom.server.secrets.domain.RelayScopes
 import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
-import run.ostrom.server.secrets.infrastructure.executeInOrg
-import run.ostrom.server.secrets.infrastructure.fetchInOrg
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.mcprelay.infrastructure.McpRelayAssignments
+import run.ostrom.server.mcprelay.infrastructure.McpRelayCalls
+import run.ostrom.server.mcprelay.infrastructure.McpRelayPolicies
+import run.ostrom.server.mcprelay.infrastructure.McpRelayServers
+import run.ostrom.server.mcprelay.infrastructure.McpRelaySettings
+import org.jetbrains.exposed.v1.core.Table
+import org.jetbrains.exposed.v1.jdbc.deleteAll
+import org.jetbrains.exposed.v1.jdbc.selectAll
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.delete
@@ -101,10 +107,7 @@ class McpRelayPostgresTest : RelayPostgresHarness() {
         assertEquals(1L, usage.rows.single().denied)
         assertEquals(
             3L,
-            driver.fetchInOrg(
-                Relay.orgA,
-                Statement.create("SELECT COUNT(*) AS n FROM mcp_relay_calls"),
-            ).getOrThrow().single().get("n").asString().toLong(),
+            koin.get<JdbcDatabase>().inOrg(Relay.orgA) { McpRelayCalls.selectAll().count() },
         )
     }
 
@@ -461,19 +464,20 @@ class McpRelayPostgresTest : RelayPostgresHarness() {
                 )
                 sendJson(HttpMethod.Put, "$admin/settings", McpSettingsDto("teamcode"))
                 rpc("grafana", "member-a", """{"jsonrpc":"2.0","id":1,"method":"tools/list"}""")
-                val tables = listOf(
-                    "mcp_relay_servers",
-                    "mcp_relay_assignments",
-                    "mcp_relay_policies",
-                    "mcp_relay_settings",
-                    "mcp_relay_calls",
+                val database = koin.get<JdbcDatabase>()
+                val tables: List<Table> = listOf(
+                    McpRelayServers,
+                    McpRelayAssignments,
+                    McpRelayPolicies,
+                    McpRelaySettings,
+                    McpRelayCalls,
                 )
                 for (table in tables) {
-                    val all = Statement.create("SELECT org_id FROM $table")
-                    assertEquals(1, driver.fetchInOrg(Relay.adminA.orgId, all).getOrThrow().size, table)
-                    assertEquals(0, driver.fetchInOrg(Relay.adminB.orgId, all).getOrThrow().size, "$table: no leak")
-                    val stolen = Statement.create("DELETE FROM $table")
-                    assertEquals(0L, driver.executeInOrg(Relay.adminB.orgId, stolen).getOrThrow(), table)
+                    val seenByA = database.inOrg(Relay.adminA.orgId) { table.selectAll().toList().size }
+                    assertEquals(1, seenByA, table.tableName)
+                    val seenByB = database.inOrg(Relay.adminB.orgId) { table.selectAll().toList().size }
+                    assertEquals(0, seenByB, "${table.tableName}: no leak")
+                    assertEquals(0, database.inOrg(Relay.adminB.orgId) { table.deleteAll() }, table.tableName)
                 }
                 val repository = koin.get<McpRelayRepository>()
                 val old = McpCall(
@@ -491,18 +495,19 @@ class McpRelayPostgresTest : RelayPostgresHarness() {
                 )
                 repository.record(old)
                 // The old retention setting opens nothing any more (RLS audit R4): only mcp_relay_purge deletes.
-                val opened = driver.transaction {
-                    execute("SELECT set_config('ostrom.mcp_relay_retention', 'on', true)").getOrThrow()
-                    execute("DELETE FROM mcp_relay_calls").getOrThrow()
+                val opened = koin.get<JdbcDatabase>().query {
+                    exec("SELECT set_config('ostrom.mcp_relay_retention', 'on', true)") {}
+                    McpRelayCalls.deleteAll()
                 }
-                assertEquals(0L, opened, "No setting opens the calls of every org")
+                assertEquals(0, opened, "No setting opens the calls of every org")
                 assertEquals(1L, repository.purgeCalls(Instant.parse("2021-01-01T00:00:00Z")), "Old calls of any org")
-                val left = Statement.create("SELECT id FROM mcp_relay_calls")
-                assertEquals(1, driver.fetchInOrg(Relay.adminA.orgId, left).getOrThrow().size, "Recent calls stay")
+                val left = koin.get<JdbcDatabase>().inOrg(Relay.adminA.orgId) {
+                    McpRelayCalls.selectAll().toList().size
+                }
+                assertEquals(1, left, "Recent calls stay")
                 assertEquals(
                     1,
-                    driver.fetchInOrg(Relay.adminA.orgId, Statement.create("SELECT id FROM mcp_relay_servers"))
-                        .getOrThrow().size,
+                    koin.get<JdbcDatabase>().inOrg(Relay.adminA.orgId) { McpRelayServers.selectAll().toList().size },
                     "Retention touches nothing else",
                 )
             }
@@ -535,9 +540,10 @@ class McpRelayPostgresTest : RelayPostgresHarness() {
             )
             assertNull(repository.hostedAssignments(2), "More rows than the limit: none")
             // Outside the router's function, row-level security still confines each org.
-            val driver = server.driver
-            val all = Statement.create("SELECT server_id FROM mcp_relay_assignments")
-            assertEquals(1, driver.fetchInOrg(Relay.orgB, all).getOrThrow().size)
+            val visible = server.koin.get<JdbcDatabase>().inOrg(Relay.orgB) {
+                McpRelayAssignments.selectAll().toList().size
+            }
+            assertEquals(1, visible)
         }
 
     @Test

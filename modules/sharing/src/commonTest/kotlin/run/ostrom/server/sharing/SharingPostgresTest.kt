@@ -1,11 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.sharing
 
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.databaseNow
+import run.ostrom.server.sharing.infrastructure.SharingAccounts
+import run.ostrom.server.sharing.infrastructure.SharingWindows
+import org.jetbrains.exposed.v1.core.Table
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
+import org.jetbrains.exposed.v1.jdbc.deleteAll
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.selectAll
+import org.jetbrains.exposed.v1.jdbc.update
 import run.ostrom.server.kernel.http.ApiError
 import run.ostrom.server.kernel.settings.InstanceSettings
 import run.ostrom.server.kernel.settings.SettingsValues
-import run.ostrom.server.secrets.infrastructure.executeInOrg
-import run.ostrom.server.secrets.infrastructure.fetchInOrg
 import run.ostrom.server.sharing.domain.AccountChangedException
 import run.ostrom.server.sharing.domain.AccountCredentials
 import run.ostrom.server.sharing.domain.AccountOwnedByAnotherMemberException
@@ -29,7 +39,6 @@ import run.ostrom.server.sharing.presentation.SharedAccountsResponse
 import run.ostrom.server.sharing.presentation.UpdateAccountRequest
 import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.mock.MockEngine
@@ -50,7 +59,6 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
@@ -81,8 +89,9 @@ class SharingPostgresTest : SharingPostgresHarness() {
             assertFalse("secret" in created.bodyAsText(), "Tokens never come back")
             val account = created.body<SharedAccountResponse>()
             assertTrue(account.mine)
-            val stored = driver.fetchInOrg(Sharing.orgA, Statement.create("SELECT envelope FROM sharing_accounts"))
-                .getOrThrow().single().get("envelope").asString()
+            val stored = koin.get<JdbcDatabase>().inOrg(Sharing.orgA) {
+                SharingAccounts.select(SharingAccounts.envelope).single()[SharingAccounts.envelope]
+            }
             assertFalse("secret" in stored, "Sealed at rest")
 
             val lease = koin.get<SharedAccountPool>()
@@ -402,28 +411,32 @@ class SharingPostgresTest : SharingPostgresHarness() {
             ).lease
             leased.observe(200, mapOf("anthropic-ratelimit-unified-5h-utilization" to "0.5"))
             leased.release()
-            for (table in listOf("sharing_accounts", "sharing_windows")) {
-                val unfiltered = Statement.create("SELECT org_id FROM $table")
-                assertEquals(1, driver.fetchInOrg(Sharing.orgA, unfiltered).getOrThrow().size, table)
+            val database = koin.get<JdbcDatabase>()
+            for (table in listOf<Table>(SharingAccounts, SharingWindows)) {
+                assertEquals(1, database.inOrg(Sharing.orgA) { table.selectAll().toList().size }, table.tableName)
                 assertEquals(
                     0,
-                    driver.fetchInOrg(Sharing.orgB, unfiltered).getOrThrow().size,
-                    "No WHERE, no leak: $table",
+                    database.inOrg(Sharing.orgB) { table.selectAll().toList().size },
+                    "No WHERE, no leak: ${table.tableName}",
                 )
             }
-            val stolen = Statement.create("UPDATE sharing_accounts SET label = 'TAKEN'")
-            assertEquals(0L, driver.executeInOrg(Sharing.orgB, stolen).getOrThrow())
-            assertEquals(
-                0L,
-                driver.executeInOrg(Sharing.orgB, Statement.create("DELETE FROM sharing_windows")).getOrThrow(),
-            )
-            val planted = Statement.create(
-                "INSERT INTO sharing_windows (org_id, account_id, name, utilization, observed_at) " +
-                    "VALUES (:org, :account, 'planted', 0, now())",
-            ).bind("org", Sharing.orgA).bind("account", Uuid.parse(account.id))
-            assertFails("Another org's row is refused") { driver.executeInOrg(Sharing.orgB, planted).getOrThrow() }
-            val labels = driver.fetchInOrg(Sharing.orgA, Statement.create("SELECT label FROM sharing_accounts"))
-                .getOrThrow().map { it.get("label").asString() }
+            assertEquals(0, database.inOrg(Sharing.orgB) { SharingAccounts.update { it[label] = "TAKEN" } })
+            assertEquals(0, database.inOrg(Sharing.orgB) { SharingWindows.deleteAll() })
+            val refused = assertFailsWith<ExposedSQLException>("Another org's row is refused") {
+                database.inOrg(Sharing.orgB) {
+                    SharingWindows.insert {
+                        it[orgId] = Sharing.orgA
+                        it[accountId] = Uuid.parse(account.id)
+                        it[name] = "planted"
+                        it[utilization] = 0.0
+                        it[observedAt] = databaseNow()
+                    }
+                }
+            }
+            assertTrue("row-level security" in refused.message.orEmpty(), refused.message)
+            val labels = database.inOrg(Sharing.orgA) {
+                SharingAccounts.select(SharingAccounts.label).map { it[SharingAccounts.label] }
+            }
             assertEquals(listOf("Lyes Max 20x"), labels, "Nothing of org A changed")
         }
     }
@@ -606,9 +619,10 @@ class SharingPostgresTest : SharingPostgresHarness() {
         with(server) {
             val account = shareAs("member-a").body<SharedAccountResponse>()
             val id = Uuid.parse(account.id)
-            val orphaned = Statement.create("UPDATE sharing_accounts SET owner_member_id = NULL WHERE id = :id")
-                .bind("id", id)
-            assertEquals(1L, driver.executeInOrg(Sharing.orgA, orphaned).getOrThrow())
+            val orphaned = koin.get<JdbcDatabase>().inOrg(Sharing.orgA) {
+                SharingAccounts.update({ SharingAccounts.id eq id }) { it[ownerMemberId] = null }
+            }
+            assertEquals(1, orphaned)
             val seen = client.get(base) { bearerAuth("admin-a") }.body<SharedAccountsResponse>().items.single()
             assertEquals("", seen.owner)
             assertFalse(seen.mine)

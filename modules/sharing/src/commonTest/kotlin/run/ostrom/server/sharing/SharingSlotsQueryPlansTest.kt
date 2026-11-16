@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.sharing
 
+import org.jetbrains.exposed.v1.core.UuidColumnType
+import org.jetbrains.exposed.v1.core.IntegerColumnType
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.secrets.SecretsModule
 import run.ostrom.server.secrets.domain.SecretCipher
@@ -41,13 +44,14 @@ class SharingSlotsQueryPlansTest {
     private val accountA = Uuid.parse("00000000-0000-4000-8000-0000000000d6")
     private val memberA = Uuid.parse("00000000-0000-4000-8000-0000000000e6")
 
-    // No `::` cast and no colon at all: the driver would read `:x` as a named parameter.
-    private fun accounts(org: Uuid, count: Int): String =
+    private fun JdbcTransaction.accounts(org: Uuid, count: Int) = exec(
         "INSERT INTO sharing_accounts (id, org_id, provider, label, email, provider_account_id, owner_member_id, " +
             "priority, status, max_concurrent, utilization_ceiling, monthly_budget_micros, allowed_members, " +
-            "cooldown_until, envelope, created_at) SELECT gen_random_uuid(), CAST('$org' AS uuid), 'CLAUDE', " +
+            "cooldown_until, envelope, created_at) SELECT gen_random_uuid(), ?, 'CLAUDE', " +
             "'seed', NULL, 'seed-' || i, NULL, 0, 'READY', 8, 0.95, NULL, NULL, NULL, 'sealed', now() " +
-            "FROM generate_series(1, $count) AS i"
+            "FROM generate_series(1, ?) AS i",
+        listOf(UuidColumnType() to org, IntegerColumnType() to count),
+    )
 
     @Test
     fun theQueriesOfALeaseScanNoTable() = serverTest(
@@ -55,27 +59,31 @@ class SharingSlotsQueryPlansTest {
         module { single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 7 }) } },
     ) { server ->
         // Fixtures only: rows of two organizations at once and the statistics, which no request writes.
-        val fixtures = server.database.superuser
-        fixtures.execute(accounts(orgB, 5_000)).getOrThrow()
-        fixtures.execute(
-            "INSERT INTO sharing_accounts (id, org_id, provider, label, email, provider_account_id, owner_member_id, " +
-                "priority, status, max_concurrent, utilization_ceiling, monthly_budget_micros, allowed_members, " +
-                "cooldown_until, envelope, created_at) VALUES (CAST('$accountA' AS uuid), CAST('$orgA' AS uuid), " +
-                "'CLAUDE', 'seed', NULL, 'seed-a', NULL, 0, 'READY', 8, 0.95, NULL, NULL, NULL, 'sealed', now())",
-        ).getOrThrow()
-        fixtures.execute(
-            "INSERT INTO sharing_slots (id, org_id, account_id, expires_at) " +
-                "SELECT gen_random_uuid(), a.org_id, a.id, now() + INTERVAL '10 minutes' " +
-                "FROM sharing_accounts a, generate_series(1, 4) AS i",
-        ).getOrThrow()
-        fixtures.execute(
-            "INSERT INTO sharing_affinities (org_id, member_id, session_hash, account_id, expires_at) " +
-                "SELECT a.org_id, gen_random_uuid(), md5(a.id || '-' || i), a.id, now() + INTERVAL '1 hour' " +
-                "FROM sharing_accounts a, generate_series(1, 4) AS i",
-        ).getOrThrow()
-        listOf("sharing_accounts", "sharing_slots", "sharing_affinities").forEach {
-            fixtures.execute("VACUUM ANALYZE $it").getOrThrow()
+        server.database.superuserJdbc.query {
+            accounts(orgB, 5_000)
+            exec(
+                "INSERT INTO sharing_accounts (id, org_id, provider, label, email, provider_account_id, " +
+                    "owner_member_id, priority, status, max_concurrent, utilization_ceiling, monthly_budget_micros, " +
+                    "allowed_members, cooldown_until, envelope, created_at) VALUES (?, ?, 'CLAUDE', 'seed', NULL, " +
+                    "'seed-a', NULL, 0, 'READY', 8, 0.95, NULL, NULL, NULL, 'sealed', now())",
+                listOf(UuidColumnType() to accountA, UuidColumnType() to orgA),
+            )
+            exec(
+                "INSERT INTO sharing_slots (id, org_id, account_id, expires_at) " +
+                    "SELECT gen_random_uuid(), a.org_id, a.id, now() + INTERVAL '10 minutes' " +
+                    "FROM sharing_accounts a, generate_series(1, 4) AS i",
+            )
+            exec(
+                "INSERT INTO sharing_affinities (org_id, member_id, session_hash, account_id, expires_at) " +
+                    "SELECT a.org_id, gen_random_uuid(), md5(a.id || '-' || i), a.id, now() + INTERVAL '1 hour' " +
+                    "FROM sharing_accounts a, generate_series(1, 4) AS i",
+            )
         }
+        server.database.superuserOutsideTransaction(
+            "VACUUM ANALYZE sharing_accounts",
+            "VACUUM ANALYZE sharing_slots",
+            "VACUUM ANALYZE sharing_affinities",
+        )
 
         val ids = listOf(accountA)
         val hash = sessionHash("session-1")

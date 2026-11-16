@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.sharing
 
+import run.ostrom.server.kernel.database.databaseNowPlus
+import run.ostrom.server.sharing.infrastructure.SharingAffinities
+import org.jetbrains.exposed.v1.jdbc.update
 import run.ostrom.server.sharing.domain.AccountSlotRepository
 import run.ostrom.server.sharing.domain.QuotaHistoryRepository
 import run.ostrom.server.sharing.domain.QuotaWindow
@@ -58,9 +61,7 @@ class PacingReadsPostgresTest : SharingPostgresHarness() {
             assertEquals(listOf(Sharing.memberA.memberId to account), sessions.map { it.memberId to it.accountId })
             assertEquals(64, sessions.single().sessionHash.length, "The digest, never the id")
             assertTrue(slots.activeSessions(Sharing.orgB, 2.minutes).isEmpty())
-            database.superuser.execute(
-                "UPDATE sharing_affinities SET expires_at = now() + INTERVAL '50 minutes'",
-            ).getOrThrow()
+            database.superuserJdbc.query { SharingAffinities.update { it[expiresAt] = databaseNowPlus(50.minutes) } }
             assertTrue(slots.activeSessions(Sharing.orgA, 2.minutes).isEmpty(), "Leased ten minutes ago")
         }
     }

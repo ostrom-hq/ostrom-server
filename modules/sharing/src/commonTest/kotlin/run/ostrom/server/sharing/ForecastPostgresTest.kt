@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.sharing
 
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.PurgeDateRefusedException
 import run.ostrom.server.sharing.domain.QuotaHistoryRepository
 import run.ostrom.server.sharing.domain.QuotaWindow
@@ -10,8 +11,7 @@ import run.ostrom.server.sharing.presentation.SharedAccountResponse
 import run.ostrom.server.sharing.presentation.UpdateAccountRequest
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.SQLError
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
+import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
@@ -189,13 +189,16 @@ class ForecastPostgresTest : SharingPostgresHarness() {
                 assertFailsWith<PurgeDateRefusedException>("$date") { history.prune(date, 1000) }
             }
             // Straight to the function, as the serving role: a date or a limit it cannot bound is refused.
-            val direct = driver.fetchAll("SELECT sharing_quota_history_purge(now(), 10) AS n").getOrThrow()
-            assertEquals(0L, direct.first().get("n").asLong())
+            val serving = koin.get<JdbcDatabase>()
+            val direct = serving.query {
+                exec("SELECT sharing_quota_history_purge(now(), 10) AS n") { rs -> rs.next(); rs.getLong("n") }
+            }
+            assertEquals(0L, direct)
             val refused =
                 listOf("now() + INTERVAL '1 day', 10", "'infinity', 10", "NULL, 10", "now(), 0", "now(), 10001")
             for (call in refused) {
-                assertFailsWith<SQLError>(call) {
-                    driver.fetchAll("SELECT sharing_quota_history_purge($call) AS n").getOrThrow()
+                assertFailsWith<ExposedSQLException>(call) {
+                    serving.query { exec("SELECT sharing_quota_history_purge($call) AS n") {} }
                 }
             }
         }
