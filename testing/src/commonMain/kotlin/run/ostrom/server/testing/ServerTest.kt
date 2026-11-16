@@ -7,7 +7,6 @@ import run.ostrom.server.kernel.config.LayeredConfigSource
 import run.ostrom.server.kernel.config.MapConfigSource
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.MigrationRunner
-import run.ostrom.server.kernel.database.databaseNotifications
 import run.ostrom.server.kernel.database.migrateModules
 import run.ostrom.server.kernel.database.requireRowLevelSecurity
 import run.ostrom.server.kernel.http.OstromJson
@@ -109,33 +108,30 @@ private suspend fun ApplicationTestBuilder.serve(
         val logger = JsonLogger(LogLevel.WARN)
         migrateModules(database.ownerConfig, logger, modules)
         database.driver.requireRowLevelSecurity()
-        // The server's pool records what it sends, for the read benches (ReadBench.kt).
-        val driver = RecordingDriver(database.driver)
+        // What the server sends is recorded on demand, for the read benches (ReadBench.kt).
+        val recorder = StatementRecorder()
         // Tests sign people up as an open instance does (ostrom.run): with the admin module, its former variable is
         // imported into the console's settings at start; without it, the settings say so (testKernel). The
         // invite-only default of a self-hosted instance has its own tests, which override the instance's settings.
         val source = LayeredConfigSource(listOf(environment, MapConfigSource(mapOf("OSTROM_SIGNUP" to "open"))))
-        // The database's notifications need the pool itself, not its recording wrapper.
-        val notifications = databaseNotifications(database.driver)
         // The JDBC pool of the modules on Exposed, connected as the serving role as the server's is.
         val jdbc = JdbcDatabase(database.servingConfig, jdbcPoolSize)
         try {
             val kernel = testKernel(
                 kernelModule(
                     logger,
-                    driver,
+                    database.driver,
                     signer,
                     source,
-                    notifications = notifications,
                     // The server's start check reads Flyway's histories through the pool, as the server does.
                     migrationRunner = jdbc.migrationRunner(logger),
                     jdbc = jdbc,
                 ),
                 modules,
             )
-            // The read benches count and replay the statements of the modules on Exposed too.
-            ExposedRecorder.into(driver) {
-                serveWith(serverKoin(kernel, modules, overrides), modules, driver, database, block)
+            // The read benches count and replay the statements of the modules.
+            ExposedRecorder.into(recorder) {
+                serveWith(serverKoin(kernel, modules, overrides), modules, recorder, database, block)
             }
         } finally {
             jdbc.close()
@@ -149,7 +145,7 @@ private suspend fun ApplicationTestBuilder.serve(
 private suspend fun ApplicationTestBuilder.serveWith(
     koin: Koin,
     modules: List<ServerModule>,
-    driver: RecordingDriver,
+    recorder: StatementRecorder,
     database: TestDatabase,
     block: suspend ApplicationTestBuilder.(TestServer) -> Unit,
 ) {
@@ -167,7 +163,7 @@ private suspend fun ApplicationTestBuilder.serveWith(
         // the application after the finally below has closed Koin.
         startApplication()
         val client = createClient { install(ContentNegotiation) { json(OstromJson) } }
-        block(TestServer(koin, driver, client, database))
+        block(TestServer(koin, recorder, client, database))
         observer.finish()
     } finally {
         koin.close()

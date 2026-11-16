@@ -5,8 +5,8 @@ import run.ostrom.server.kernel.database.CancellationKeepingDriver
 import run.ostrom.server.kernel.database.InProcessNotifications
 import run.ostrom.server.kernel.database.PostgresNotifications
 import run.ostrom.server.kernel.database.databaseNotifications
-import run.ostrom.server.testing.RecordingDriver
 import run.ostrom.server.testing.TestDatabase
+import io.github.smyrgeorge.sqlx4k.Driver
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -48,7 +48,7 @@ class DatabaseNotificationsTest {
                 assertIs<PostgresNotifications>(databaseNotifications(database.driver))
                 val pool = assertIs<CancellationKeepingDriver>(database.driver).inner
                 assertIs<PostgresNotifications>(databaseNotifications(pool), "The sqlx4k pool itself")
-                assertIs<InProcessNotifications>(databaseNotifications(RecordingDriver(database.driver)))
+                assertIs<InProcessNotifications>(databaseNotifications(object : Driver by database.driver {}))
             } finally {
                 database.close()
             }

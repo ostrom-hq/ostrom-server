@@ -18,11 +18,10 @@ class ScheduledWorkQueryPlansTest {
     @Test
     fun theClaimOfALeaseUpdatesItsRowByTheKey() = serverTest(listOf(InstanceModule)) { server ->
         // Fixtures only: other jobs and the statistics.
-        val fixtures = server.database.superuser
-        fixtures.execute(
+        server.database.superuserOutsideTransaction(
             "INSERT INTO instance_scheduled_work (name) SELECT 'job/' || n FROM generate_series(1, 5000) n",
-        ).getOrThrow()
-        fixtures.execute("VACUUM ANALYZE instance_scheduled_work").getOrThrow()
+            "VACUUM ANALYZE instance_scheduled_work",
+        )
         val database = server.koin.get<JdbcDatabase>()
 
         val claim = database.query {

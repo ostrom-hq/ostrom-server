@@ -4,14 +4,16 @@ package run.ostrom.server.testing
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.TENANT_ROLE
 import run.ostrom.server.kernel.database.TENANT_SETTING
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInt
+import io.ktor.client.HttpClient
 import io.ktor.client.request.get
+import io.ktor.client.statement.HttpResponse
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.readString
+import org.jetbrains.exposed.v1.core.ArrayColumnType
 import org.jetbrains.exposed.v1.core.IntegerColumnType
+import org.jetbrains.exposed.v1.core.TextColumnType
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
@@ -22,13 +24,13 @@ import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
 
 /**
- * The read bench: the server's pool records the statements of a request, on the pool and in its transactions, and only
- * while recording; they replay under `EXPLAIN` as the serving role; a route is timed under concurrent calls.
+ * The read bench: the test server records the statements of a request, by their transactions, and only while
+ * recording; they replay under `EXPLAIN` as the serving role; a route is timed under concurrent calls.
  */
 class ReadBenchTest {
     @Test
-    fun theReadinessRouteSendsOneQueryAndIsTimed() = benchTest(emptyList(), null) { server ->
-        val measure = server.measureRead("GET /ready") { get("/ready") }
+    fun aCallOfOneQueryIsMeasuredAndTimed() = benchTest(emptyList(), null) { server ->
+        val measure = server.measureRead("GET /ready") { selectOneThenReady(server) }
         assertEquals(listOf("SELECT 1"), measure.statements.map { it.sql })
         assertEquals(1, measure.queries)
         assertTrue("Result" in measure.plans.single(), measure.plans.single())
@@ -39,7 +41,7 @@ class ReadBenchTest {
         assertTrue("== GET /ready" in report && "queries per call: 1" in report, report)
         val written = SystemFileSystem.source(Path("build/reports/perf/testing.txt")).buffered().use { it.readString() }
         assertEquals(report, written)
-        val writing = server.measureRead("GET /ready", writes = true) { get("/ready") }
+        val writing = server.measureRead("GET /ready", writes = true) { selectOneThenReady(server) }
         assertEquals(1, writing.queries, "A read route reads the same with its writes explained")
     }
 
@@ -89,6 +91,12 @@ class ReadBenchTest {
         assertFailsWith<IllegalArgumentException> { checkTime("two\nlines", 1.milliseconds, 1.milliseconds) }
     }
 
+    // A call that sends one query: the readiness route, after a query of the test's own as a route's would send.
+    private suspend fun HttpClient.selectOneThenReady(server: TestServer): HttpResponse {
+        server.koin.get<JdbcDatabase>().query { exec("SELECT 1") { } }
+        return get("/ready")
+    }
+
     private fun read(file: Path): String = SystemFileSystem.source(file).buffered().use { it.readString() }
 
     // The made-up times of these tests go to a file of their own, never to the module's budgets.tsv.
@@ -127,90 +135,79 @@ class ReadBenchTest {
     }
 
     @Test
-    fun everyWayToSendAStatementIsRecordedOnlyWhileRecording() = serverTest(emptyList()) { server ->
-        val driver = server.driver
-        driver.fetchAll("SELECT 0").getOrThrow()
-        val sent = driver.record {
-            driver.execute("SET LOCAL application_name = 'bench'").getOrThrow()
-            driver.execute(Statement.create("SELECT set_config('ostrom.bench', :v, false)").bind("v", "1")).getOrThrow()
-            driver.fetchAll("SELECT 2").getOrThrow()
-            driver.fetchAll(Statement.create("SELECT CAST(:n AS int) AS n").bind("n", 3)).getOrThrow()
-            driver.transaction {
-                execute("SET LOCAL application_name = 'bench-tx'").getOrThrow()
-                execute(Statement.create("SELECT set_config('ostrom.bench', :v, true)").bind("v", "2")).getOrThrow()
-                fetchAll("SELECT 4").getOrThrow()
-                fetchAll(Statement.create("SELECT CAST(:n AS int) AS n").bind("n", 5)).getOrThrow()
-            }
-        }
-        driver.fetchAll("SELECT 6").getOrThrow()
-        assertFails { driver.record { error("a failed request") } }
-        driver.fetchAll("SELECT 7").getOrThrow()
-        assertEquals(listOf("SELECT 8"), driver.record { driver.fetchAll("SELECT 8").getOrThrow() }.map { it.sql })
-        assertEquals(8, sent.size)
-        val bound = sent.map { it.statement?.namedParametersValues?.keys?.single() }
-        assertEquals(listOf(null, "v", null, "n", null, "v", null, "n"), bound)
-        assertEquals(4, sent.take(4).map { it.transaction }.distinct().size, "Each on the pool in its own")
-        assertEquals(1, sent.drop(4).map { it.transaction }.distinct().size, "One transaction")
-        assertTrue(sent[4].transaction !in sent.take(4).map { it.transaction })
-        val plans = server.database.driver.replay(sent, explain = true)
-        assertEquals(4, plans.size, plans.joinToString("\n\n"))
-        assertTrue(plans.all { "actual time" in it }, plans.joinToString("\n\n"))
-        assertEquals(emptyList(), server.database.driver.replay(sent, explain = false))
-    }
-
-    @Test
     fun writesAreExplainedOnlyWhenAsked() = serverTest(emptyList()) { server ->
         // The owner creates the table, as a migration would; the serving role writes it by default privileges.
-        val owner = server.database.owner
-        owner.execute("CREATE TABLE bench_writes (n INTEGER PRIMARY KEY, seen INTEGER)").getOrThrow()
-        owner.execute("INSERT INTO bench_writes VALUES (1, 0)").getOrThrow()
-        val driver = server.database.driver
+        server.database.ownerJdbc.query {
+            exec("CREATE TABLE bench_writes (n INTEGER PRIMARY KEY, seen INTEGER)")
+            exec("INSERT INTO bench_writes VALUES (1, 0)")
+        }
+        val serving = server.koin.get<JdbcDatabase>()
         val sent = listOf("UPDATE bench_writes SET seen = 1 WHERE n = 1", "SELECT seen FROM bench_writes WHERE n = 1")
-            .map { SentStatement(it, Statement.create(it), 1) }
+            .map { SentStatement(it, emptyList(), 1) }
 
-        val plans = driver.replay(sent, explain = true, writes = true)
+        val plans = serving.replay(sent, explain = true, writes = true)
         assertEquals(2, plans.size, plans.joinToString("\n\n"))
         assertTrue("Update on bench_writes" in plans.first(), plans.first())
-        assertEquals(1, driver.replay(sent, explain = true).size, "A read bench explains its reads only")
-        val seen = driver.fetchAll("SELECT seen FROM bench_writes").getOrThrow().single().get("seen").asInt()
-        assertEquals(0, seen, "Rolled back")
+        assertEquals(1, serving.replay(sent, explain = true).size, "A read bench explains its reads only")
+        assertEquals(listOf("0"), server.database.superuserTexts("SELECT seen FROM bench_writes"), "Rolled back")
     }
 
     @Test
-    fun aNullValueIsReplayedAsNull() = serverTest(emptyList()) { server ->
-        val statement = Statement.create("SELECT COALESCE(:v, 'none') AS v").bindNull("v", String::class)
-        val plans = server.database.driver.replay(listOf(SentStatement(statement.sql, statement, 1)), explain = true)
+    fun aNullAndAnArrayAreReplayedAsTheyWereBound() = serverTest(emptyList()) { server ->
+        val serving = server.koin.get<JdbcDatabase>()
+        val sent = server.recorder.record {
+            serving.query {
+                exec(
+                    "SELECT COALESCE(?, 'none') || ':' || CAST(? = ANY (?) AS text)",
+                    listOf(
+                        TextColumnType() to null,
+                        TextColumnType() to "b",
+                        ArrayColumnType<String, List<String>>(TextColumnType()) to listOf("a", "b\"c", "b"),
+                    ),
+                ) { }
+            }
+        }
+        assertEquals(listOf(listOf("none:true")), sent.map { serving.query { replayRecorded(it) } })
+        val plans = serving.replay(sent, explain = true)
         assertTrue("Result" in plans.single(), plans.single())
     }
 
     @Test
-    fun theStatementsOfExposedAreRecordedAndReplayedByTheirTransaction() = serverTest(emptyList()) { server ->
-        val jdbc = server.koin.get<JdbcDatabase>()
-        val org = Uuid.random()
-        jdbc.query { exec("SELECT 0") { } }
-        val sent = server.driver.record {
-            jdbc.inOrg(org) { exec("SELECT CAST(? AS int) + 1", listOf(IntegerColumnType() to 1)) { } }
-            jdbc.query { exec("SELECT 2") { } }
-            assertFails {
-                jdbc.query {
-                    exec("SELECT 3") { }
-                    error("a failed request")
+    fun theStatementsOfExposedAreRecordedOnlyWhileRecordingAndReplayedByTheirTransaction() =
+        serverTest(emptyList()) { server ->
+            val jdbc = server.koin.get<JdbcDatabase>()
+            val org = Uuid.random()
+            jdbc.query { exec("SELECT 0") { } }
+            val sent = server.recorder.record {
+                jdbc.inOrg(org) { exec("SELECT CAST(? AS int) + 1", listOf(IntegerColumnType() to 1)) { } }
+                jdbc.query { exec("SELECT 2") { } }
+                assertFails {
+                    jdbc.query {
+                        exec("SELECT 3") { }
+                        error("a failed request")
+                    }
                 }
             }
+            jdbc.query { exec("SELECT 4") { } }
+            assertFails { server.recorder.record { error("a failed request") } }
+            jdbc.query { exec("SELECT 5") { } }
+            val again = server.recorder.record { jdbc.query { exec("SELECT 6") { } } }
+            assertEquals(listOf("SELECT 6"), again.map { it.sql })
+            val expected = listOf(
+                "SET LOCAL ROLE $TENANT_ROLE",
+                "SELECT set_config('$TENANT_SETTING', ?, true)",
+                "SELECT CAST(? AS int) + 1",
+                "SELECT 2",
+                "SELECT 3",
+            )
+            assertEquals(expected, sent.map { it.sql })
+            assertEquals(listOf(org.toString()), sent[1].args.map { it.second })
+            assertEquals(1, sent.take(3).map { it.transaction }.distinct().size, "One transaction")
+            assertEquals(3, sent.map { it.transaction }.distinct().size, "Then one each")
+            assertEquals(listOf(3, 1, 1), sent.byTransaction().map { it.size })
+            val plans = jdbc.replay(sent, explain = true)
+            assertEquals(3, plans.size, plans.joinToString("\n\n"))
+            assertTrue(plans.all { "actual time" in it }, plans.joinToString("\n\n"))
+            assertEquals(emptyList(), jdbc.replay(sent, explain = false))
         }
-        jdbc.query { exec("SELECT 4") { } }
-        val expected = listOf(
-            "SET LOCAL ROLE $TENANT_ROLE",
-            "SELECT set_config('$TENANT_SETTING', ?, true)",
-            "SELECT CAST(? AS int) + 1",
-            "SELECT 2",
-            "SELECT 3",
-        )
-        assertEquals(expected, sent.map { it.sql })
-        assertEquals(listOf(org.toString()), sent[1].statement?.positionalParametersValues?.toList())
-        assertEquals(1, sent.take(3).map { it.transaction }.distinct().size, "One transaction")
-        assertEquals(3, sent.map { it.transaction }.distinct().size, "Then one each")
-        val plans = server.database.driver.replay(sent, explain = true)
-        assertEquals(3, plans.size, plans.joinToString("\n\n"))
-    }
 }

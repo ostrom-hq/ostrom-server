@@ -30,6 +30,7 @@ import run.ostrom.server.testing.SentStatement
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.benchTest
 import run.ostrom.server.testing.checkTime
+import run.ostrom.server.testing.replayRecorded
 import io.ktor.client.call.body
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
@@ -84,7 +85,7 @@ class ReplayLoadPostgresTest {
                 coroutineScope {
                     val sampler = launch(Dispatchers.Default) { memory.sample() }
                     val start = TimeSource.Monotonic.markNow()
-                    statements = server.driver.record { server.koin.get<RepositoryAnalysisEngine>().runNext() }
+                    statements = server.recorder.record { server.koin.get<RepositoryAnalysisEngine>().runNext() }
                     start.elapsedNow().also { sampler.cancelAndJoin() }
                 }
             }

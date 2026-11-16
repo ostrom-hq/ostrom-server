@@ -180,10 +180,10 @@ class PhoneYesPostgresTest {
 
     /** Ages every unlock of the app's tokens, as if the yes came [by] later. */
     private suspend fun TestServer.age(by: String) {
-        driver.execute(
+        database.superuserOutsideTransaction(
             "UPDATE identity_api_tokens SET authenticated_at = authenticated_at - INTERVAL '$by' " +
                 "WHERE kind = 'MOBILE'",
-        ).getOrThrow()
+        )
     }
 
     @Test

@@ -33,6 +33,8 @@ import run.ostrom.server.testing.ReadMeasure
 import run.ostrom.server.testing.SentStatement
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.assertNoScan
+import run.ostrom.server.testing.byTransaction
+import run.ostrom.server.testing.replayRecorded
 import run.ostrom.server.testing.benchTest
 import run.ostrom.server.testing.measureRead
 import run.ostrom.server.testing.writeReadReport
@@ -338,7 +340,7 @@ class LaunchPathLoadPostgresTest {
             checked()
             start.elapsedNow()
         }.sorted()
-        val statements = driver.record { checked() }
+        val statements = recorder.record { checked() }
         val median = latencies[latencies.size / 2]
         return WriteMeasure(ReadMeasure(name, statements, explain(statements), latencies, median))
     }
@@ -347,16 +349,8 @@ class LaunchPathLoadPostgresTest {
     // Each transaction of the call is replayed in one of its own, its organization set, then rolled back.
     private suspend fun TestServer.explain(statements: List<SentStatement>): List<String> {
         val plans = mutableListOf<String>()
-        val groups = statements.fold(mutableListOf<MutableList<SentStatement>>()) { groups, sent ->
-            if (groups.lastOrNull()?.last()?.transaction == sent.transaction) {
-                groups.last() += sent
-            } else {
-                groups += mutableListOf(sent)
-            }
-            groups
-        }
         val serving = koin.get<JdbcDatabase>()
-        for (group in groups) {
+        for (group in statements.byTransaction()) {
             plans += serving.query { plansOf(group).also { rollback() } }
         }
         return plans

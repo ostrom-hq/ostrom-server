@@ -68,7 +68,7 @@ import run.ostrom.server.kernel.http.CallsInProgress
 import run.ostrom.server.kernel.http.ReadLimits
 import run.ostrom.server.kernel.http.ReadThrottle
 import run.ostrom.server.testing.assertApiCatalogue
-import run.ostrom.server.testing.RecordingDriver
+import run.ostrom.server.testing.StatementRecorder
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.checkTime
 import run.ostrom.server.testing.serverTest
@@ -794,7 +794,7 @@ class GatesPostgresTest {
             }.sorted()
             times[SAMPLES * 95 / 100 - 1] to times[SAMPLES / 2]
         }
-        assertAskSendsAHandful(server.driver) { ask(actor, request) }
+        assertAskSendsAHandful(server.recorder) { ask(actor, request) }
         checkTime(ASK_MEASURE, rounds.minOf { it.first }, ASK_BUDGET) { rounds.joinToString() }
     }
 
@@ -934,8 +934,8 @@ private const val ASK_MEASURE = "ask a gate (AskGateUseCase): p95 (best, median)
 private const val MAX_ASK_STATEMENTS = 7
 
 /** Fails if one ask sends over [MAX_ASK_STATEMENTS] statements: the fewest of three recordings, as a bench keeps. */
-private suspend fun assertAskSendsAHandful(driver: RecordingDriver, ask: suspend () -> Unit) {
-    val sent = List(ROUNDS) { driver.record(ask) }.minBy { it.size }
+private suspend fun assertAskSendsAHandful(recorder: StatementRecorder, ask: suspend () -> Unit) {
+    val sent = List(ROUNDS) { recorder.record(ask) }.minBy { it.size }
     val statements = sent.joinToString("\n") { it.sql }
     println("ask a gate: ${sent.size} statements\n$statements")
     assertTrue(sent.size <= MAX_ASK_STATEMENTS, "An ask sends ${sent.size} statements:\n$statements")
