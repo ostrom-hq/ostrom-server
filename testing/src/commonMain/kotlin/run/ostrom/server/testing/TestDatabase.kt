@@ -58,11 +58,36 @@ class TestDatabase @Suppress("LongParameterList") private constructor( // Each r
     val superuser: Driver,
     val ownerConfig: DatabaseConfig,
     val servingConfig: DatabaseConfig,
+    internal val superuserConfig: DatabaseConfig,
     private val admin: DatabaseConfig,
     private val id: String,
 ) {
     private val name: String get() = databaseName(id)
     private val url: String get() = admin.url.substringBeforeLast('/') + "/" + name
+
+    private val ownerPool = lazy { JdbcDatabase(ownerConfig, JDBC_POOL_SIZE) }
+    private val superuserPool = lazy { JdbcDatabase(superuserConfig, JDBC_POOL_SIZE) }
+
+    /** [owner] on JDBC, for a test on Exposed: opened at its first use, closed with the database. */
+    val ownerJdbc: JdbcDatabase by ownerPool
+
+    /** [superuser] on JDBC, for a test on Exposed: opened at its first use, closed with the database. */
+    val superuserJdbc: JdbcDatabase by superuserPool
+
+    /**
+     * Runs each of [statements] as the superuser, outside any transaction (autocommit): for what PostgreSQL refuses in
+     * one, `VACUUM` first, before a query plan or a bench is measured.
+     *
+     * @param statements The statements, run one after the other.
+     */
+    suspend fun superuserOutsideTransaction(vararg statements: String) {
+        superuserJdbc.query {
+            // Back to a transaction afterwards, which the block's end commits, empty.
+            connection.autoCommit = true
+            statements.forEach { exec(it) }
+            connection.autoCommit = false
+        }
+    }
 
     /** The name of the owner role, which owns the database, its schema and its tables. */
     val ownerRole: String get() = ownerRoleName(id)
@@ -219,6 +244,8 @@ class TestDatabase @Suppress("LongParameterList") private constructor( // Each r
     /** Closes the pools, drops the database and its owner and serving roles. */
     suspend fun close() {
         try {
+            // Closing a Hikari pool does not throw; the database is dropped WITH (FORCE) whatever is left open.
+            listOf(ownerPool, superuserPool).filter { it.isInitialized() }.forEach { it.value.close() }
             driver.close()
             owner.close()
             superuser.close()
@@ -240,13 +267,15 @@ class TestDatabase @Suppress("LongParameterList") private constructor( // Each r
         // connections their migrations use: a pool of 2 deadlocked.
         private const val OWNER_POOL_SIZE = 6
         private const val SUPERUSER_POOL_SIZE = 2
+        // The owner's and the superuser's JDBC pools, for fixtures and probes.
+        private const val JDBC_POOL_SIZE = 2
         // The pool of withRole by default, the largest one that never waits for the others.
         private const val ROLE_POOL_SIZE = 2
 
         /**
          * The largest pool of [withRole]: CI's PostgreSQL service keeps 97 of its 100 connections for roles other than
-         * superusers, and a few test processes at once each hold up to 14 ([create] and a test server's JDBC pool)
-         * besides the one large pool.
+         * superusers, and a few test processes at once each hold up to 18 ([create], [ownerJdbc], [superuserJdbc] and
+         * a test server's JDBC pool) besides the one large pool.
          */
         const val LARGEST_POOL = 20
 
@@ -300,7 +329,8 @@ class TestDatabase @Suppress("LongParameterList") private constructor( // Each r
                 "CREATE DATABASE $name OWNER $ownerRole",
             )
             val testUrl = config.url.substringBeforeLast('/') + "/" + name
-            val superuser = connectPostgres(config.copy(url = testUrl, maxConnections = SUPERUSER_POOL_SIZE))
+            val superuserConfig = config.copy(url = testUrl, maxConnections = SUPERUSER_POOL_SIZE)
+            val superuser = connectPostgres(superuserConfig)
             superuser.grantAsADeployment(ownerRole, servingRole)
             val serving = DatabaseConfig(testUrl, servingRole, servingPassword, POOL_SIZE)
             val owner = DatabaseConfig(testUrl, ownerRole, ownerPassword, OWNER_POOL_SIZE)
@@ -310,6 +340,7 @@ class TestDatabase @Suppress("LongParameterList") private constructor( // Each r
                 superuser = superuser,
                 ownerConfig = owner,
                 servingConfig = serving,
+                superuserConfig = superuserConfig,
                 admin = config,
                 id = id,
             )
