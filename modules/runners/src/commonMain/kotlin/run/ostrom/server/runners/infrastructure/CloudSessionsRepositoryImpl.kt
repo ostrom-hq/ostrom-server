@@ -557,7 +557,8 @@ internal fun StatementBuilder.sessionResumed(orgId: Uuid, id: Uuid, now: Instant
 
 /**
  * A remote session its device refused, reopened (`SessionStateMachine.reopenable`): paused, wanted running, with
- * nothing left of its end. Only that very row: terminated, remote, ended as `host_refused`.
+ * nothing left of its end. Only that very row: terminated, remote, ended as `host_refused`, and moving to no other
+ * owner (as `sessionResumed`).
  */
 internal fun StatementBuilder.sessionReopened(orgId: Uuid, id: Uuid, now: Instant): ReturningStatement {
     val s = RunnersSessionsTable
@@ -565,7 +566,8 @@ internal fun StatementBuilder.sessionReopened(orgId: Uuid, id: Uuid, now: Instan
         s.columns,
         where = {
             (s.id eq id) and (s.orgId eq orgId) and (s.state eq SessionState.TERMINATED.wire) and
-                (s.kind eq SessionKind.REMOTE.wire) and (s.terminatedReason eq RemoteSessionRules.HOST_REFUSED)
+                (s.kind eq SessionKind.REMOTE.wire) and (s.terminatedReason eq RemoteSessionRules.HOST_REFUSED) and
+                s.transferId.isNull()
         },
     ) {
         it[state] = PAUSED

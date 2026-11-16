@@ -541,6 +541,8 @@ interface RefuseRemoteHostUseCase {
      * configuration, the agent is missing...). The session ends with `failure.code` [RemoteSessionRules.HOST_REFUSED]
      * and the daemon's [reason]. Only from the session's device, for a session started through its daemon that still
      * waits for a host.
+     * The conversation is still on the device: its owner reopens the session by resuming it
+     * ([SessionStateMachine.reopenable], TeamCode #282).
      *
      * @param caller The member.
      * @param device The device of the caller's sign-in.
