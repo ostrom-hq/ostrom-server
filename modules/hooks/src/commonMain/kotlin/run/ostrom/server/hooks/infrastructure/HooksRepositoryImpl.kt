@@ -38,7 +38,7 @@ import kotlin.uuid.Uuid
 /**
  * [HooksRepository] on the tables of [HooksMigrations]: every transaction confined to its organization (`inOrg`,
  * row-level security) and every statement filtered on it. A write takes the organization's hook lock first (a
- * transaction-scoped advisory lock, the `hashtextextended` of the sqlx4k repository, so that both versions take turns
+ * transaction-scoped advisory lock, the `hashtextextended` of the former repository, so that both versions take turns
  * during a rollout), so the organization's hook writes run one after the other, on any replica.
  *
  * @param database The serving role's pool.
@@ -245,7 +245,7 @@ private class ExposedHooksStore(private val orgId: Uuid) : HooksStore {
     private fun mode(wire: String) = FileMode.entries.first { it.wire == wire }
 }
 
-// The advisory lock's key, `'hooks:' || CAST(org_id AS TEXT)` as the sqlx4k repository hashed it.
+// The advisory lock's key, `'hooks:' || CAST(org_id AS TEXT)` as the former repository hashed it.
 private fun lockKey(orgId: Uuid): String = "hooks:$orgId"
 
 private val h = HooksHooks

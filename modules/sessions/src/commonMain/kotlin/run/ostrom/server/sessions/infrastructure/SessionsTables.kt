@@ -12,7 +12,7 @@ import kotlin.time.Instant
 
 // The tables of [SessionsMigrations], as Exposed reads and writes them: the migrations create the schema, these objects
 // only name its columns. `sessions_sessions` is read and written as the serving role with the organization set
-// (`JdbcDatabase.withOrganization`, as the sqlx4k repository), its row-level security policy applying to that role.
+// (`JdbcDatabase.withOrganization`, as the former repository), its row-level security policy applying to that role.
 
 /** The segments of the agent sessions: unique by `(org_id, id)` and by `(org_id, root_id, segment)`. */
 internal object SessionsSessions : Table("sessions_sessions") {

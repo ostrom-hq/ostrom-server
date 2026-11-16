@@ -928,7 +928,7 @@ private val ASK_BUDGET = 50.milliseconds
 private const val ASK_MEASURE = "ask a gate (AskGateUseCase): p95 (best, median) of $ROUNDS rounds"
 
 // The statements of one ask today: the tenant role and the organization (`JdbcDatabase.inOrg`, since the gates moved to
-// Exposed: the role switch is the second wall the sqlx4k repository did not take, measured as the one statement more of
+// Exposed: the role switch is the second wall the former repository did not take, measured as the one statement more of
 // this port), the session's lock and end, the action's lock, the gates of the key and their requests. One more is a
 // query per gate or per request, on any runner.
 private const val MAX_ASK_STATEMENTS = 7

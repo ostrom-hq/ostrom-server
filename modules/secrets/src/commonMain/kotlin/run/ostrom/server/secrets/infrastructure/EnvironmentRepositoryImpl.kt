@@ -53,7 +53,7 @@ import kotlin.uuid.Uuid
  * organization and runs in it (`inOrg`), under row-level security. Every write that touches a member's selection of a
  * variable (assign, bulk, exclude, a personal variant) takes the transaction-scoped advisory lock of that variable,
  * and every create or rename takes the lock of its owner's names, so concurrent writes on two replicas are serialized
- * by the database. The locks keep the sqlx4k repository's `hashtextextended`, so that both versions take turns during
+ * by the database. The locks keep the former repository's `hashtextextended`, so that both versions take turns during
  * a rollout.
  *
  * @param database The serving role's pool.
@@ -106,7 +106,7 @@ class EnvironmentRepositoryImpl(private val database: JdbcDatabase) : Environmen
         return database.inOrg(orgId) {
             lockKeyUntilCommit(variableKey(orgId, variant.variable))
             lockKeyUntilCommit(nameKey(orgId, variant.variable, owner))
-            // One read of the three counts, as the sqlx4k repository's: the locks are held while it runs.
+            // One read of the three counts, as the former repository's: the locks are held while it runs.
             val excluded = sumOrZero(
                 x.select(x.memberId.count())
                     .where { (x.orgId eq orgId) and (x.memberId eq owner) and (x.variable eq variant.variable) },

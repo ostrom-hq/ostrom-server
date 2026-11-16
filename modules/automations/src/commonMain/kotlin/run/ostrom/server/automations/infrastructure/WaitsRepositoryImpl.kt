@@ -85,7 +85,7 @@ internal class WaitsRepositoryImpl(
                 .single()[waits]
             if (open >= maxOpen) return@inOrg CreateOutcome.AT_LIMIT
             // A replay of the same ask (its idempotency key) inserts nothing and returns no row: `ON CONFLICT (org_id,
-            // created_by, idempotency_key) DO UPDATE … WHERE FALSE`, the sqlx4k `DO NOTHING` on that target alone, so
+            // created_by, idempotency_key) DO UPDATE … WHERE FALSE`, the former `DO NOTHING` on that target alone, so
             // any other conflict still fails loudly.
             val inserted = w.upsertReturning(
                 w.orgId, w.createdBy, w.idempotencyKey,

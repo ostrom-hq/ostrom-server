@@ -114,7 +114,7 @@ private val labelsSerializer = MapSerializer(String.serializer(), String.seriali
 
 /**
  * The key of the advisory lock that serializes one organization's launches: `'launches:' || org_id`, the key the
- * former (sqlx4k) version hashed, so that both versions take turns while they serve together.
+ * former version hashed, so that both versions take turns while they serve together.
  */
 internal fun launchesKey(orgId: Uuid): String = "launches:$orgId"
 

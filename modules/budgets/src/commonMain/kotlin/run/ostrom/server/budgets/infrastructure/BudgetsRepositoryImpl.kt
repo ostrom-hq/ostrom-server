@@ -176,7 +176,7 @@ private class StoredLimit(
     val updatedAt: Instant,
 )
 
-/** The key of one subject's advisory lock, as the sqlx4k repository took it (`hashtextextended`). */
+/** The key of one subject's advisory lock, as the former repository took it (`hashtextextended`). */
 private fun subjectKey(orgId: Uuid, scope: String, memberId: Uuid?, workflowId: String?): String =
     "budgets_limits:$orgId:$scope:${memberId ?: ""}:${workflowId ?: ""}"
 

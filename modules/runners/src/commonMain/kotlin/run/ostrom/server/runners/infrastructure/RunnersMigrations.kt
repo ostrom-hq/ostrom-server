@@ -8,7 +8,7 @@ import run.ostrom.server.kernel.database.TENANT_SETTING
 /**
  * The SQL that creates [TENANT_ROLE] (tolerating one created by another module, database or test) and grants it to
  * the migrating user. Roles are global to the PostgreSQL cluster. Kept here, not the kernel's copy: a migration's text
- * is its checksum, and the databases of the sqlx4k server have this one's.
+ * is its checksum, and the databases of the former server have this one's.
  */
 private val TENANT_ROLE_SQL: String = """
     DO $$

@@ -95,7 +95,7 @@ class McpRelayRepositoryImpl(
     private val database: JdbcDatabase,
     private val events: OrgEventPublisher,
 ) : McpRelayRepository {
-    // `ON CONFLICT (org_id, name) DO UPDATE … WHERE FALSE`: nothing written on that target alone (as the sqlx4k
+    // `ON CONFLICT (org_id, name) DO UPDATE … WHERE FALSE`: nothing written on that target alone (as the former
     // `DO NOTHING` on it; the existing row is locked until commit), so any other conflict (the id) still fails
     // loudly. A server left alone returns no row.
     private fun JdbcTransaction.insertServer(server: McpServer, owner: Uuid?): Boolean {
