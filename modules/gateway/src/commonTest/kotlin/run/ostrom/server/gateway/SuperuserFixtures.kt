@@ -5,7 +5,6 @@ import run.ostrom.server.testing.TestServer
 import org.jetbrains.exposed.v1.core.IColumnType
 import org.jetbrains.exposed.v1.core.statements.StatementType
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
-import java.sql.Connection
 
 // The tests' fixtures and probes as the superuser (no row-level security, every table), on its JDBC pool.
 
@@ -19,16 +18,7 @@ internal suspend fun <T> TestServer.asSuperuser(block: JdbcTransaction.() -> T):
 
 /** Runs `VACUUM ANALYZE` on each of [tables] (outside a transaction block, as it must). */
 internal suspend fun TestServer.vacuumAnalyze(vararg tables: String) {
-    database.superuserJdbc.query {
-        commit()
-        val connection = connection.connection as Connection
-        connection.autoCommit = true
-        try {
-            connection.createStatement().use { statement -> tables.forEach { statement.execute("VACUUM ANALYZE $it") } }
-        } finally {
-            connection.autoCommit = false
-        }
-    }
+    database.superuserOutsideTransaction(*tables.map { "VACUUM ANALYZE $it" }.toTypedArray())
 }
 
 /** The first column of every row [sql] returns, as text. */

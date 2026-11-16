@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.gateway
 
-import kotlin.time.Clock
 import kotlin.time.Duration.Companion.minutes
 import run.ostrom.server.gateway.domain.AdmissionRequest
 import run.ostrom.server.gateway.domain.Workload
@@ -9,6 +8,8 @@ import run.ostrom.server.gateway.infrastructure.GatewayDirectives
 import run.ostrom.server.gateway.infrastructure.pacingAdmittedUpdate
 import run.ostrom.server.gateway.infrastructure.pacingRead
 import run.ostrom.server.gateway.infrastructure.sessionDigest
+import run.ostrom.server.kernel.database.databaseNow
+import run.ostrom.server.kernel.database.databaseNowPlus
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.secrets.SecretsModule
 import run.ostrom.server.secrets.domain.SecretCipher
@@ -56,10 +57,10 @@ class PacingQueryPlansTest {
                     it[maxConcurrent] = 1
                     it[minIntervalMs] = 30_000
                     it[message] = "m"
-                    it[createdAt] = Clock.System.now()
-                    it[expiresAt] = Clock.System.now() + 3.minutes
+                    it[createdAt] = databaseNow()
+                    it[expiresAt] = databaseNowPlus(3.minutes)
                     it[contextKey] = "k"
-                    it[lastAdmittedAt] = Clock.System.now()
+                    it[lastAdmittedAt] = databaseNow()
                 }
             }
         }

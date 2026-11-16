@@ -105,9 +105,8 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.jetbrains.exposed.v1.core.SortOrder
-import org.jetbrains.exposed.v1.core.UuidColumnType
 import org.jetbrains.exposed.v1.core.eq
-import org.jetbrains.exposed.v1.core.statements.StatementType
+import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.selectAll
@@ -122,6 +121,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Clock
 import kotlin.uuid.Uuid
 
 /** The compiler against a real PostgreSQL and real HTTP: workflows, packages, the catalogue, and org isolation. */
@@ -938,17 +938,24 @@ class CompilerPostgresTest {
         assertTrue(counts[0].all { it == "0" }, "No org set: nothing")
         assertTrue(counts[1].all { it == "0" }, "Org B: nothing")
         assertTrue(counts[2].all { it != "0" }, "Org A: its rows in every table, $counts")
-        val forged = database.query {
-            confineToOrganization(orgB)
-            exec(
-                "WITH forged AS (INSERT INTO compiler_pins (org_id, repo_key, content_digest, pinned_by, pinned_at) " +
-                    "SELECT ?, 'forged', content_digest, 'x', NOW() FROM compiler_packages LIMIT 1 RETURNING 1) " +
-                    "SELECT COUNT(*) AS n FROM forged",
-                listOf(UuidColumnType() to orgA),
-                StatementType.SELECT,
-            ) { rs -> if (rs.next()) rs.getLong("n") else null }
+        // A pin of A's own package, written with A's id while org B is set: the policy's check refuses it.
+        val p = CompilerPackages
+        val digest = server.asSuperuser {
+            p.select(p.contentDigest).where { p.orgId eq orgA }.limit(1).single()[p.contentDigest]
         }
-        assertEquals(0L, forged, "Org B can neither see nor write org A's rows")
+        val refused = assertFailsWith<ExposedSQLException>("Org B cannot write org A's rows") {
+            database.query {
+                confineToOrganization(orgB)
+                CompilerPins.insert {
+                    it[orgId] = orgA
+                    it[repoKey] = "forged"
+                    it[contentDigest] = digest
+                    it[pinnedBy] = "x"
+                    it[pinnedAt] = Clock.System.now()
+                }
+            }
+        }
+        assertTrue("row-level security" in refused.message.orEmpty(), refused.message)
     }
 
     // Every read of the workflows is bounded: the organization keeps at most 1000, so none is ever cut from a list.

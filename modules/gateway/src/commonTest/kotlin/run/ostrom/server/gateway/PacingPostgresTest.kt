@@ -27,6 +27,8 @@ import run.ostrom.server.secrets.SecretsModule
 import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import run.ostrom.server.sharing.SharingModule
+import run.ostrom.server.kernel.database.databaseNow
+import run.ostrom.server.kernel.database.databaseNowPlus
 import run.ostrom.server.testing.serverTest
 import org.jetbrains.exposed.v1.core.IntegerColumnType
 import org.jetbrains.exposed.v1.core.and
@@ -205,10 +207,10 @@ class PacingPostgresTest {
                 it[scope] = "claude"
                 it[workload] = "INTERACTIVE"
                 it[running] = false
-                it[createdAt] = Clock.System.now()
-                it[readyAt] = Clock.System.now()
-                it[polledAt] = Clock.System.now()
-                it[expiresAt] = Clock.System.now() + 1.minutes
+                it[createdAt] = databaseNow()
+                it[readyAt] = databaseNow()
+                it[polledAt] = databaseNow()
+                it[expiresAt] = databaseNowPlus(1.minutes)
             }
         }
         assertFailsWith<QueueRefusedException> { queue.enter(waiting, first = false) }
