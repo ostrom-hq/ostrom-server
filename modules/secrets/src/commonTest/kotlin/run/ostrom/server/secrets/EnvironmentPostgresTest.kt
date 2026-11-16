@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.secrets
 
+import run.ostrom.server.secrets.infrastructure.EnvironmentAssignments
+import run.ostrom.server.secrets.infrastructure.EnvironmentVariants
+import run.ostrom.server.kernel.database.JdbcDatabase
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.update
 import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.secrets.domain.AssignmentSource
 import run.ostrom.server.secrets.domain.CreateVariantOutcome
@@ -13,8 +20,6 @@ import run.ostrom.server.secrets.domain.StoredEnvironmentVariant
 import run.ostrom.server.secrets.domain.UpdateVariantOutcome
 import run.ostrom.server.secrets.domain.VariantChange
 import run.ostrom.server.secrets.domain.VariantLimitException
-import run.ostrom.server.secrets.infrastructure.executeInOrg
-import run.ostrom.server.secrets.infrastructure.fetchInOrg
 import run.ostrom.server.secrets.presentation.EnvironmentAssignRequest
 import run.ostrom.server.secrets.presentation.EnvironmentAssignmentResponse
 import run.ostrom.server.secrets.presentation.EnvironmentAssignmentsPageResponse
@@ -26,7 +31,6 @@ import run.ostrom.server.secrets.presentation.EnvironmentVariantUpdateRequest
 import run.ostrom.server.secrets.presentation.EnvironmentVariantsPageResponse
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.delete
@@ -56,6 +60,9 @@ import kotlin.uuid.Uuid
  * variants, the caller's own values, who may call what, and another organization.
  */
 class EnvironmentPostgresTest {
+    private suspend fun <T> TestServer.inOrgA(block: JdbcTransaction.() -> T): T =
+        koin.get<JdbcDatabase>().inOrg(TestCallers.orgA, block)
+
     private val variants = "/api/v1/environment/variants"
     private val assignments = "/api/v1/environment/assignments"
     private val exclusions = "/api/v1/environment/exclusions"
@@ -96,10 +103,8 @@ class EnvironmentPostgresTest {
         assertTrue(variant.hasValue)
         assertEquals(1, variant.version)
         assertNull(variant.owner)
-        val stored = server.driver.fetchInOrg(
-            TestCallers.orgA,
-            Statement.create("SELECT envelope FROM environment_variants"),
-        ).getOrThrow().single().get("envelope").asString()
+        val v = EnvironmentVariants
+        val stored = server.inOrgA { v.select(v.envelope).single()[v.envelope] }.orEmpty()
         assertFalse("ghp_org_a" in stored, "Encrypted at rest")
 
         assertEquals(emptyMap(), server.values("member-a").variables, "A shared variant is never an implicit grant")
@@ -422,18 +427,12 @@ class EnvironmentPostgresTest {
         for (variant in listOf(good, bad, odd, empty)) {
             server.assign("$memberA/${variant.variable}", variant.id)
         }
-        server.driver.executeInOrg(
-            TestCallers.orgA,
-            Statement.create("UPDATE environment_variants SET envelope = 'v1:moved' WHERE variable = 'BAD'"),
-        ).getOrThrow()
-        server.driver.executeInOrg(
-            TestCallers.orgA,
-            Statement.create("UPDATE environment_variants SET binding = 'future' WHERE variable = 'ODD'"),
-        ).getOrThrow()
-        server.driver.executeInOrg(
-            TestCallers.orgA,
-            Statement.create("UPDATE environment_variants SET envelope = NULL WHERE variable = 'EMPTY'"),
-        ).getOrThrow()
+        val v = EnvironmentVariants
+        server.inOrgA {
+            v.update({ v.variable eq "BAD" }) { it[envelope] = "v1:moved" }
+            v.update({ v.variable eq "ODD" }) { it[binding] = "future" }
+            v.update({ v.variable eq "EMPTY" }) { it[envelope] = null }
+        }
 
         val values = server.values("member-a")
         assertEquals(mapOf("GOOD" to "value-1"), values.variables)
@@ -452,11 +451,10 @@ class EnvironmentPostgresTest {
             server.assign("$memberA/$variable", variant.id)
         }
         // Stored before 14/11/2026, when GLIBC_TUNABLES was not reserved yet.
-        for (table in listOf("environment_variants", "environment_assignments")) {
-            server.driver.executeInOrg(
-                TestCallers.orgA,
-                Statement.create("UPDATE $table SET variable = 'GLIBC_TUNABLES' WHERE variable = 'LEGACY'"),
-            ).getOrThrow()
+        server.inOrgA {
+            for (variable in listOf(EnvironmentVariants.variable, EnvironmentAssignments.variable)) {
+                variable.table.update({ variable eq "LEGACY" }) { it[variable] = "GLIBC_TUNABLES" }
+            }
         }
 
         val values = server.values("member-a")

@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.secrets
 
+import run.ostrom.server.secrets.infrastructure.SecretsEntries
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.databaseNow
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.update
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.auth.TokenAuthenticator
@@ -12,14 +19,11 @@ import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.secrets.domain.SecretsRepository
 import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import run.ostrom.server.secrets.infrastructure.SecretsKey
-import run.ostrom.server.secrets.infrastructure.executeInOrg
-import run.ostrom.server.secrets.infrastructure.fetchInOrg
 import run.ostrom.server.secrets.presentation.SecretResponse
 import run.ostrom.server.secrets.presentation.SecretWriteRequest
 import run.ostrom.server.secrets.presentation.SecretsPageResponse
 import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.delete
@@ -92,10 +96,9 @@ class SecretsPostgresTest {
             assertFalse("glsa_very_secret_value" in created.bodyAsText(), "The value never comes back")
             val secret = created.body<SecretResponse>()
 
-            val stored = server.driver.fetchInOrg(
-                TestCallers.orgA,
-                Statement.create("SELECT envelope FROM secrets_entries"),
-            ).getOrThrow().single().get("envelope").asString()
+            val e = SecretsEntries
+            val stored =
+                server.koin.get<JdbcDatabase>().inOrg(TestCallers.orgA) { e.select(e.envelope).single()[e.envelope] }
             assertFalse("glsa_very_secret_value" in stored, "Encrypted at rest")
             assertEquals("org", secret.scope)
             assertEquals(TestCallers.adminA.memberId.toString(), secret.updatedBy)
@@ -325,26 +328,27 @@ class SecretsPostgresTest {
                 contentType(ContentType.Application.Json)
                 setBody(SecretWriteRequest("ORG_A_ONLY", "org-a-value-1"))
             }
-            val unfiltered = Statement.create("SELECT name FROM secrets_entries")
-            assertEquals(1, server.driver.fetchInOrg(TestCallers.orgA, unfiltered).getOrThrow().size)
-            assertEquals(
-                0,
-                server.driver.fetchInOrg(TestCallers.orgB, unfiltered).getOrThrow().size,
-                "No WHERE, no leak",
-            )
-            val stolen = Statement.create("UPDATE secrets_entries SET name = 'TAKEN'")
-            assertEquals(0L, server.driver.executeInOrg(TestCallers.orgB, stolen).getOrThrow())
-            val planted = Statement.create(
-                "INSERT INTO secrets_entries " +
-                    "(id, org_id, name, envelope, version, created_at, updated_at, updated_by) " +
-                    "VALUES (:id, :org, 'PLANTED', 'x', 1, now(), now(), :org)",
-            ).bind("id", Uuid.random()).bind("org", TestCallers.orgA)
+            val database = server.koin.get<JdbcDatabase>()
+            val e = SecretsEntries
+            fun JdbcTransaction.unfiltered() = e.select(e.name).map { it[e.name] }
+            assertEquals(1, database.inOrg(TestCallers.orgA) { unfiltered() }.size)
+            assertEquals(0, database.inOrg(TestCallers.orgB) { unfiltered() }.size, "No WHERE, no leak")
+            assertEquals(0, database.inOrg(TestCallers.orgB) { e.update { it[name] = "TAKEN" } })
             assertFails("Another org's row is refused") {
-                server.driver.executeInOrg(TestCallers.orgB, planted).getOrThrow()
+                database.inOrg(TestCallers.orgB) {
+                    e.insert {
+                        it[id] = Uuid.random()
+                        it[orgId] = TestCallers.orgA
+                        it[name] = "PLANTED"
+                        it[envelope] = "x"
+                        it[version] = 1
+                        it[createdAt] = databaseNow()
+                        it[updatedAt] = databaseNow()
+                        it[updatedBy] = TestCallers.orgA
+                    }
+                }
             }
-            val names = server.driver.fetchInOrg(TestCallers.orgA, unfiltered).getOrThrow().map {
-                it.get("name").asString()
-            }
+            val names = database.inOrg(TestCallers.orgA) { unfiltered() }
             assertEquals(listOf("ORG_A_ONLY"), names, "The failed write left nothing")
         }
 
