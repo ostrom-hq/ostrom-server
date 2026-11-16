@@ -147,7 +147,7 @@ class ListBoundsPostgresTest {
             if (status.value >= SERVER_ERROR) f.broken += "$id limit=$size: $status"
         }
         var huge: HttpResponse? = null
-        val sent = driver.record { huge = read(ada, path, "limit=$HUGE") }
+        val sent = recorder.record { huge = read(ada, path, "limit=$HUGE") }
         val answer = checkNotNull(huge)
         if (answer.status.value >= SERVER_ERROR) f.broken += "$id limit=$HUGE: ${answer.status}"
         if (sent.any { asksHuge(it) }) f.broken += "$id limit=$HUGE: the database was asked for $HUGE rows"
@@ -161,7 +161,7 @@ class ListBoundsPostgresTest {
     // The size asked, or one more (the row that says another page follows); not a sentinel such as the audit's
     // `Long.MAX_VALUE` for "no cursor".
     private fun asksHuge(statement: SentStatement): Boolean =
-        HUGE.toString() in statement.sql || statement.statement?.namedParametersValues.orEmpty().values.any {
+        HUGE.toString() in statement.sql || statement.args.any { (_, it) ->
             (it as? Number)?.toLong()?.let { value -> value == HUGE.toLong() || value == HUGE + 1L } == true
         }
 

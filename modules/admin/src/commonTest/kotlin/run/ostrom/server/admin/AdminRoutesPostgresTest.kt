@@ -249,12 +249,11 @@ class AdminRoutesPostgresTest {
     @Test
     fun theAdministratorCheckLooksUpItsKeyAndTheListIsBounded() = serverTest(listOf(AdminModule), overrides) { server ->
         // Fixtures only: removed administrators and the statistics, which no request writes.
-        val fixtures = server.database.superuser
-        fixtures.execute(
+        server.database.superuserOutsideTransaction(
             "INSERT INTO admin_instance_admins (user_id, source, added_at, removed_at) " +
                 "SELECT gen_random_uuid(), 'dashboard', now(), now() FROM generate_series(1, 5000)",
-        ).getOrThrow()
-        fixtures.execute("VACUUM ANALYZE admin_instance_admins").getOrThrow()
+            "VACUUM ANALYZE admin_instance_admins",
+        )
         val database = server.koin.get<JdbcDatabase>()
 
         val check = database.query { plan { isCurrent(Uuid.random()) } }

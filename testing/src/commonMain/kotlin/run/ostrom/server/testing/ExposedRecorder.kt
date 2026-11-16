@@ -1,23 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.testing
 
-import io.github.smyrgeorge.sqlx4k.Statement
-import org.jetbrains.exposed.v1.core.ArrayColumnType
-import org.jetbrains.exposed.v1.core.IColumnType
 import org.jetbrains.exposed.v1.core.Transaction
 import org.jetbrains.exposed.v1.core.statements.GlobalStatementInterceptor
 import org.jetbrains.exposed.v1.core.statements.StatementContext
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Notes in the recording pools of the test servers what the modules on Exposed send while one records
- * ([RecordingDriver.record]), as each sqlx4k pool notes its own: a read bench then counts and replays the statements
- * of a request on either pool. Each statement is kept as Exposed sends it (`?` placeholders) with its values bound by
- * position, and its Exposed transaction is one transaction of the recording.
+ * Notes in the recorders of the test servers what the modules send while one records ([StatementRecorder.record]): a
+ * read bench then counts and replays the statements of a request. Each statement is kept as Exposed sends it (`?`
+ * placeholders) with its values and their column types by position, and its Exposed transaction is one transaction of
+ * the recording.
  *
  * Registered once, by Exposed itself: `JdbcTransaction.globalInterceptors` loads it with the `ServiceLoader` when the
  * class is initialized (`META-INF/services`), before any transaction runs, and the list is never changed again. A
- * test server only attaches its pool ([into]) in a concurrent set: changing Exposed's plain list while another
+ * test server only attaches its recorder ([into]) in a concurrent set: changing Exposed's plain list while another
  * thread's transaction iterates it could throw a ConcurrentModificationException. Per-transaction interceptors would
  * need a hook in the kernel's every transaction for a test-only concern.
  */
@@ -34,17 +31,14 @@ internal class ExposedRecorder : GlobalStatementInterceptor {
         attached.forEach { it.end(transaction) }
     }
 
-    /** One test server's pool, and the number of each Exposed transaction in its recording. */
-    private class Attached(private val driver: RecordingDriver) {
+    /** One test server's recorder, and the number of each Exposed transaction in its recording. */
+    private class Attached(private val recorder: StatementRecorder) {
         private val transactions = ConcurrentHashMap<String, Int>()
 
         fun note(transaction: Transaction, context: StatementContext) {
-            if (!driver.isRecording) return
-            val id = transactions.computeIfAbsent(transaction.id) { driver.newTransaction() }
-            val sql = replayableSql(context.sql(transaction), context.args.map { it.first })
-            val statement = Statement.create(sql)
-            context.args.forEachIndexed { index, (_, value) -> statement.bind(index, replayable(value)) }
-            driver.note(sql, statement, id)
+            val recording = recorder.recording ?: return
+            val id = transactions.computeIfAbsent(transaction.id) { recorder.newTransaction() }
+            recording.add(SentStatement(context.sql(transaction), context.args.toList(), id))
         }
 
         fun end(transaction: Transaction) {
@@ -53,49 +47,19 @@ internal class ExposedRecorder : GlobalStatementInterceptor {
     }
 
     companion object {
-        /**
-         * [value] as sqlx4k replays it: an array (`= ANY(?)`, a list) in PostgreSQL's text form, cast back to its type
-         * by [replayableSql], since sqlx4k would expand a list into several values.
-         */
-        internal fun replayable(value: Any?): Any? = if (value is List<*>) {
-            value.joinToString(",", "{", "}") { element ->
-                "\"" + element.toString().replace("\\", "\\\\").replace("\"", "\\\"") + "\""
-            }
-        } else {
-            value
-        }
-
-        /** [sql] with each placeholder of an array cast from its text form ([replayable]) to its type. */
-        internal fun replayableSql(sql: String, types: List<IColumnType<*>>): String {
-            if (types.none { it is ArrayColumnType<*, *> }) return sql
-            val replayed = StringBuilder()
-            var index = 0
-            var quoted = false
-            for (char in sql) {
-                if (char == '\'') quoted = !quoted
-                val type = if (char == '?' && !quoted) types.getOrNull(index++) else null
-                if (type is ArrayColumnType<*, *>) {
-                    replayed.append("CAST(? AS ${type.sqlType()})")
-                } else {
-                    replayed.append(char)
-                }
-            }
-            return replayed.toString()
-        }
-
         private val attached: MutableSet<Attached> = ConcurrentHashMap.newKeySet()
 
         /**
-         * Records the Exposed statements of every transaction into [driver] while [block] runs (when [driver]
+         * Records the statements of every Exposed transaction into [recorder] while [block] runs (when [recorder]
          * records), then stops.
          *
-         * @param driver The test server's recording pool.
+         * @param recorder The test server's recorder.
          * @param block The test server's life.
          *
          * @return What [block] returns.
          */
-        suspend fun <T> into(driver: RecordingDriver, block: suspend () -> T): T {
-            val attachment = Attached(driver)
+        suspend fun <T> into(recorder: StatementRecorder, block: suspend () -> T): T {
+            val attachment = Attached(recorder)
             attached += attachment
             try {
                 return block()

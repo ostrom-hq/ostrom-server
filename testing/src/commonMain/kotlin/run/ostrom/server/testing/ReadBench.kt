@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.testing
 
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.Transaction
+import run.ostrom.server.kernel.database.JdbcDatabase
 import io.ktor.client.HttpClient
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
@@ -15,6 +13,7 @@ import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.writeString
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.TimeSource
@@ -71,11 +70,12 @@ suspend fun TestServer.measureRead(
         }
         repeat(WARM_UP_CALLS) { checked() }
         val http = List(HTTP_CALLS) { timed { checked() } }.sorted()[HTTP_CALLS / 2]
-        val statements = (1..RECORDINGS).map { driver.record(checked) }.minBy { it.size }
-        val plans = List(TRIALS) { database.driver.replay(statements, explain = true, writes) }
+        val statements = (1..RECORDINGS).map { recorder.record(checked) }.minBy { it.size }
+        val serving = koin.get<JdbcDatabase>()
+        val plans = List(TRIALS) { serving.replay(statements, explain = true, writes) }
             .sortedBy(::databaseTime)[TRIALS / 2]
-        val latencies = database.withRole(poolSize = CONCURRENT_CALLS) { role, pool ->
-            database.superuser.execute("GRANT ${database.servingRole} TO $role").getOrThrow()
+        val latencies = database.withJdbcRole(poolSize = CONCURRENT_CALLS) { role, pool ->
+            database.superuserJdbc.query { exec("GRANT ${database.servingRole} TO $role") }
             val callers = 1..CONCURRENT_CALLS
             // Every caller warmed up first, then all timed together: their replays overlap CONCURRENT_CALLS wide.
             coroutineScope { callers.map { async { pool.replay(statements, explain = true, writes) } }.awaitAll() }
@@ -120,59 +120,33 @@ private inline fun timed(block: () -> Unit): Duration {
  * @param writes Whether `UPDATE`, `INSERT` and `DELETE` statements are explained too, as queries.
  * @return The plan of each query, in order; none without [explain].
  */
-internal suspend fun Driver.replay(
+internal suspend fun JdbcDatabase.replay(
     statements: List<SentStatement>,
     explain: Boolean,
     writes: Boolean = false,
 ): List<String> {
     val plans = mutableListOf<String>()
     for (group in statements.byTransaction()) {
-        val tx = begin().getOrThrow()
-        try {
-            plans += tx.replay(group, explain, writes)
-        } finally {
-            tx.rollback().getOrThrow()
-        }
+        plans += query { replay(group, explain, writes).also { rollback() } }
     }
     return plans
 }
 
-private suspend fun Transaction.replay(group: List<SentStatement>, explain: Boolean, writes: Boolean): List<String> =
+private fun JdbcTransaction.replay(group: List<SentStatement>, explain: Boolean, writes: Boolean): List<String> =
     group.mapNotNull { sent ->
         // A query (a write too, with writes), apart from setting the organization or taking a lock.
         val query = QUERY.containsMatchIn(sent.sql) || (writes && WRITE.containsMatchIn(sent.sql))
-        if (query && !SETUP.containsMatchIn(sent.sql)) {
-            val rows = fetchAll(sent.copy(if (explain) EXPLAIN else "")).getOrThrow()
-            if (explain) rows.joinToString("\n") { it.get("QUERY PLAN").asString() } else null
+        if (explain && query && !SETUP.containsMatchIn(sent.sql)) {
+            replayRecorded(sent, EXPLAIN).joinToString("\n")
         } else {
-            execute(sent.copy("")).getOrThrow()
+            replayRecorded(sent)
             null
         }
-    }
-
-private fun List<SentStatement>.byTransaction(): List<List<SentStatement>> =
-    fold(mutableListOf<MutableList<SentStatement>>()) { groups, sent ->
-        if (groups.lastOrNull()?.let { it.last().transaction == sent.transaction } == true) {
-            groups.last() += sent
-        } else {
-            groups += mutableListOf(sent)
-        }
-        groups
     }
 
 private val QUERY = Regex("^[\\s(]*(SELECT|WITH|VALUES|TABLE)\\b", RegexOption.IGNORE_CASE)
 private val WRITE = Regex("^\\s*(UPDATE|INSERT|DELETE)\\b", RegexOption.IGNORE_CASE)
 private val SETUP = Regex("set_config\\(|pg_advisory", RegexOption.IGNORE_CASE)
-
-// A fresh statement for each run: the server's own is never shared between the concurrent replays.
-private fun SentStatement.copy(prefix: String): Statement {
-    val copy = Statement.create(prefix + sql)
-    // A null bound with `bindNull` is a typed null, bound again as it is.
-    statement?.namedParametersValues.orEmpty().forEach { (name, value) -> copy.bind(name, value) }
-    // An Exposed statement's values are bound by position (ExposedRecorder).
-    statement?.positionalParametersValues.orEmpty().forEachIndexed { index, value -> copy.bind(index, value) }
-    return copy
-}
 
 /**
  * Fails unless this route keeps the shape of a read page: no sequential scan of any of [largeTables], the organization

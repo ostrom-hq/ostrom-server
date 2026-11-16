@@ -47,9 +47,10 @@ class SessionRunIdsQueryPlansTest {
     @Test
     fun aPageOfSessionsFindsItsRunsThroughTheIndexes() = benchTest(modules, null) { server ->
         orgs.forEachIndexed { index, org -> server.seed(org, index) }
-        for (table in listOf("launches_launches", "workflow_runs_visits")) {
-            server.database.owner.execute("VACUUM ANALYZE $table").getOrThrow()
-        }
+        server.database.superuserOutsideTransaction(
+            "VACUUM ANALYZE launches_launches",
+            "VACUUM ANALYZE workflow_runs_visits",
+        )
         val database = server.koin.get<JdbcDatabase>()
         // The cloud sessions of the first 50 even launches, with their runs.
         val sessions = (1..PAGE).associate { n -> Uuid.fromLongs(0, n * 2L) to "wfr_${n * 2}" }
@@ -89,24 +90,20 @@ class SessionRunIdsQueryPlansTest {
         assertEquals(emptyMap(), runs.runsOf(acme, emptyList()))
     }
 
-    // No `::` cast and no colon at all in the seeds: the driver would read `:x` as a named parameter. A launch `i`
-    // ran, when `i` is even, in the cloud session whose id is the organization's position then `i` in hexadecimal; its
-    // run `wfr_i` visited the agent node that started it, then a gate node (no session).
+    // A launch `i` ran, when `i` is even, in the cloud session whose id is the organization's position then `i` in
+    // hexadecimal; its run `wfr_i` visited the agent node that started it, then a gate node (no session).
     private suspend fun TestServer.seed(org: Uuid, index: Int) {
         val session = "CAST(lpad(to_hex($index), 16, '0') || lpad(to_hex(i), 16, '0') AS uuid)"
-        val fixtures = database.superuser
-        fixtures.execute(
+        database.superuserOutsideTransaction(
             "INSERT INTO launches_launches (org_id, id, user_id, dev, agent, created_at, expires_at, " +
                 "cloud_session_id) SELECT CAST('$org' AS uuid), 'lch' || i, CAST('$org' AS uuid), 'dev', " +
                 "'claude-code', now(), now() + INTERVAL '1 hour', CASE WHEN i % 2 = 0 THEN $session END " +
                 "FROM generate_series(1, $LAUNCHES_PER_ORG) AS i",
-        ).getOrThrow()
-        fixtures.execute(
             "INSERT INTO workflow_runs_visits (org_id, run_id, seq, node_id, at, session_id) " +
                 "SELECT CAST('$org' AS uuid), 'wfr_' || i, s, CASE WHEN s = 1 THEN 'build' ELSE 'review' END, " +
                 "now(), CASE WHEN s = 1 AND i % 2 = 0 THEN $session END " +
                 "FROM generate_series(1, $LAUNCHES_PER_ORG) AS i, generate_series(1, 2) AS s",
-        ).getOrThrow()
+        )
     }
 
     private companion object {

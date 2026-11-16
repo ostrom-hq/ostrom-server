@@ -3,6 +3,7 @@ package run.ostrom.server.app
 
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
+import org.jetbrains.exposed.v1.core.statements.StatementType
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -109,8 +110,12 @@ class SchemaTenancyPostgresTest {
             .removeSuffix("::name") == "current_user='$ROUTER'"
 
     private suspend fun TestServer.rows(sql: String, vararg columns: String): List<Map<String, String?>> =
-        database.superuser.fetchAll(sql).getOrThrow().map { row ->
-            columns.associateWith { row.get(it).asStringOrNull() }
+        database.superuserJdbc.query {
+            val rows = mutableListOf<Map<String, String?>>()
+            exec(sql, explicitStatementType = StatementType.SELECT) { result ->
+                while (result.next()) rows += columns.associateWith { result.getString(it) }
+            }
+            rows
         }
 
     private companion object {
