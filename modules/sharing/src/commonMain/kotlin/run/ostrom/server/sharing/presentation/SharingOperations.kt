@@ -61,6 +61,7 @@ internal fun ApiCatalog.sharingOperations() {
     groupOperations()
     groupChangeOperations()
     groupMemberOperations()
+    memberPolicyOperations()
 }
 
 /** Reading and enrolling the shared accounts. */

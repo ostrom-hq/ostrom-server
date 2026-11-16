@@ -12,7 +12,9 @@ import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.sharing.domain.AccountGroups
 import run.ostrom.server.sharing.domain.AccountSlotRepository
+import run.ostrom.server.sharing.domain.MemberPoolRepository
 import run.ostrom.server.sharing.domain.NoAccountGroups
+import run.ostrom.server.sharing.domain.NoMemberPools
 import run.ostrom.server.sharing.domain.NoQuotaHistory
 import run.ostrom.server.sharing.domain.QuotaHistoryRepository
 import run.ostrom.server.sharing.domain.SharedAccountRepository
@@ -72,6 +74,7 @@ class GatewayModuleRegistrationTest {
         val optional = module {
             single<QuotaHistoryRepository> { NoQuotaHistory }
             single<AccountGroups> { NoAccountGroups }
+            single<MemberPoolRepository> { NoMemberPools }
             single<SpendGuard> { SpendGuard { SpendDecision.Allowed } }
         }
         koinApplication { modules(GatewayModule.koinModule, required) }.let {

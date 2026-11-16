@@ -214,8 +214,11 @@ object SharingRules {
 
     /** Refuses a pool identifier that is not 1 to 36 letters, digits, underscores or hyphens (TeamCode's). */
     fun requirePool(value: String) {
-        if (!pool.matches(value)) throw InvalidPoolException()
+        if (!isPool(value)) throw InvalidPoolException()
     }
+
+    /** Whether [value] is a pool identifier: 1 to 36 letters, digits, underscores or hyphens (TeamCode's). */
+    fun isPool(value: String): Boolean = pool.matches(value)
 
     /** Refuses limits out of range (a NaN ceiling is in no range). */
     fun requireLimits(limits: AccountLimits) {

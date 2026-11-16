@@ -27,6 +27,7 @@ import run.ostrom.server.secrets.domain.AdminRequiredException
 import run.ostrom.server.sharing.domain.AccountLimits
 import run.ostrom.server.sharing.domain.AccountProvider
 import run.ostrom.server.sharing.domain.ActiveSession
+import run.ostrom.server.sharing.domain.MemberPoolRepository
 import run.ostrom.server.sharing.domain.NoAccountGroups
 import run.ostrom.server.sharing.domain.QuotaHistoryRepository
 import run.ostrom.server.sharing.domain.QuotaWindow
@@ -127,8 +128,20 @@ class DirectivesTest {
 
         override suspend fun available(orgId: Uuid, memberId: Uuid) = available
     }
+    private val homes = mutableMapOf<Uuid, String>()
+    private val reads = mutableListOf<Set<Uuid>>()
+    private val pools = object : MemberPoolRepository {
+        override suspend fun poolOf(orgId: Uuid, memberId: Uuid) = homes[memberId]
+
+        override suspend fun poolsOf(orgId: Uuid, memberIds: Collection<Uuid>): Map<Uuid, String> {
+            reads += memberIds.toSet()
+            return homes.filterKeys { it in memberIds }
+        }
+
+        override suspend fun setPool(orgId: Uuid, memberId: Uuid, poolId: String?) = Unit
+    }
     private val update = UpdateDirectivesUseCaseImpl(
-        PacingSources(accounts, history, slots, NoAccountGroups, settings, spend),
+        PacingSources(accounts, history, slots, NoAccountGroups, settings, spend, pools),
         directives,
         clock,
     )
@@ -215,6 +228,27 @@ class DirectivesTest {
         assertEquals(Pace.UNKNOWN, directives.rows.getValue(member to "s1").directive.advice.pace)
         assertEquals(Pace.CAN_INCREASE, directives.rows.getValue(member to "s2").directive.advice.pace)
         assertEquals(Pace.UNKNOWN, directives.rows.getValue(member to "").directive.advice.pace)
+    }
+
+    @Test
+    fun aMemberIsPacedOnTheAccountsOfTheirHomePoolOnly() = runTest {
+        val other = Gw.otherA.memberId
+        homes[member] = "eu"
+        val outside = accounts.share(AccountProvider.CLAUDE, "a", clock)
+        readings[outside.id] = listOf(QuotaWindow("five_hour", .99, clock.now + 1.hours, clock.now))
+        val eu = accounts.share(AccountProvider.CODEX, "b", clock)
+        accounts.update(eu.copy(poolId = "eu"))
+        readings[eu.id] = rising(.3, 0.0, "five_hour", clock.now + 1.hours) +
+            rising(.1, 0.0, "seven_day", clock.now + 5.hours)
+        slots.sessions += ActiveSession(member, "s1", outside.id)
+        slots.sessions += ActiveSession(member, "s2", eu.id)
+        slots.sessions += ActiveSession(other, "s3", outside.id)
+        update(Gw.orgA)
+        // The exhausted account is in no pool: it never paces a member of "eu", but it paces one in no pool.
+        assertEquals(Pace.UNKNOWN, directives.rows.getValue(member to "s1").directive.advice.pace)
+        assertEquals(Pace.CAN_INCREASE, directives.rows.getValue(member to "s2").directive.advice.pace)
+        assertEquals(Pace.PAUSE, directives.rows.getValue(other to "s3").directive.advice.pace)
+        assertEquals(listOf(setOf(member, other)), reads, "The pools of the members advised, read once a pass")
     }
 
     @Test

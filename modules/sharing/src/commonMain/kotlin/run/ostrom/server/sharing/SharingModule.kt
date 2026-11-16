@@ -35,6 +35,9 @@ import run.ostrom.server.sharing.domain.HandOverSharedAccountUseCaseImpl
 import run.ostrom.server.sharing.domain.ListSharedAccountsUseCase
 import run.ostrom.server.sharing.domain.ListSharedAccountsUseCaseImpl
 import run.ostrom.server.sharing.domain.MemberNames
+import run.ostrom.server.sharing.domain.MemberPoliciesUseCase
+import run.ostrom.server.sharing.domain.MemberPoliciesUseCaseImpl
+import run.ostrom.server.sharing.domain.MemberPoolRepository
 import run.ostrom.server.sharing.domain.NoAccountSpendReader
 import run.ostrom.server.sharing.domain.NoMemberLogins
 import run.ostrom.server.sharing.domain.OAuthRefresher
@@ -57,6 +60,7 @@ import run.ostrom.server.sharing.infrastructure.AccountRefreshRepositoryImpl
 import run.ostrom.server.sharing.infrastructure.AccountSlotRepositoryImpl
 import run.ostrom.server.sharing.infrastructure.GroupRepositoryImpl
 import run.ostrom.server.sharing.infrastructure.HttpOAuthRefresher
+import run.ostrom.server.sharing.infrastructure.MemberPoolRepositoryImpl
 import run.ostrom.server.sharing.infrastructure.ProviderQuotaHeaderParser
 import run.ostrom.server.sharing.infrastructure.QuotaHistoryRepositoryImpl
 import run.ostrom.server.sharing.infrastructure.QuotaWindowRepositoryImpl
@@ -66,9 +70,11 @@ import run.ostrom.server.sharing.infrastructure.SharingMigrations
 import run.ostrom.server.sharing.infrastructure.SharingOrgsImpl
 import run.ostrom.server.sharing.presentation.ForecastRoutesDependencies
 import run.ostrom.server.sharing.presentation.GroupRoutesDependencies
+import run.ostrom.server.sharing.presentation.MemberPolicyRoutesDependencies
 import run.ostrom.server.sharing.presentation.SharingRoutesDependencies
 import run.ostrom.server.sharing.presentation.forecastRoutes
 import run.ostrom.server.sharing.presentation.groupRoutes
+import run.ostrom.server.sharing.presentation.memberPolicyRoutes
 import run.ostrom.server.sharing.presentation.sharingOperations
 import run.ostrom.server.sharing.presentation.sharingRoutes
 import io.ktor.client.HttpClient
@@ -124,7 +130,8 @@ object SharingModule : ServerModule {
         single<AccountGroups> { AccountGroupsImpl(get()) }
         single<AccountSlotRepository> { AccountSlotRepositoryImpl(get()) }
         single<SharingOrgs> { SharingOrgsImpl(get()) }
-        single { SharedAccountPool(get(), get(), get(), get(), get(), spend(), get(), get(), get(), get()) }
+        single<MemberPoolRepository> { MemberPoolRepositoryImpl(get()) }
+        single { SharedAccountPool(get(), get(), get(), get(), get(), spend(), get(), get(), get(), get(), get()) }
         single<ShareAccountUseCase> { ShareAccountUseCaseImpl(get(), get(), get()) }
         single { MemberNames(logins(), get()) }
         single<ListSharedAccountsUseCase> {
@@ -140,6 +147,11 @@ object SharingModule : ServerModule {
         single<GroupsUseCase> { GroupsUseCaseImpl(get(), get(), logins(), get()) }
         single<GroupMembersUseCase> { GroupMembersUseCaseImpl(get(), logins()) }
         single<ForecastService> { ForecastServiceImpl(get(), get(), get(), get()) }
+        single<MemberPoliciesUseCase> { MemberPoliciesUseCaseImpl(get(), logins()) }
+        single {
+            val callers = getOrNull<CallerResolver>() ?: OrgPrincipalCallerResolver(get())
+            MemberPolicyRoutesDependencies(callers, get(), get())
+        }
         single {
             ForecastRoutesDependencies(getOrNull<CallerResolver>() ?: OrgPrincipalCallerResolver(get()), get())
         }
@@ -173,6 +185,7 @@ object SharingModule : ServerModule {
         route.sharingRoutes(koin.get())
         route.groupRoutes(koin.get())
         route.forecastRoutes(koin.get())
+        route.memberPolicyRoutes(koin.get())
     }
 
     /** The prune of the quota history, each minute, one replica at a time (TeamCode's admission maintenance). */

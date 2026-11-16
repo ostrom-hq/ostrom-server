@@ -156,10 +156,10 @@ sealed interface LeaseResult {
 
 /**
  * The org's pool of shared personal accounts, as TeamCode runs it: an account serves when READY, out of cool-down,
- * under its own limits (concurrency, utilization ceiling of every current window, monthly and daily budgets) and
- * allowed for the member. Among those, a session sticks to its account (the provider's prompt cache lives there),
- * otherwise the least used account wins, then the higher priority. An account whose tokens cannot be renewed is
- * skipped for the next one.
+ * under its own limits (concurrency, utilization ceiling of every current window, monthly and daily budgets), in the
+ * member's home pool (TeamCode's placement: the same `poolId`, or none for a member in no pool) and allowed for them.
+ * Among those, a session sticks to its account (the provider's prompt cache lives there), otherwise the least used
+ * account wins, then the higher priority. An account whose tokens cannot be renewed is skipped for the next one.
  *
  * Concurrency and affinity are in the database ([AccountSlotRepository]), shared by every replica: a slot is taken
  * under the candidates' row locks, so two replicas never fill an account past its limit together, and a session finds
@@ -176,8 +176,9 @@ sealed interface LeaseResult {
  *   them when one of their groups, where they are not paused, holds it.
  * @param logger Where an account resting until its owner acts is reported.
  * @param history The windows' readings over time, which the forecasts read: each observation is recorded there too.
+ * @param pools The members' home pools, read once per lease.
  */
-// One port per owner: accounts, windows, tokens, slots, headers, spend, time, groups, logs, history.
+// One port per owner: accounts, windows, tokens, slots, headers, spend, time, groups, logs, history, pools.
 @Suppress("LongParameterList")
 class SharedAccountPool(
     internal val accounts: SharedAccountRepository,
@@ -190,6 +191,7 @@ class SharedAccountPool(
     private val groups: AccountGroups = NoAccountGroups,
     internal val logger: Logger,
     private val history: QuotaHistoryRepository = NoQuotaHistory,
+    private val pools: MemberPoolRepository = NoMemberPools,
 ) {
     /**
      * Leases an account.
@@ -200,8 +202,9 @@ class SharedAccountPool(
      * @param sessionKey The agent session, for affinity, if known.
      */
     suspend fun lease(orgId: Uuid, memberId: Uuid, provider: AccountProvider, sessionKey: String?): LeaseResult {
-        // The agent names its session; the repository scopes it to the org and the member.
-        val request = Request(orgId, memberId, provider, sessionKey)
+        // The agent names its session; the repository scopes it to the org and the member. The member's home pool is
+        // read once: every turn of the loop below keeps to it.
+        val request = Request(orgId, memberId, provider, sessionKey, pools.poolOf(orgId, memberId))
         val tried = mutableSetOf<Uuid>()
         // Each turn either answers or adds one account to `tried`: the loop ends within the org's account count.
         while (true) {
@@ -209,7 +212,13 @@ class SharedAccountPool(
         }
     }
 
-    private class Request(val orgId: Uuid, val memberId: Uuid, val provider: AccountProvider, val sessionKey: String?)
+    private class Request(
+        val orgId: Uuid,
+        val memberId: Uuid,
+        val provider: AccountProvider,
+        val sessionKey: String?,
+        val home: String?,
+    )
 
     /** The accounts that may serve now with their load, and when a blocked one frees up. */
     private class Candidates(val open: List<Pair<SharedAccount, Double>>, val retryAt: Instant?)
@@ -217,7 +226,8 @@ class SharedAccountPool(
     /** One try: a lease, a refusal, or null when the chosen account could not renew its tokens (now in [tried]). */
     private suspend fun attempt(request: Request, tried: MutableSet<Uuid>): LeaseResult? {
         val now = clock.now()
-        val ready = accounts.ready(request.orgId, request.provider).filter { it.id !in tried }
+        val ready = accounts.ready(request.orgId, request.provider)
+            .filter { it.id !in tried && it.inPool(request.home) }
         val usable = groups.allowed(request.orgId, request.memberId, ready, now)
         val candidates = candidates(request.orgId, usable, now)
         // Not cancellable: a slot committed must reach serve(), which gives it back if the request is cancelled.

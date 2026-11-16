@@ -86,7 +86,9 @@ import run.ostrom.server.kernel.settings.SettingsSection
 import run.ostrom.server.secrets.domain.CallerResolver
 import run.ostrom.server.secrets.domain.OrgPrincipalCallerResolver
 import run.ostrom.server.sharing.domain.AccountGroups
+import run.ostrom.server.sharing.domain.MemberPoolRepository
 import run.ostrom.server.sharing.domain.NoAccountGroups
+import run.ostrom.server.sharing.domain.NoMemberPools
 import run.ostrom.server.sharing.domain.NoQuotaHistory
 import run.ostrom.server.sharing.domain.QuotaHistoryRepository
 import io.ktor.client.HttpClient
@@ -182,6 +184,7 @@ object GatewayModule : ServerModule {
                 groups = getOrNull<AccountGroups>() ?: NoAccountGroups,
                 settings = get(),
                 spend = getOrNull<SpendGuard>() ?: AllowAllSpend,
+                pools = getOrNull<MemberPoolRepository>() ?: NoMemberPools,
             )
             UpdateDirectivesUseCaseImpl(sources, get(), get())
         }
