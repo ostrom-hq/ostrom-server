@@ -74,9 +74,8 @@ class SessionsReadsBenchTest {
         listOf(InstanceModule, ReceiptsModule, GatesModule, SessionsModule),
         overrides,
     ) { server ->
-        val fixtures = server.database.superuser
-        orgs.forEach { fixtures.execute(sessionsOf(it)).getOrThrow() }
-        fixtures.execute("VACUUM ANALYZE sessions_sessions").getOrThrow()
+        val fixtures = orgs.map(::sessionsOf) + "VACUUM ANALYZE sessions_sessions"
+        server.database.superuserOutsideTransaction(*fixtures.toTypedArray())
 
         val reads = listOf(
             Read("/api/v1/sessions", "", PAGE),
