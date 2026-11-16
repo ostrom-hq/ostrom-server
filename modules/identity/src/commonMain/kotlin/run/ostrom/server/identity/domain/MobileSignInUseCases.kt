@@ -136,7 +136,8 @@ interface ExchangeMobileCodeUseCase {
      *   InvalidOsVersionException When what the app says of its installation is out of bounds; the code is not spent.
      * @throws InvalidMobileCodeException When the code is unknown, used or expired, or the verifier or the redirect
      *   URI does not match.
-     * @throws DeviceLimitException When the installation is new and the person holds [MAX_REGISTERED_DEVICES] already.
+     * @throws DeviceLimitException When the installation is new and the person holds [MAX_REGISTERED_DEVICES] already;
+     *   the code is spent (it was taken to know the person) and no other phone is signed out.
      */
     suspend operator fun invoke(
         code: String,
@@ -156,7 +157,9 @@ interface ExchangeMobileCodeUseCase {
  * @param users Reads the user.
  * @param services Makes and hashes secrets, computes the PKCE challenge, limits the rate; the clock.
  * @param audit The audit log.
+ * @param devices The registered devices, to refuse a new installation past the limit before any phone is signed out.
  */
+@Suppress("LongParameterList") // The exchange's stores and services, and the devices of an app's installation.
 class ExchangeMobileCodeUseCaseImpl(
     private val codes: MobileCodesRepository,
     private val mobileTokens: MobileTokensRepository,
@@ -164,6 +167,7 @@ class ExchangeMobileCodeUseCaseImpl(
     private val users: UsersRepository,
     private val services: SignInServices,
     private val audit: AuditLog,
+    private val devices: DevicesRepository,
 ) : ExchangeMobileCodeUseCase {
     override suspend fun invoke(
         code: String,
@@ -191,6 +195,10 @@ class ExchangeMobileCodeUseCaseImpl(
         isPkceVerifier(verifier) && constantTimeEquals(services.hasher.pkceChallenge(verifier), codeChallenge)
 
     private suspend fun issueToken(user: User, now: Instant, installation: DeviceLoginIdentity?): IssuedMobileToken {
+        val installationId = installation?.installationId
+        // Refused before the oldest phone makes room: a sign-in that fails signs no one out. Checked again under the
+        // person's lock when the device is registered.
+        if (installationId != null) requireRoomFor(user.id, installationId)
         // listLive is newest first: what is left beyond the newest MAX_PHONES_PER_USER - 1 makes room for this one.
         tokens.listLive(user.id, MOBILE_KIND, now).drop(MAX_PHONES_PER_USER - 1).forEach {
             tokens.revoke(user.id, it.id, now)
@@ -204,7 +212,6 @@ class ExchangeMobileCodeUseCaseImpl(
         val unlockKey = services.generator.secret()
         val secretHash = services.hasher.hash(issued.secret)
         val unlockKeyHash = services.hasher.hash(unlockKey)
-        val installationId = installation?.installationId
         val stored = if (installationId == null) {
             mobileTokens.create(issued.token, secretHash, unlockKeyHash)
             issued
@@ -221,6 +228,11 @@ class ExchangeMobileCodeUseCaseImpl(
         }
         audit.record(AuditEntry(null, user.id, "token.created", "token", issued.token.id.toString(), MOBILE_DETAILS))
         return IssuedMobileToken(stored, unlockKey, user, expiresAt)
+    }
+
+    private suspend fun requireRoomFor(userId: Uuid, installationId: String) {
+        val known = devices.find(userId, installationId) != null
+        if (!known && devices.count(userId) >= MAX_REGISTERED_DEVICES) throw DeviceLimitException()
     }
 
     private companion object {

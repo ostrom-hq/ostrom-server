@@ -109,7 +109,8 @@ class MobileSignInTest {
         methods, attempts, services, resolve, LinkIdentityUseCaseImpl(users, RecordingAuditLog(), clock),
         StartWebSessionUseCaseImpl(InMemoryWebSessionsRepository(), generator, hasher, clock),
     )
-    private val exchange = ExchangeMobileCodeUseCaseImpl(codes, mobileTokens, apiTokens, users, services, audit)
+    private val exchange =
+        ExchangeMobileCodeUseCaseImpl(codes, mobileTokens, apiTokens, users, services, audit, mobileTokens.devices)
     private val unlock = UnlockMobileAppUseCaseImpl(mobileTokens, hasher, limiter, audit, clock)
     private val authenticator =
         CredentialAuthenticatorImpl(apiTokens, InMemoryWebSessionsRepository(), hasher, clock, emptySet(), "")
@@ -431,7 +432,8 @@ class MobileSignInTest {
             val state = startMobile()
             return assertNotNull(completeMobile("github", state, state, "good", null).code)
         }
-        val userId = exchange(code(), verifier, APP_REDIRECT_URI, "ip").user.id
+        val phones = (1..MAX_PHONES_PER_USER).map { exchange(code(), verifier, APP_REDIRECT_URI, "ip") }
+        val userId = phones.first().user.id
         repeat(MAX_REGISTERED_DEVICES) {
             val other = DeviceSignInRequest(Uuid.random().toString(), "d", null, null)
             mobileTokens.devices.signIn(userId, other, clock.now)
@@ -440,6 +442,7 @@ class MobileSignInTest {
         assertFailsWith<DeviceLimitException> {
             exchange(code(), verifier, APP_REDIRECT_URI, "ip", DeviceLoginIdentity(INSTALLATION))
         }
+        assertNotNull(authenticator.authenticate(phones.first().token.secret), "A refused sign-in signs no phone out")
         val known = mobileTokens.devices.devices.values.first().installationId
         val signedIn = exchange(code(), verifier, APP_REDIRECT_URI, "ip", DeviceLoginIdentity(known))
         assertNotNull(signedIn.token.token.deviceId, "A known installation still signs in")
