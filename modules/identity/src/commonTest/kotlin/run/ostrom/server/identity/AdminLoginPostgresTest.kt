@@ -32,6 +32,7 @@ import run.ostrom.server.kernel.auth.governs
 import run.ostrom.server.kernel.auth.holdForConfirmation
 import run.ostrom.server.kernel.auth.requirePrincipal
 import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.databaseNowPlus
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
@@ -214,7 +215,7 @@ class AdminLoginPostgresTest {
         // Signed in six minutes ago.
         val sessions = IdentityWebSessions
         server.koin.get<JdbcDatabase>().query {
-            sessions.update({ sessions.userId eq admin.id }) { it[createdAt] = Clock.System.now() - 6.minutes }
+            sessions.update({ sessions.userId eq admin.id }) { it[createdAt] = databaseNowPlus(-(6.minutes)) }
         }
         val codes = server.start(ADMIN_SCOPES.toList()).body<DeviceCodeResponse>()
         val refused = server.client.post("/api/v1/auth/device/answer") {
