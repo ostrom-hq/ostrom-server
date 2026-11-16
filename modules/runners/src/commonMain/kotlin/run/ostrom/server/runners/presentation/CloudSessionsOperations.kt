@@ -13,6 +13,7 @@ import run.ostrom.server.kernel.http.docs.ok
 import run.ostrom.server.kernel.http.docs.organizationHeader
 import run.ostrom.server.kernel.http.docs.pathId
 import run.ostrom.server.kernel.http.docs.queryLimit
+import run.ostrom.server.kernel.http.docs.queryList
 import run.ostrom.server.kernel.http.docs.queryText
 
 private const val STATE_CHANGE = "A session whose state does not allow it, or that changed meanwhile " +
@@ -48,9 +49,9 @@ private fun ApiCatalog.cloudSessionListing() {
             ORG_RESOLUTION
         parameters {
             organizationHeader()
-            queryText("kind", "The kind of session to list, `cloud`, `remote` or `local`; repeat it to list several.")
+            queryList("kind", "The kind of session to list, `cloud`, `remote` or `local`; repeat it to list several.")
             queryText("owner", "The caller's member id; anything else is refused.")
-            queryText(
+            queryList(
                 "status",
                 "A status of session to list, `creating`, `running`, `pausing`, `paused`, `resuming`, " +
                     "`transferring`, `terminated` or `failed`; repeat it to list several.",
