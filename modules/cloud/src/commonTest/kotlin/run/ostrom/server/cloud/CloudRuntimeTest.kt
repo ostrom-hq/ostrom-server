@@ -70,9 +70,9 @@ class CloudRuntimeTest {
         assertTrue("workspaceAccessMode" in refused(on.copy(workspaceAccessMode = "ReadWriteMany")))
         assertTrue("pausedRetentionDays" in refused(on.copy(pausedRetentionDays = 0)))
         assertTrue("failedWorkspaceRetentionDays" in refused(on.copy(failedWorkspaceRetentionDays = 3651)))
-        assertTrue("maxRunningSessionsPerMember" in refused(on.copy(maxRunningSessionsPerMember = 0)))
+        assertTrue("maxRunningSessionsPerMember" in refused(on.copy(maxRunningSessionsPerMember = -1)))
         assertTrue("maxRunningSessionsPerMember" in refused(on.copy(maxRunningSessionsPerMember = 1001)))
-        assertTrue("maxRetainedSessionsPerMember" in refused(on.copy(maxRetainedSessionsPerMember = 0)))
+        assertTrue("maxRetainedSessionsPerMember" in refused(on.copy(maxRetainedSessionsPerMember = -1)))
         assertTrue("maxRetainedSessionsPerMember" in refused(on.copy(maxRetainedSessionsPerMember = 10_001)))
         assertTrue("transcriptRetentionDays" in refused(on.copy(transcriptRetentionDays = 0)))
         assertTrue("memberTransfers" in refused(on.copy(memberTransfers = "always")))
@@ -93,6 +93,21 @@ class CloudRuntimeTest {
             null,
         )
         assertEquals(CloudRuntime.DEFAULT_RUNNER_BINARY, saved.runnerBinary)
+        // 0 removes a session cap, as a member's concurrency: either one, or both.
+        val noLimit = runtime.save(
+            alice,
+            on.copy(maxRunningSessionsPerMember = 0, maxRetainedSessionsPerMember = 0),
+            saved.updatedAt,
+        )
+        assertEquals(0 to 0, noLimit.maxRunningSessionsPerMember to noLimit.maxRetainedSessionsPerMember)
+        assertEquals(
+            30 to 0,
+            runtime.save(
+                alice,
+                on.copy(maxRunningSessionsPerMember = 30, maxRetainedSessionsPerMember = 0),
+                noLimit.updatedAt,
+            ).let { it.maxRunningSessionsPerMember to it.maxRetainedSessionsPerMember },
+        )
         // A blank session image is the default one, the CLI's ostrom-session.
         assertEquals("docker.io/ostromhq/ostrom-session:latest", saved.sessionImage)
     }

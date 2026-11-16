@@ -126,8 +126,11 @@ cache.
   Ranges, tags, paths and URLs are refused.
 - At most 32 arguments, each at most 512 characters, without control characters. `${NAME}` must name a secret.
 - Variable names use `A-Z 0-9 _` and avoid the reserved names and prefixes:
-  - names such as `PATH`, `HOME`, `LANG`, runtime options, proxies, certificate bundles, `GLIBC_TUNABLES`;
-  - prefixes such as `LD_`, `OSTROM_`, `NPM_CONFIG_`, `UV_`, `PIP_`, `NODE_`, `PYTHON`, `COREPACK_`, `SSL`, `CURL_`.
+  - names such as `PATH`, `HOME`, `LANG`, runtime options, proxies, certificate bundles, `GLIBC_TUNABLES`, and what else steers
+    the loader or a runtime (`DOTNET_STARTUP_HOOKS`, `CLASSPATH`...), the shell (`SHELLOPTS`, `CDPATH`, `PS4`, `ZDOTDIR`...),
+    Git, SSH and `gh` (`GIT_ASKPASS`, `SSH_ASKPASS`, `GIT_DIR`, `GIT_SSL_NO_VERIFY`...) or an agent's tools
+    (`RIPGREP_CONFIG_PATH`), at least every name the server reserves for a variable;
+  - prefixes such as `LD_`, `OSTROM_`, `BASH_FUNC_`, `GIT_CONFIG_`, `XDG_`, `NPM_CONFIG_`, `UV_`, `PIP_`, `NODE_`, `PYTHON`, `COREPACK_`, `SSL`, `CURL_`.
 
   The full lists are in `Launchers.kt`.
 

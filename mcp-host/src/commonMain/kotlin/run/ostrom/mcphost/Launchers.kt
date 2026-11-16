@@ -207,7 +207,11 @@ class Launchers(private val config: HostConfig) {
         private val reference = Regex("""\$\{([A-Z_][A-Z0-9_]{0,127})}""")
         private val envName = Regex("[A-Z_][A-Z0-9_]{0,127}")
 
-        /** The relay's reserved names, plus what would redirect npm, uv or pip, the loader or TLS checks. */
+        /**
+         * The relay's reserved names, plus what would redirect npm, uv or pip, the loader or TLS checks, and the
+         * server's further names, so the host refuses at least what the server refuses (`BASH_FUNC_` names an
+         * exported shell function).
+         */
         private val reservedNames = setOf(
             "PATH", "HOME", "USER", "LOGNAME", "SHELL", "PWD", "TMPDIR", "TMP", "TEMP", "IFS", "ENV", "BASH_ENV",
             "PROMPT_COMMAND", "LANG", "NODE_OPTIONS", "NODE_PATH", "JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS",
@@ -216,10 +220,21 @@ class Launchers(private val config: HostConfig) {
             "ALL_PROXY", "NO_PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE",
             "NODE_TLS_REJECT_UNAUTHORIZED", "NODE_ICU_DATA", "NODE_V8_COVERAGE", "GLIBC_TUNABLES", "CURL_CA_BUNDLE",
             "SSLKEYLOGFILE", "PYTHONUSERBASE", "PYTHONEXECUTABLE", "PYTHONPLATLIBDIR",
+            // The server's further names (EnvironmentRules): the loader and the runtimes, the shell, Git, SSH and gh,
+            // an agent's tools.
+            "ELECTRON_RUN_AS_NODE", "PYTHONBREAKPOINT", "PERL5DB", "CLASSPATH", "DOTNET_STARTUP_HOOKS",
+            "CORECLR_PROFILER", "CORECLR_PROFILER_PATH", "CORECLR_ENABLE_PROFILING", "GCONV_PATH", "OLDPWD",
+            "SHELLOPTS", "BASHOPTS", "CDPATH",
+            "GLOBIGNORE", "PS4", "ZDOTDIR", "GIT_TERMINAL_PROMPT", "GH_CONFIG_DIR", "GIT_ASKPASS", "SSH_ASKPASS",
+            "GIT_PROXY_COMMAND", "GIT_EXTERNAL_DIFF", "GIT_PAGER", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR",
+            "GIT_TEMPLATE_DIR",
+            "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_COMMON_DIR", "RIPGREP_CONFIG_PATH", "GIT_SSL_NO_VERIFY", "GIT_SSL_CAINFO", "GIT_SSL_CAPATH",
+            "GIT_ALLOW_PROTOCOL",
         )
         private val reservedPrefixes = listOf(
             "LD_", "DYLD_", "OSTROM_", "TEAMCODE_", "ANTHROPIC_", "CLAUDE_", "OPENAI_", "CODEX_", "XDG_", "GIT_CONFIG_",
-            "NPM_CONFIG_", "UV_", "PIP_", "NODE_", "PYTHON", "COREPACK_", "SSL", "CURL_",
+            "BASH_FUNC_", "NPM_CONFIG_", "UV_", "PIP_", "NODE_", "PYTHON", "COREPACK_", "SSL", "CURL_",
         )
     }
 }

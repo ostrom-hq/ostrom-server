@@ -20,8 +20,9 @@ import kotlin.uuid.Uuid
  * @property workspaceAccessMode `ReadWriteOncePod`, or `ReadWriteOnce` for storage drivers without it.
  * @property pausedRetentionDays Days a paused session keeps its workspace; null keeps it.
  * @property failedWorkspaceRetentionDays Days a failed session keeps its workspace.
- * @property maxRunningSessionsPerMember Sessions one member runs at once.
- * @property maxRetainedSessionsPerMember Sessions one member keeps.
+ * @property maxRunningSessionsPerMember Sessions one member runs at once, 0 to 1000; 0 means no limit.
+ * @property maxRetainedSessionsPerMember Sessions one member keeps (paused ones included), 0 to 10000; 0 means no
+ *   limit.
  * @property transcriptRetentionDays Days transcript events are kept; null keeps them.
  * @property memberTransfers `offer`, or `disabled` (administrators only).
  * @property fileMaxMebibytes The largest file a member sends to a session (`runners.cloud.files.v1`).

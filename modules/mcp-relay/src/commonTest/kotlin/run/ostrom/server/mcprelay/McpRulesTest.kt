@@ -126,6 +126,20 @@ class McpRulesTest {
         refused(stdio.withStdio { copy(env = mapOf("lower" to "x")) })
         refused(stdio.withStdio { copy(env = mapOf("PATH" to "x")) })
         refused(stdio.withStdio { copy(env = mapOf("LD_PRELOAD" to "x")) })
+        // What else steers the loader, a runtime, the shell, Git, SSH and gh, or an agent's tools.
+        for (name in listOf(
+            "DOTNET_STARTUP_HOOKS", "CLASSPATH", "SHELLOPTS", "ZDOTDIR", "GIT_ASKPASS", "SSH_ASKPASS",
+            "GIT_PROXY_COMMAND", "GIT_DIR", "GH_CONFIG_DIR", "RIPGREP_CONFIG_PATH", "BASH_FUNC_X", "GIT_SSL_NO_VERIFY",
+            "GIT_ALLOW_PROTOCOL", "GCONV_PATH", "GIT_CONFIG_COUNT", "XDG_CONFIG_HOME", "ANTHROPIC_BASE_URL",
+            "CLAUDE_CONFIG_DIR",
+            "OPENAI_API_KEY", "CODEX_HOME",
+        )) {
+            refused(stdio.withStdio { copy(env = mapOf(name to "x")) })
+        }
+        // What teams set every day stays theirs.
+        McpRules.requireServer(
+            stdio.withStdio { copy(env = mapOf("GIT_AUTHOR_NAME" to "a", "SSH_KEY_NAME" to "k")) },
+        )
         refused(stdio.withStdio { copy(env = mapOf("MODE" to "a".repeat(1025))) })
         refused(stdio.withStdio { copy(env = mapOf("MODE" to "a\u0000")) })
         refused(stdio.withStdio { copy(args = emptyList(), secretEnv = (1..17).associate { "S$it" to secret }) })
