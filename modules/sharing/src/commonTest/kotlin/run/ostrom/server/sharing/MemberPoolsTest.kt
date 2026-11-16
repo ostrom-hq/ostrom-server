@@ -117,6 +117,7 @@ class MemberPoolsTest {
     fun aMemberChangesNoPoolAndReadsNoOtherMembers() = runTest {
         assertFailsWith<AdminRequiredException> { policies.setPool(Sharing.memberA, "mia", "eu") }
         assertFailsWith<AdminRequiredException> { policies.get(Sharing.memberA, "ada") }
+        assertFailsWith<AdminRequiredException>("No login enumeration") { policies.get(Sharing.memberA, "ghost") }
         assertEquals(emptyMap(), pools.pools)
     }
 

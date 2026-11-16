@@ -50,8 +50,8 @@ interface MemberPoliciesUseCase {
     /**
      * The policy of the member [login] names.
      *
-     * @throws OrgMemberNotFoundException When no member of the organization has this login.
-     * @throws AdminRequiredException When a member asks for another member's policy.
+     * @throws AdminRequiredException When a member who is no admin asks for another login's policy, a member's or not.
+     * @throws OrgMemberNotFoundException When no member of the organization has this login (for an admin).
      */
     suspend fun get(caller: Caller, login: String): MemberPolicy
 
@@ -74,8 +74,10 @@ interface MemberPoliciesUseCase {
 class MemberPoliciesUseCaseImpl(private val pools: MemberPoolRepository, private val logins: MemberLogins) :
     MemberPoliciesUseCase {
     override suspend fun get(caller: Caller, login: String): MemberPolicy {
-        val memberId = memberOf(caller, login)
+        // A member who is no admin learns nothing of another login, not even whether it names a member: 403 for both.
+        val memberId = logins.idsOf(caller.orgId, listOf(login))[login]
         if (memberId != caller.memberId) caller.requireAdmin()
+        memberId ?: throw OrgMemberNotFoundException()
         return MemberPolicy(login, memberId, pools.poolOf(caller.orgId, memberId))
     }
 

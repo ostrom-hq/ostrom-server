@@ -28,7 +28,8 @@ internal fun ApiCatalog.memberPolicyOperations() {
         tag(TAG)
         summary = "A member's home pool."
         description = "An owner or an admin reads any member's policy, a member their own (`accounts:read`, or a " +
-            "key's `team:read`; another member's is 403). $POOL_ROUTING"
+            "key's `team:read`; another login is 403 for a member who is no admin, whether it names a member or " +
+            "not). $POOL_ROUTING"
         parameters {
             organizationHeader()
             pathId("login", POLICY_LOGIN)
@@ -37,7 +38,7 @@ internal fun ApiCatalog.memberPolicyOperations() {
             ok<MemberPolicyResponse>("The member's policy; `poolId` is absent for a member in no pool.")
             error(HttpStatusCode.Forbidden, "A member asks for another member's policy, or a credential that may " +
                 "not read the accounts (`forbidden`).")
-            notFound(MEMBER_NOT_FOUND)
+            notFound("No member of the organization has this login, asked by an owner or an admin (`not_found`).")
         }
     }
     patch("/api/v1/members/{login}/policy") {

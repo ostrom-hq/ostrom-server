@@ -238,6 +238,7 @@ class SharingMemberPoolsPostgresTest {
             assertStatus(HttpStatusCode.Forbidden, send("PATCH", "liam", policy("liam"), pool("eu")), "own pool")
             assertStatus(HttpStatusCode.Forbidden, send("PATCH", "liam", policy("ana"), pool("eu")), "another's")
             assertStatus(HttpStatusCode.Forbidden, send("GET", "liam", policy("ana")), "another's policy")
+            assertStatus(HttpStatusCode.Forbidden, send("GET", "liam", policy("ghost")), "an unknown login alike")
             assertNull(send("GET", "liam", policy("liam")).json()["poolId"])
             assertEquals(emptyList(), audited)
         }
