@@ -115,7 +115,7 @@ class DatabaseNotificationsTest {
         val listener = launch { notifications.listen("ostrom_test_channel") { heard += it } }
         notifications.notifyUntilHeard("ostrom_test_channel", "before", heard)
         val kill = "SELECT CAST(count(pg_terminate_backend(pid)) AS text) FROM pg_stat_activity " +
-            "WHERE query LIKE 'LISTEN%' AND usename = '$role'"
+            "WHERE query IN ('LISTEN ostrom_test_channel', 'SELECT 1') AND usename = '$role'"
         assertEquals("1", database.superuserTexts(kill).single(), "The listener's session is ended")
         notifications.notifyUntilHeard("ostrom_test_channel", "after", heard)
         listener.cancel()

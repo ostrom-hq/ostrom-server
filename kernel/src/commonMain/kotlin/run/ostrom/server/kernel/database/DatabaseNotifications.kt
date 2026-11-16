@@ -68,13 +68,18 @@ class PostgresNotifications(
             while (true) {
                 try {
                     database.connectAlone().use { connection ->
-                        connection.createStatement().use { it.execute("LISTEN $name") }
-                        val notifications = connection.unwrap(PGConnection::class.java)
-                        while (true) {
-                            ensureActive()
-                            notifications.getNotifications(poll.inWholeMilliseconds.toInt())
-                                .filter { it.name == name }
-                                .forEach { onPayload(it.parameter) }
+                        connection.createStatement().use { statement ->
+                            statement.execute("LISTEN $name")
+                            val notifications = connection.unwrap(PGConnection::class.java)
+                            while (true) {
+                                ensureActive()
+                                // A round trip each poll: a session the network dropped silently (no reset, a NAT's
+                                // timeout) fails here and is opened again, instead of hearing nothing forever.
+                                statement.execute("SELECT 1")
+                                notifications.getNotifications(poll.inWholeMilliseconds.toInt())
+                                    .filter { it.name == name }
+                                    .forEach { onPayload(it.parameter) }
+                            }
                         }
                     }
                 } catch (_: SQLException) {

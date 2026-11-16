@@ -121,8 +121,6 @@ cryptography-jdk = { module = "dev.whyoleg.cryptography:cryptography-provider-jd
 # The JDK provider derives an Ed25519 public key from its private key only with BouncyCastle on the classpath.
 bouncycastle-bcprov = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bouncycastle" }
 
-# Database (server infrastructure only)
-
 # Tests (the JVM target is the test and coverage runner only)
 junit-jupiter-engine = { module = "org.junit.jupiter:junit-jupiter-engine", version.ref = "junit" }
 # Gradle 9 no longer puts the JUnit Platform launcher on the test runtime classpath.

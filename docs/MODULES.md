@@ -299,7 +299,7 @@ Every request is already logged once by the kernel (method, route template — n
 | `OSTROM_DATABASE_URL` | required | `postgresql://[user[:password]@]host:5432/db`, no query string |
 | `OSTROM_DATABASE_USER` | the URL's | Database user; wins over the URL's |
 | `OSTROM_DATABASE_PASSWORD` | the URL's | Database password; wins over the URL's (required to use one with `%`, `@`, `:` or `/`) |
-| `OSTROM_DATABASE_MAX_CONNECTIONS` | `10` | 4 to 64: the database connections one replica opens at most, its pools together (see "Database connections" below). Read at start: the pool opens before any setting can be read from the database |
+| `OSTROM_DATABASE_MAX_CONNECTIONS` | `10` | 2 to 64: the size of the one database pool of a replica, its listening connections apart (see "Database connections" below). Read at start: the pool opens before any setting can be read from the database |
 | `OSTROM_SIGNING_KEY_FILE` | `data/instance-key.pem` | Ed25519 key (PKCS#8 PEM), created with mode 0600 at first start; keep it on a persistent volume |
 | `OSTROM_PREVIOUS_SIGNING_KEY_FILE` | — | For a key rotation only: the PEM file of the key the instance signed with before `OSTROM_SIGNING_KEY_FILE`, read (never created) at start to hand the new key over (`rotation` of `GET /receipts/keys`). A missing file stops the start. See [receipt-key-rotation.md](receipt-key-rotation.md) |
 | `OSTROM_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
