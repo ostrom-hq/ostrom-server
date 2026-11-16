@@ -29,6 +29,9 @@ internal object UsageEvents : Table("usage_events") {
 
     /** The workflow the launch plays (version 8). */
     val workflowId = text("workflow_id").nullable()
+
+    /** The named pool of the shared account that served the call, when it was served (version 14). */
+    val poolId = text("pool_id").nullable()
     val inputTokens = long("input_tokens")
     val outputTokens = long("output_tokens")
     val cacheReadTokens = long("cache_read_tokens")

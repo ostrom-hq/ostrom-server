@@ -16,7 +16,7 @@ import run.ostrom.server.kernel.auth.TokenAuthenticator
 import run.ostrom.server.kernel.database.InstantColumnType
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.withOrganization
-import run.ostrom.server.kernel.sharing.SharedAccountSpend
+import run.ostrom.server.kernel.sharing.PoolSpend
 import run.ostrom.server.orgs.OrgsModule
 import run.ostrom.server.orgs.domain.Member
 import run.ostrom.server.orgs.domain.Org
@@ -52,6 +52,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -80,8 +81,8 @@ class SharingOverflowPostgresTest {
     private val people = mutableMapOf<String, Uuid>()
     private val audited = mutableListOf<OrgAuditRecord>()
 
-    /** What each shared account served today, and the reads of it. */
-    private val spent = mutableMapOf<Uuid, Long>()
+    /** What was served from each pool today, and the reads of it. */
+    private val spent = mutableMapOf<String, Long>()
     private var spendReads = 0
 
     private val base = module {
@@ -103,8 +104,8 @@ class SharingOverflowPostgresTest {
     }
     private val overrides = module {
         includes(base)
-        single<SharedAccountSpend> {
-            SharedAccountSpend { _, ids, _ ->
+        single<PoolSpend> {
+            PoolSpend { _, ids, _ ->
                 spendReads++
                 spent.filterKeys { it in ids }
             }
@@ -182,6 +183,8 @@ class SharingOverflowPostgresTest {
     }
 
     private suspend fun HttpResponse.json(): JsonElement = Json.parseToJsonElement(bodyAsText())
+
+    private fun JsonObject.text(key: String): String? = (get(key) as? JsonPrimitive)?.takeIf { it.isString }?.content
 
     private suspend fun HttpResponse.errorType() =
         json().jsonObject.getValue("error").jsonObject.getValue("type").jsonPrimitive.content
@@ -268,7 +271,7 @@ class SharingOverflowPostgresTest {
             with(server) {
                 val team = team()
                 val home = account("home", "eu")
-                val reserve = account("reserve", "reserve")
+                account("reserve", "reserve")
                 send("PUT", "kira", budgets, budget("reserve", 1_000, true))
                 val allowed = send("PATCH", "kira", policy("liam"), member("eu", overflow = true))
                 assertStatus(HttpStatusCode.OK, allowed, allowed.bodyAsText())
@@ -288,10 +291,10 @@ class SharingOverflowPostgresTest {
                 assertEquals("reserve", leased(team.org, team.liam, estimate = 1_000), "Home exhausted: the reserve")
                 assertEquals(null, leased(team.org, team.ana), "Not allowed: never the reserve")
 
-                spent[reserve] = 999
+                spent["reserve"] = 999
                 assertEquals("reserve", leased(team.org, team.liam), "1 micro left covers a call of 1")
                 assertEquals(null, leased(team.org, team.liam, estimate = 2), "Not one of 2")
-                spent[reserve] = 1_000
+                spent["reserve"] = 1_000
                 assertEquals(null, leased(team.org, team.liam), "The day's spend reached the budget: closed")
 
                 // Absent, the overflow is kept; false withdraws it.
@@ -302,6 +305,48 @@ class SharingOverflowPostgresTest {
                 assertEquals("reserve", leased(team.org, team.liam))
                 send("PATCH", "kira", policy("liam"), member("eu", overflow = false))
                 assertEquals(null, leased(team.org, team.liam))
+            }
+        }
+
+    /** The accounts [login] lists, by id. */
+    private suspend fun TestServer.listed(login: String): Map<Uuid, JsonObject> =
+        send("GET", login, "/api/v1/accounts").json().jsonObject.getValue("items").jsonArray
+            .associate { Uuid.parse(it.jsonObject.getValue("id").jsonPrimitive.content) to it.jsonObject }
+
+    @Test
+    fun aMemberAllowedOverflowListsTheReserveWithoutItsIdentityAndAnotherDoesNot() =
+        serverTest(modules, overrides) { server ->
+            with(server) {
+                val team = team()
+                join(team.org, "noa", "member")
+                val home = account("home", "eu")
+                val reserve = account("reserve", "reserve")
+                val elsewhere = account("elsewhere", "us")
+                send("PUT", "kira", budgets, budget("reserve", 1_000, true))
+                send("PATCH", "kira", policy("liam"), member("eu", overflow = true))
+                send("PATCH", "kira", policy("noa"), member("eu"))
+
+                val liam = listed("liam")
+                assertEquals(setOf(home, reserve), liam.keys, "Home and the reserve, never another pool")
+                assertEquals(setOf("Account 1", "Account 2"), liam.values.map { it.text("label") }.toSet())
+                for (account in liam.values) {
+                    for (identity in listOf("email", "providerAccountId", "poolId")) {
+                        assertEquals(null, account.text(identity), "No $identity for a member")
+                    }
+                    assertEquals("", account.text("owner"))
+                }
+                assertEquals(setOf(home), listed("noa").keys, "Not allowed overflow: no reserve")
+                val admin = listed("ana")
+                assertEquals(setOf(home, reserve, elsewhere), admin.keys, "An admin sees every account")
+                assertEquals("reserve", admin.getValue(reserve).text("poolId"))
+
+                // The forecasts stay the admins' (TeamCode's `ForecastServiceImpl`): every account, reserves too.
+                val forecasts = send("GET", "ana", "/api/v1/forecasts").json().jsonObject.getValue("accounts")
+                assertEquals(
+                    setOf(home, reserve, elsewhere).map { it.toString() }.toSet(),
+                    forecasts.jsonArray.map { it.jsonObject.getValue("id").jsonPrimitive.content }.toSet(),
+                )
+                assertStatus(HttpStatusCode.Forbidden, send("GET", "liam", "/api/v1/forecasts"), "a member's")
             }
         }
 

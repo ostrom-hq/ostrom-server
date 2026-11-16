@@ -16,6 +16,8 @@ kotlin {
         }
         commonTest.dependencies {
             implementation(project(":testing"))
+            // What a shared overflow pool lent, read by the sharing module's lease through the kernel's port.
+            implementation(project(":modules:sharing"))
         }
     }
 }

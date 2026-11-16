@@ -67,7 +67,7 @@ class SpanModelCallTracerTest {
         status: Int = 200,
         outcome: String = "ok",
     ) = ModelCallRecord(
-        Gw.orgB, Gw.orgA, Gw.memberA.memberId, "s-1", WireProtocol.MESSAGES, provider, null, "claude-opus-5",
+        Gw.orgB, Gw.orgA, Gw.memberA.memberId, "s-1", WireProtocol.MESSAGES, provider, null, null, "claude-opus-5",
         usage, 250_000, usage != null, status, outcome, Instant.parse("2026-11-02T10:00:00Z"), 100, 2_500,
     )
 

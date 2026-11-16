@@ -15,7 +15,7 @@ import run.ostrom.server.kernel.database.scheduledWork
 import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.launches.LaunchSpend
-import run.ostrom.server.kernel.sharing.SharedAccountSpend
+import run.ostrom.server.kernel.sharing.PoolSpend
 import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.settings.InstanceSettings
 import run.ostrom.server.kernel.settings.SettingsSection
@@ -55,7 +55,7 @@ import run.ostrom.server.usage.domain.WatchUsageUseCase
 import run.ostrom.server.usage.domain.WatchUsageUseCaseImpl
 import run.ostrom.server.usage.infrastructure.LedgerModelUsageSink
 import run.ostrom.server.usage.infrastructure.LedgerLaunchSpend
-import run.ostrom.server.usage.infrastructure.LedgerSharedAccountSpend
+import run.ostrom.server.usage.infrastructure.LedgerPoolSpend
 import run.ostrom.server.usage.infrastructure.LedgerSessionCosts
 import run.ostrom.server.usage.infrastructure.ReplicatedUsageFeed
 import run.ostrom.server.usage.infrastructure.TokenUsageReaderImpl
@@ -101,7 +101,7 @@ object UsageModule : ServerModule {
         single<ModelUsageSink> { LedgerModelUsageSink(get()) }
         single<SessionCosts> { LedgerSessionCosts(get()) }
         single<LaunchSpend> { LedgerLaunchSpend(get(), get()) }
-        single<SharedAccountSpend> { LedgerSharedAccountSpend(get<JdbcDatabase>()) }
+        single<PoolSpend> { LedgerPoolSpend(get<JdbcDatabase>()) }
         single<SpendReader> { SpendReaderImpl(get()) }
         single<TokenUsageReader> { TokenUsageReaderImpl(get<JdbcDatabase>()) }
         single<SpendAdmission> { SpendAdmissionImpl(get(), get()) }

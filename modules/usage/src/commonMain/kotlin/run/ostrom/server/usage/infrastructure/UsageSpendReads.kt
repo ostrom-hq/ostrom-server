@@ -72,16 +72,17 @@ internal fun accountSpentRead(orgId: Uuid, accountId: Uuid, since: Instant): Rea
 }
 
 /**
- * What some pooled accounts served since [since], by account (the sharing module's overflow pools): one read on the
- * index `usage_events_account_at`, whose `account_id IS NOT NULL` the list implies.
+ * What the calls served from some named pools cost since [since], by pool (the sharing module's overflow pools): one
+ * read on the index `usage_events_pool_at`, whose `pool_id IS NOT NULL` the list implies. The pool is the one each call
+ * was served from, so an account moved since keeps its past calls where they were served.
  */
-internal fun accountsSpentRead(orgId: Uuid, accountIds: Collection<Uuid>, since: Instant): Read<Pair<Uuid, Long>> {
+internal fun poolsSpentRead(orgId: Uuid, poolIds: Collection<String>, since: Instant): Read<Pair<String, Long>> {
     val e = UsageEvents
     val spent = coalesce(e.costMicros.sum(), longLiteral(0)).asBigint()
-    val query = e.select(e.accountId, spent)
-        .where { (e.orgId eq orgId) and (e.accountId inList accountIds) and (e.at greaterEq since) }
-        .groupBy(e.accountId)
-    return Read(query) { it.present(e.accountId, e.orgId) to it[spent] }
+    val query = e.select(e.poolId, spent)
+        .where { (e.orgId eq orgId) and (e.poolId inList poolIds) and (e.at greaterEq since) }
+        .groupBy(e.poolId)
+    return Read(query) { it.present(e.poolId, e.orgId) to it[spent] }
 }
 
 /**

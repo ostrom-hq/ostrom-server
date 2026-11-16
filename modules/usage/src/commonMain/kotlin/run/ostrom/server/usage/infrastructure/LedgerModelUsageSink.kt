@@ -32,6 +32,7 @@ fun ModelCallRecord.toUsageEvent(): UsageEvent {
         name = model,
         provider = provider?.wire,
         accountId = accountId,
+        poolId = poolId,
         sessionId = sessionId,
         launchId = launchId,
         workflowId = workflowId,

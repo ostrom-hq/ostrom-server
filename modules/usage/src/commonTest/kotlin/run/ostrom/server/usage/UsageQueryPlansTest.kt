@@ -21,13 +21,13 @@ import run.ostrom.server.usage.domain.UsageWindow
 import run.ostrom.server.usage.infrastructure.ReviewCursor
 import run.ostrom.server.usage.infrastructure.accountHoursRead
 import run.ostrom.server.usage.infrastructure.accountSpentRead
-import run.ostrom.server.usage.infrastructure.accountsSpentRead
 import run.ostrom.server.usage.infrastructure.historyRead
 import run.ostrom.server.usage.infrastructure.holdTotalsRead
 import run.ostrom.server.usage.infrastructure.launchSpentRead
 import run.ostrom.server.usage.infrastructure.listRead
 import run.ostrom.server.usage.infrastructure.orgDaysRead
 import run.ostrom.server.usage.infrastructure.pendingRead
+import run.ostrom.server.usage.infrastructure.poolsSpentRead
 import run.ostrom.server.usage.infrastructure.spentRead
 import run.ostrom.server.usage.infrastructure.summaryRead
 import run.ostrom.server.usage.infrastructure.workflowSpentRead
@@ -58,18 +58,22 @@ class UsageQueryPlansTest {
     }
     private val account = Uuid.parse("000000ac-0000-0000-0000-000000000001")
 
-    /** [count] model events of [org] over the last 60 days, across 30 members, a third of them on [account]. */
+    /**
+     * [count] model events of [org] over the last 60 days, across 30 members, a third of them on [account], served
+     * from one of five pools.
+     */
     private fun JdbcTransaction.seed(org: Uuid, count: Int) {
         val member = TestCallers.memberA.memberId
         exec(
             "INSERT INTO usage_events (id, org_id, member_id, kind, name, provider, account_id, session_id, " +
             "input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_micros, duration_ms, outcome, " +
-            "at, workflow_id) " +
+            "at, workflow_id, pool_id) " +
             "SELECT gen_random_uuid(), ?, CASE WHEN i % 30 = 0 THEN ? " +
             "ELSE CAST(md5('m' || (i % 30)) AS uuid) END, 'MODEL', 'claude', 'anthropic', " +
             "CASE WHEN i % 3 = 0 THEN CAST(? AS uuid) END, NULL, 10, 10, 0, 0, i % 1000, 5, 'ok', " +
             "to_timestamp(${TestCallers.epoch.epochSeconds}) - (i % 1440) * INTERVAL '1 hour', " +
-            "CASE WHEN i % 7 = 0 THEN 'review' WHEN i % 7 = 1 THEN 'w' || (i % 50) END " +
+            "CASE WHEN i % 7 = 0 THEN 'review' WHEN i % 7 = 1 THEN 'w' || (i % 50) END, " +
+            "CASE WHEN i % 3 = 0 THEN 'reserve-' || (i % 5) END " +
             "FROM generate_series(1, ?) AS i",
             listOf(
                 UuidColumnType() to org,
@@ -129,6 +133,12 @@ class UsageQueryPlansTest {
             orgDaysRead(org, TestCallers.epoch - 7.days, 5_000).query,
     )
 
+    /** A lease's read of what the shared overflow pools served today, by the pool each call was served from. */
+    private fun overflowReads(org: Uuid) = mapOf(
+        "overflow pools' spend today, by serving pool (lease)" to
+            poolsSpentRead(org, List(16) { "reserve-$it" }, TestCallers.epoch - 1.days).query,
+    )
+
     @Test
     fun theLedgersRequestPathReadsUseTheirIndexes() =
         serverTest(listOf(SecretsModule, UsageModule), overrides) { server ->
@@ -143,8 +153,6 @@ class UsageQueryPlansTest {
                 "spend of the org (budgets, gateway)" to spentRead(org, null, since).query,
                 "spend of a member (budgets, gateway)" to spentRead(org, member, since).query,
                 "spend of a shared account (sharing)" to accountSpentRead(org, account, since).query,
-                "overflow pools' accounts today (lease)" to
-                    accountsSpentRead(org, List(15) { Uuid.random() } + account, TestCallers.epoch - 1.days).query,
                 "newest page of the org" to listRead(org, null, null, 50).query,
                 "next page of the org" to listRead(org, null, UsageCursor(since, Uuid.random()), 50).query,
                 "next page of a member" to listRead(org, member, UsageCursor(since, Uuid.random()), 50).query,
@@ -174,7 +182,7 @@ class UsageQueryPlansTest {
                     historyRead(org, member, ReviewCursor(TestCallers.epoch - 10.days, Uuid.random()), 51).query,
                 "summary of 30 days by model" to
                     summaryRead(UsageWindow(org, null, since), UsageGroupBy.MODEL, 1000).query,
-            ) + poolSizeReads(org)
+            ) + poolSizeReads(org) + overflowReads(org)
             val database = server.koin.get<JdbcDatabase>()
             val plans = reads.mapValues { (_, read) -> database.inOrg(org) { plan { read } } }
             val report = plans.entries.joinToString("\n\n") { (name, plan) -> "-- $name\n$plan" }
@@ -187,6 +195,8 @@ class UsageQueryPlansTest {
                 assertFalse("Seq Scan on usage_reconciliations" in plan, "$name scans the corrections:\n$plan")
             }
             // The cursor `(at, id) < (?, ?)` walks the org's index on (org_id, at, id) from where the page starts.
+            val pools = plans.getValue("overflow pools' spend today, by serving pool (lease)")
+            assertTrue("usage_events_pool_at" in pools, "The pools' day reads its index:\n$pools")
             val next = plans.getValue("next page of the org")
             assertTrue("usage_events_org_at" in next && "Sort" !in next, "The org's next page sorts:\n$next")
         }

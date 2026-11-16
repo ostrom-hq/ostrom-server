@@ -2,7 +2,7 @@
 package run.ostrom.server.usage
 
 import run.ostrom.server.kernel.database.JdbcDatabase
-import run.ostrom.server.kernel.sharing.SharedAccountSpend
+import run.ostrom.server.kernel.sharing.PoolSpend
 import run.ostrom.server.usage.infrastructure.UsageEvents
 import kotlin.test.assertFailsWith
 import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
@@ -189,25 +189,27 @@ class UsagePostgresTest {
     }
 
     @Test
-    fun theSharingModuleReadsWhatSeveralAccountsServedInOneRead() = serverTest(modules, overrides) { server ->
+    fun theSharingModuleReadsWhatSeveralPoolsServedInOneRead() = serverTest(modules, overrides) { server ->
         val recorder = server.koin.get<UsageRecorder>()
-        val busy = Uuid.random()
-        val idle = Uuid.random()
-        recorder.record(modelEvent(1_500, memberId = TestCallers.adminA.memberId).copy(accountId = busy))
-        recorder.record(modelEvent(300, memberId = TestCallers.memberA.memberId).copy(accountId = idle))
-        recorder.record(modelEvent(700, memberId = null, at = TestCallers.epoch - 40.days).copy(accountId = idle))
+        val account = Uuid.random()
+        val admin = TestCallers.adminA.memberId
+        val member = TestCallers.memberA.memberId
+        recorder.record(modelEvent(1_500, memberId = admin).copy(accountId = account, poolId = "a"))
+        recorder.record(modelEvent(300, memberId = member).copy(accountId = account, poolId = "b"))
+        recorder.record(modelEvent(700, memberId = null, at = TestCallers.epoch - 40.days).copy(poolId = "b"))
+        recorder.record(modelEvent(50, memberId = member).copy(accountId = account))
         recorder.record(
-            modelEvent(16_000, orgId = TestCallers.orgB, memberId = TestCallers.adminB.memberId).copy(accountId = busy),
+            modelEvent(16_000, orgId = TestCallers.orgB, memberId = TestCallers.adminB.memberId).copy(poolId = "a"),
         )
-        val shared = server.koin.get<SharedAccountSpend>()
+        val pools = server.koin.get<PoolSpend>()
         val month = TestCallers.epoch - 30.days
         assertEquals(
-            mapOf(busy to 1_500L, idle to 300L),
-            shared.spentMicros(TestCallers.orgA, listOf(busy, idle, Uuid.random()), month),
-            "Since the instant asked, by account, an account with nothing absent",
+            mapOf("a" to 1_500L, "b" to 300L),
+            pools.spentMicros(TestCallers.orgA, listOf("a", "b", "c"), month),
+            "Since the instant asked, by the pool each call was served from, one account in two pools",
         )
-        assertEquals(mapOf(busy to 16_000L), shared.spentMicros(TestCallers.orgB, listOf(busy, idle), month))
-        assertEquals(emptyMap(), shared.spentMicros(TestCallers.orgA, emptyList(), month), "No account, no read")
+        assertEquals(mapOf("a" to 16_000L), pools.spentMicros(TestCallers.orgB, listOf("a", "b"), month))
+        assertEquals(emptyMap(), pools.spentMicros(TestCallers.orgA, emptyList(), month), "No pool, no read")
     }
 
     @Test

@@ -5,6 +5,7 @@ import run.ostrom.server.secrets.domain.Caller
 import run.ostrom.server.sharing.domain.AccountAction
 import run.ostrom.server.sharing.domain.ClaudeAccountRefusals
 import run.ostrom.server.sharing.domain.ProviderRefusal
+import run.ostrom.server.sharing.domain.SharedAccount
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
@@ -314,7 +315,7 @@ class RelayInferenceUseCaseImpl(
         }
 
         private suspend fun send(plan: InferencePlan.Ready, tries: Int): CallState? {
-            val state = CallState(this, plan.model, plan.provider, plan.lease?.let { it.account.id })
+            val state = CallState(this, plan.model, plan.provider, plan.lease?.account)
             // No `finally`: the compiler copies it per exit, and each copy needs its own test.
             val retry = try {
                 held(plan) { upstream.exchange(plan.request) { answer -> relay(plan, answer, tries, state) } }
@@ -453,7 +454,7 @@ class RelayInferenceUseCaseImpl(
         val exchange: Exchange,
         val model: String,
         val provider: InferenceProvider?,
-        val accountId: Uuid?,
+        val account: SharedAccount?,
     ) {
         var status: Int = 0
         var outcome: String = ""
@@ -495,7 +496,8 @@ class RelayInferenceUseCaseImpl(
             sessionId = state.exchange.call.sessionId,
             protocol = state.exchange.call.protocol,
             provider = state.provider,
-            accountId = state.accountId,
+            accountId = state.account?.id,
+            poolId = state.account?.poolId,
             model = state.model,
             usage = tokens,
             costMicros = cost ?: 0,

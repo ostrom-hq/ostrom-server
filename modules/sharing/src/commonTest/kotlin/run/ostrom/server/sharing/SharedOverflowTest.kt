@@ -4,8 +4,9 @@ package run.ostrom.server.sharing
 import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.kernel.logging.JsonLogger
 import run.ostrom.server.kernel.logging.LogLevel
-import run.ostrom.server.kernel.sharing.SharedAccountSpend
+import run.ostrom.server.kernel.sharing.PoolSpend
 import run.ostrom.server.secrets.domain.AdminRequiredException
+import run.ostrom.server.secrets.domain.Caller
 import run.ostrom.server.sharing.domain.AccountCredentials
 import run.ostrom.server.sharing.domain.AccountLimits
 import run.ostrom.server.sharing.domain.AccountProvider
@@ -15,11 +16,16 @@ import run.ostrom.server.sharing.domain.CivilCalendar
 import run.ostrom.server.sharing.domain.InvalidOverflowPoolException
 import run.ostrom.server.sharing.domain.InvalidPoolBudgetException
 import run.ostrom.server.sharing.domain.LeaseResult
+import run.ostrom.server.sharing.domain.ListSharedAccountsUseCaseImpl
+import run.ostrom.server.sharing.domain.MemberNames
+import run.ostrom.server.sharing.domain.MemberPoolScopeImpl
 import run.ostrom.server.sharing.domain.MemberPoliciesUseCaseImpl
 import run.ostrom.server.sharing.domain.MemberPolicy
 import run.ostrom.server.sharing.domain.NoAccountGroups
 import run.ostrom.server.sharing.domain.NoAccountSpendReader
+import run.ostrom.server.sharing.domain.NoMemberLogins
 import run.ostrom.server.sharing.domain.NoOverflowPools
+import run.ostrom.server.sharing.domain.NoPoolScope
 import run.ostrom.server.sharing.domain.NoQuotaHistory
 import run.ostrom.server.sharing.domain.OverflowPoolLimitException
 import run.ostrom.server.sharing.domain.OverflowPoolsImpl
@@ -31,6 +37,7 @@ import run.ostrom.server.sharing.domain.PoolBudgetSave
 import run.ostrom.server.sharing.domain.PoolBudgets
 import run.ostrom.server.sharing.domain.PoolBudgetsUseCaseImpl
 import run.ostrom.server.sharing.domain.PoolPolicy
+import run.ostrom.server.sharing.domain.PoolScope
 import run.ostrom.server.sharing.domain.RefreshResult
 import run.ostrom.server.sharing.domain.SharedAccount
 import run.ostrom.server.sharing.domain.SharedAccountPool
@@ -40,6 +47,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
@@ -48,7 +56,6 @@ import kotlin.uuid.Uuid
 /** The pools' budgets in memory: [answer] is what a save of a shared pool answers. */
 class InMemoryPoolBudgets : PoolBudgetRepository {
     val budgets = mutableMapOf<String, PoolBudget>()
-    val accounts = mutableMapOf<String, Set<Uuid>>()
     var answer = PoolBudgetSave.SAVED
     var reads = 0
 
@@ -63,18 +70,18 @@ class InMemoryPoolBudgets : PoolBudgetRepository {
     override suspend fun reserves(orgId: Uuid): List<OverflowReserve> {
         reads++
         return budgets.values.filter { it.sharedOverflow }
-            .map { OverflowReserve(it.poolId, it.dailyMicros, accounts[it.poolId].orEmpty()) }
+            .map { OverflowReserve(it.poolId, it.dailyMicros) }
     }
 }
 
-/** What each shared account served, as a test sets it, and the reads made. */
-class FakeAccountSpend : SharedAccountSpend {
-    val spent = mutableMapOf<Uuid, Long>()
-    val reads = mutableListOf<Pair<Set<Uuid>, Instant>>()
+/** What was served from each pool, as a test sets it, and the reads made. */
+class FakePoolSpend : PoolSpend {
+    val spent = mutableMapOf<String, Long>()
+    val reads = mutableListOf<Pair<Set<String>, Instant>>()
 
-    override suspend fun spentMicros(orgId: Uuid, accountIds: Collection<Uuid>, since: Instant): Map<Uuid, Long> {
-        reads += accountIds.toSet() to since
-        return spent.filterKeys { it in accountIds }
+    override suspend fun spentMicros(orgId: Uuid, poolIds: Collection<String>, since: Instant): Map<String, Long> {
+        reads += poolIds.toSet() to since
+        return spent.filterKeys { it in poolIds }
     }
 }
 
@@ -85,7 +92,7 @@ class SharedOverflowTest {
     private val cipher = AccountTokenCipher(ContextCipher())
     private val pools = InMemoryMemberPools()
     private val budgets = InMemoryPoolBudgets()
-    private val spend = FakeAccountSpend()
+    private val spend = FakePoolSpend()
     private val overflow = OverflowPoolsImpl(budgets, spend, clock)
     private val useCase = PoolBudgetsUseCaseImpl(budgets)
     private val logins = object : MemberLogins {
@@ -123,7 +130,6 @@ class SharedOverflowTest {
                 Sharing.orgA,
                 account.id,
             )
-            if (poolId != null) budgets.accounts[poolId] = budgets.accounts[poolId].orEmpty() + account.id
         }
 
     private fun allow(poolId: String?, allowed: Boolean = true) {
@@ -145,17 +151,17 @@ class SharedOverflowTest {
     @Test
     fun aMemberAllowedOverflowBorrowsAReserveOnceTheirHomeIsExhaustedWhileItsBudgetLasts() = runTest {
         account("home", "eu", cooling = true)
-        val borrowed = account("reserve", "reserve")
+        account("reserve", "reserve")
         reserve("reserve", 1_000)
         allow("eu")
         assertEquals("reserve", leased(400), "The home pool cools down: the reserve serves")
-        spend.spent[borrowed.id] = 600
+        spend.spent["reserve"] = 600
         assertEquals("reserve", leased(400), "1,000 - 600 still covers 400")
         assertEquals(null, leased(401), "It no longer covers 401")
-        spend.spent[borrowed.id] = 1_000
+        spend.spent["reserve"] = 1_000
         assertEquals(null, leased(), "Spent: closed even to a call priced at nothing")
         assertEquals(CivilCalendar.dayStart(clock.now()), spend.reads.last().second, "Today's spend, from 00:00 UTC")
-        assertEquals(setOf(borrowed.id), spend.reads.last().first)
+        assertEquals(setOf("reserve"), spend.reads.last().first, "By the pool the calls were served from")
     }
 
     @Test
@@ -204,6 +210,34 @@ class SharedOverflowTest {
         val result = pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, null)
         assertEquals("reserve", assertIs<LeaseResult.Leased>(result).lease.account.label)
         result.lease.release()
+    }
+
+    @Test
+    fun aMemberListsTheirPoolsTheReservesWhenAllowedAndTheirOwnAccounts() = runTest {
+        val home = account("home", "eu")
+        val borrowed = account("reserve", "reserve")
+        val other = account("other", "us")
+        val own = account("own", "us").copy(ownerMemberId = Sharing.memberA.memberId)
+        repository.accounts.replaceAll { if (it.id == own.id) own else it }
+        reserve("reserve", 1)
+        val list = ListSharedAccountsUseCaseImpl(
+            repository, repository, pool, NoAccountSpendReader(), clock, MemberNames(NoMemberLogins),
+            MemberPoolScopeImpl(pools, budgets),
+        )
+        suspend fun listed(caller: Caller) = list(caller).map { it.account.id }.toSet()
+
+        allow("eu")
+        assertEquals(setOf(home.id, borrowed.id, own.id), listed(Sharing.memberA), "Home, reserve, their own")
+        val labels = list(Sharing.memberA).associate { it.account.id to it.displayLabel }
+        assertEquals("own", labels[own.id], "Their own account named")
+        val numbered = setOf(labels[home.id], labels[borrowed.id])
+        assertTrue(numbered.all { it in setOf("Account 1", "Account 2", "Account 3") }, "Numbered among what they see")
+        allow("eu", allowed = false)
+        val reads = budgets.reads
+        assertEquals(setOf(home.id, own.id), listed(Sharing.memberA), "Not allowed: no reserve")
+        assertEquals(reads, budgets.reads, "Nor read")
+        assertEquals(setOf(home.id, borrowed.id, other.id, own.id), listed(Sharing.adminA), "An admin: every one")
+        assertEquals(PoolScope(null, emptySet()), NoPoolScope.of(Sharing.orgA, Sharing.memberA.memberId))
     }
 
     @Test

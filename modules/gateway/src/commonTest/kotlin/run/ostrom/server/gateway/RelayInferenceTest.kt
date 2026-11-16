@@ -38,6 +38,8 @@ import run.ostrom.server.gateway.domain.Workload
 import run.ostrom.server.sharing.domain.AccountLimits
 import run.ostrom.server.sharing.domain.AccountProvider
 import run.ostrom.server.sharing.domain.LeaseResult
+import run.ostrom.server.sharing.domain.MemberPoolRepository
+import run.ostrom.server.sharing.domain.PoolPolicy
 import run.ostrom.server.sharing.domain.SharedAccountPool
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
@@ -124,6 +126,7 @@ class RelayInferenceTest {
         assertEquals("review", record.workflowId, "And the workflow its launch plays")
         assertEquals("session-1", record.sessionId)
         assertNull(record.accountId)
+        assertNull(record.poolId, "An API key serves from no pool")
         assertEquals(listOf(record), observed)
         assertEquals("https://anthropic.test/v1/messages", upstream.requests.single().url)
     }
@@ -204,6 +207,29 @@ class RelayInferenceTest {
         assertEquals(setOf(first.id, second.id), setOf(used, cooled))
         assertEquals(InferenceProvider.CLAUDE_SHARED, records.single().provider)
         assertEquals(0, shared.inFlight(Gw.orgA).values.sum(), "Every slot is given back")
+    }
+
+    @Test
+    fun aCallServedByAPooledAccountNamesThePoolItWasServedFrom() = runTest {
+        val eu = accounts.share(AccountProvider.CLAUDE, "eu", clock)
+        accounts.update(eu.copy(poolId = "eu"))
+        val home = object : MemberPoolRepository {
+            override suspend fun policyOf(orgId: Uuid, memberId: Uuid) = PoolPolicy("eu", false)
+
+            override suspend fun policiesOf(orgId: Uuid, memberIds: Collection<Uuid>) = emptyMap<Uuid, PoolPolicy>()
+
+            override suspend fun setPolicy(orgId: Uuid, memberId: Uuid, poolId: String?, allow: Boolean?) = null
+        }
+        val relay = RelayInferenceUseCaseImpl(
+            planner(settings, pool(accounts, clock, pools = home), keys = InstanceProviderKeys()),
+            FakeUpstream(eventAnswer()),
+            PriceTable(),
+            { sink.record(it) },
+            { observed += it },
+            clock,
+        )
+        relay(Gw.memberA, call(), RecordingResponder())
+        assertEquals(eu.id to "eu", records.single().let { it.accountId to it.poolId })
     }
 
     @Test
@@ -601,8 +627,8 @@ class RelayInferenceTest {
     fun theDefaultsAllowAndDropEverything() = runTest {
         assertEquals(SpendDecision.Allowed, AllowAllSpend.check(SpendRequest(Gw.orgA, Gw.memberA.memberId, Gw.orgA, 1)))
         val record = ModelCallRecord(
-            Gw.orgA, Gw.orgA, Gw.memberA.memberId, null, WireProtocol.CHAT, null, null, "m", null, 0, false, 400,
-            "invalid", clock.now(), null, 0,
+            Gw.orgA, Gw.orgA, Gw.memberA.memberId, null, WireProtocol.CHAT, null, null, null, "m", null, 0, false,
+            400, "invalid", clock.now(), null, 0,
         )
         NoModelUsageSink.record(record)
         NoModelCallObserver.observe(record)
