@@ -42,8 +42,7 @@ class ReportsQueryPlansTest {
         SecretsModule, UsageModule, BudgetsModule, ReportsModule,
     )
 
-    // No `::` cast and no colon at all in the seeds: the driver would read `:x` as a named parameter.
-    private suspend fun TestServer.seed(org: Uuid, scale: Int) = driver.withOrganization(org) { tx ->
+    private suspend fun TestServer.seed(org: Uuid, scale: Int) {
         val epoch = NOW.epochSeconds
         val sql = listOf(
             // Half the events are the launcher's (a session's id), half the gateway's (a launch's id, twice).
@@ -71,7 +70,7 @@ class ReportsQueryPlansTest {
                 "INTERVAL '1 hour' + INTERVAL '5 minutes' END, to_timestamp($epoch) - i * INTERVAL '1 hour' " +
                 "FROM generate_series(1, $scale) AS i",
         )
-        for (statement in sql) tx.execute(statement).getOrThrow()
+        seedIn(org, sql)
     }
 
     @Test
@@ -79,10 +78,10 @@ class ReportsQueryPlansTest {
         server.seedPeople()
         server.seed(ORG_B, 8_000)
         server.seed(ORG_A, 800)
-        for (table in listOf("usage_events", "sessions_sessions", "gates_gates")) {
-            // Statistics only, which no request writes: the serving role may not vacuum (#68).
-            server.database.superuser.execute("VACUUM ANALYZE $table").getOrThrow()
-        }
+        // Statistics only, which no request writes: the serving role may not vacuum (#68).
+        server.database.superuserOutsideTransaction(
+            *listOf("usage_events", "sessions_sessions", "gates_gates").map { "VACUUM ANALYZE $it" }.toTypedArray(),
+        )
         val database = server.koin.get<JdbcDatabase>()
         suspend fun explain(read: () -> Query): String = database.withOrganization(ORG_A) { plan { read() } }
         val month = SpendingReads(ORG_A, null, SpendingRanges.of(NOW - 30.days, NOW))

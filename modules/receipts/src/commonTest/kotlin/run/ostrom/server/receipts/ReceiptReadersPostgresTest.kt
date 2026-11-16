@@ -115,10 +115,11 @@ class ReceiptReadersPostgresTest {
     fun aMembersPageReadsTheRowsItServes() = benchTest(listOf(InstanceModule, ReceiptsModule), overrides) { server ->
         // Fixtures only: 20 000 receipts of B, 10 000 of A (one session in 10 is Mia's, one in 50 has a gate she
         // approves, one receipt in 20 is about no session).
-        val fixtures = server.database.superuser
-        fixtures.execute(seed(ORG_B, 20_000)).getOrThrow()
-        fixtures.execute(seed(ORG_A, 10_000)).getOrThrow()
-        fixtures.execute("VACUUM ANALYZE receipts_receipts").getOrThrow()
+        server.database.superuserJdbc.query {
+            exec(seed(ORG_B, 20_000))
+            exec(seed(ORG_A, 10_000))
+        }
+        server.database.superuserOutsideTransaction("VACUUM ANALYZE receipts_receipts")
         val approved = (0 until 200).map { "s-${it * 50 + 1}" }
         val mia = ReceiptAudience("mia", approved)
         val nobody = ReceiptAudience(null, emptyList())
@@ -139,7 +140,7 @@ class ReceiptReadersPostgresTest {
         }
     }
 
-    // No `::` cast and no colon at all: the driver would read `:x` as a named parameter.
+    // No `::` cast: the statement is the same text on the owner's and the superuser's connections.
     private fun seed(org: Uuid, count: Int): String =
         "INSERT INTO receipts_receipts (org_id, id, subject_kind, subject_id, body, created_at, session_id, member) " +
             "SELECT CAST('$org' AS uuid), 'rcpt_' || i, CASE WHEN i % 20 = 0 THEN 'harness' ELSE 'session' END, " +

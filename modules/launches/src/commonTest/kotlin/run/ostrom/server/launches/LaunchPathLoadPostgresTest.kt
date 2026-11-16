@@ -36,8 +36,8 @@ import run.ostrom.server.testing.assertNoScan
 import run.ostrom.server.testing.benchTest
 import run.ostrom.server.testing.measureRead
 import run.ostrom.server.testing.writeReadReport
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.Transaction
+import run.ostrom.server.kernel.database.JdbcDatabase
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.delete
@@ -294,7 +294,7 @@ class LaunchPathLoadPostgresTest {
     // connections of a role granted the serving role, so that the organization's advisory lock is really waited on.
     private suspend fun TestServer.contendedLaunches(team: Team): List<Duration> =
         database.withJdbcRole(poolSize = CONTENDED_POOL) { role, pool ->
-            database.superuser.execute("GRANT ${database.servingRole} TO $role").getOrThrow()
+            superuserSql("GRANT ${database.servingRole} TO $role")
             val launches = PostgresLaunchesRepository(pool)
             coroutineScope {
                 team.people.map { person ->
@@ -355,32 +355,20 @@ class LaunchPathLoadPostgresTest {
             }
             groups
         }
+        val serving = koin.get<JdbcDatabase>()
         for (group in groups) {
-            val tx = database.driver.begin().getOrThrow()
-            try {
-                plans += tx.plansOf(group)
-            } finally {
-                tx.rollback().getOrThrow()
-            }
+            plans += serving.query { plansOf(group).also { rollback() } }
         }
         return plans
     }
 
-    private suspend fun Transaction.plansOf(group: List<SentStatement>): List<String> = group.mapNotNull { sent ->
+    private fun JdbcTransaction.plansOf(group: List<SentStatement>): List<String> = group.mapNotNull { sent ->
         if (PLANNED.containsMatchIn(sent.sql) && !SETUP.containsMatchIn(sent.sql)) {
-            fetchAll(sent.fresh("EXPLAIN ")).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
+            replayRecorded(sent, "EXPLAIN ").joinToString("\n")
         } else {
-            execute(sent.fresh("")).getOrThrow()
+            replayRecorded(sent)
             null
         }
-    }
-
-    private fun SentStatement.fresh(prefix: String): Statement {
-        val copy = Statement.create(prefix + sql)
-        statement?.namedParametersValues.orEmpty().forEach { (name, value) -> copy.bind(name, value) }
-        // The modules on Exposed send `?` placeholders, recorded with their values by position (ExposedRecorder).
-        statement?.positionalParametersValues.orEmpty().forEachIndexed { index, value -> copy.bind(index, value) }
-        return copy
     }
 
     private fun stored(orgId: Uuid, userId: Uuid) = Launch(
@@ -458,43 +446,49 @@ class LaunchPathLoadPostgresTest {
     private suspend fun TestServer.fill(team: Team) {
         val other = Uuid.random()
         val owner = team.people.first().userId
-        val fixtures = database.superuser
-        fixtures.execute(
+        superuserSql(
             "INSERT INTO launches_launches (org_id, id, user_id, dev, repo, agent, model, created_at, expires_at) " +
                 "SELECT CAST('$other' AS uuid), 'lch' || i, gen_random_uuid(), 'dev', '$REPO', 'claude-code', NULL, " +
                 "now() - i * INTERVAL '1 minute', now() - i * INTERVAL '1 minute' + INTERVAL '1 day' " +
                 "FROM generate_series(1, $FILLED_ROWS) AS i",
-        ).getOrThrow()
-        fixtures.execute(
+        )
+        superuserSql(
             "INSERT INTO identity_api_tokens (id, user_id, org_id, name, kind, scopes, hint, agent_session_id, " +
                 "secret_hash, created_at, expires_at, revoked_at) SELECT gen_random_uuid(), CAST('$owner' AS uuid), " +
                 "CAST('$other' AS uuid), 'agent', 'AGENT', 'agent' || chr(58) || 'session', 'x', 'lch' || i, " +
                 "'fill-' || i, now() - i * INTERVAL '1 minute', now() + INTERVAL '1 day', now() " +
                 "FROM generate_series(1, $FILLED_ROWS) AS i",
-        ).getOrThrow()
-        fixtures.execute(
+        )
+        superuserSql(
             "INSERT INTO sessions_sessions (org_id, id, root_id, segment, launch_id, agent, dev, repo, started_at, " +
                 "ended_at, last_seen_at, cost_usd) SELECT CAST('$other' AS uuid), 'f' || i, 'f' || i, 0, 'lch' || i, " +
                 "'claude-code', 'dev', '$REPO', now() - i * INTERVAL '1 minute', now() - i * INTERVAL '1 minute', " +
                 "now() - i * INTERVAL '1 minute', 0 FROM generate_series(1, $FILLED_ROWS) AS i",
-        ).getOrThrow()
-        FILLED.forEach { fixtures.execute("VACUUM ANALYZE $it").getOrThrow() }
+        )
+        database.superuserOutsideTransaction(*FILLED.map { "VACUUM ANALYZE $it" }.toTypedArray())
     }
 
-    private suspend fun TestServer.deadlocks(): Long = database.superuser.fetchAll(
-        "SELECT deadlocks FROM pg_stat_database WHERE datname = current_database()",
-    ).getOrThrow().first().get("deadlocks").asString().toLong()
+    private suspend fun TestServer.superuserSql(sql: String) {
+        database.superuserJdbc.query { exec(sql) }
+    }
 
-    private suspend fun TestServer.activeAgentTokens(orgId: Uuid): Long = database.superuser.fetchAll(
+    private suspend fun TestServer.superuserCount(sql: String): Long = database.superuserJdbc.query {
+        exec(sql) { rs -> rs.next(); rs.getLong(1) } ?: error("No row: $sql")
+    }
+
+    private suspend fun TestServer.deadlocks(): Long =
+        superuserCount("SELECT deadlocks FROM pg_stat_database WHERE datname = current_database()")
+
+    private suspend fun TestServer.activeAgentTokens(orgId: Uuid): Long = superuserCount(
         "SELECT COUNT(*) AS n FROM identity_api_tokens WHERE kind = 'AGENT' AND org_id = CAST('$orgId' AS uuid) " +
             "AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now())",
-    ).getOrThrow().first().get("n").asString().toLong()
+    )
 
     private suspend fun TestServer.count(table: String, orgs: List<Uuid>, more: String): Long =
-        database.superuser.fetchAll(
+        superuserCount(
             "SELECT COUNT(*) AS n FROM $table WHERE org_id IN (" +
                 orgs.joinToString { "CAST('$it' AS uuid)" } + ")$more",
-        ).getOrThrow().first().get("n").asString().toLong()
+        )
 
     private fun io.ktor.client.request.HttpRequestBuilder.bearer(token: String) =
         header(HttpHeaders.Authorization, "Bearer $token")

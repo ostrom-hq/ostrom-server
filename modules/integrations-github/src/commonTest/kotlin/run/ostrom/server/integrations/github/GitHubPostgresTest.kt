@@ -49,8 +49,9 @@ import run.ostrom.server.testing.serverTest
 import dev.whyoleg.cryptography.CryptographyProvider
 import dev.whyoleg.cryptography.algorithms.HMAC
 import dev.whyoleg.cryptography.algorithms.SHA256
-import io.github.smyrgeorge.sqlx4k.QueryExecutor
-import io.github.smyrgeorge.sqlx4k.Statement
+import org.jetbrains.exposed.v1.core.TextColumnType
+import org.jetbrains.exposed.v1.core.UuidColumnType
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import io.ktor.client.call.body
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -460,17 +461,16 @@ class GitHubPostgresTest {
         assertNull(repository.check(OTHER_ORG, gateId))
         assertNull(repository.installation(OTHER_ORG))
 
-        // The test's driver is the serving role, as in production (#68): row level security applies to it.
-        val counts = server.driver.transaction {
+        // The test's pool is the serving role, as in production (#68): row level security applies to it.
+        val counts = server.koin.get<JdbcDatabase>().query {
             val none = listOf("github_installations", "github_checks").map { count(it) }
-            val setOrg = Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)")
-            fetchAll(setOrg.bind("org", OTHER_ORG.toString())).getOrThrow()
+            exec("SELECT set_config('ostrom.org_id', ?, TRUE)", listOf(TextColumnType() to OTHER_ORG.toString())) {}
             val other = listOf("github_installations", "github_checks").map { count(it) }
             val origins = mutableListOf(count("github_installation_origins"))
-            fetchAll(Statement.create("SELECT set_config('ostrom.github_installation', '43', TRUE)")).getOrThrow()
+            exec("SELECT set_config('ostrom.github_installation', '43', TRUE)") {}
             val wrongInstallation = count("github_installations")
             origins += count("github_installation_origins")
-            fetchAll(Statement.create("SELECT set_config('ostrom.github_installation', '42', TRUE)")).getOrThrow()
+            exec("SELECT set_config('ostrom.github_installation', '42', TRUE)") {}
             origins += count("github_installation_origins")
             listOf(none, other, listOf(wrongInstallation, count("github_installations")), origins)
         }
@@ -481,14 +481,13 @@ class GitHubPostgresTest {
         )
         // PostgreSQL refuses the row (WITH CHECK): the statement fails, or the commit of the aborted transaction does.
         val forged = try {
-            server.driver.transaction {
-                fetchAll(Statement.create("SELECT set_config('ostrom.github_installation', '42', TRUE)")).getOrThrow()
-                execute(
-                    Statement.create(
-                        "INSERT INTO github_checks (org_id, gate_id, repo, sha, check_run_id, updated_at) " +
-                            "VALUES (:org, :gate, 'acme/api', 'x', 1, NOW())",
-                    ).bind("org", ORG).bind("gate", Uuid.random()),
-                ).getOrThrow()
+            server.koin.get<JdbcDatabase>().query {
+                exec("SELECT set_config('ostrom.github_installation', '42', TRUE)") {}
+                exec(
+                    "INSERT INTO github_checks (org_id, gate_id, repo, sha, check_run_id, updated_at) " +
+                        "VALUES (?, ?, 'acme/api', 'x', 1, NOW())",
+                    listOf(UuidColumnType() to ORG, UuidColumnType() to Uuid.random()),
+                )
             }
             Result.success(Unit)
         } catch (error: CancellationException) {
@@ -543,17 +542,21 @@ class GitHubPostgresTest {
     @Test
     fun theWebhookAndCallbackQueriesUseTheirIndexes() = gitHubTest { server ->
         // Fixtures only: many installations and a month of deliveries, and the statistics (#68).
-        val fixtures = server.database.superuser
-        fixtures.execute(
-            "INSERT INTO github_installation_origins (installation_id, sender, account, account_type, created_at) " +
-                "SELECT 1000 + i, 'admin', 'org-' || i, 'Organization', NOW() FROM generate_series(1, 20000) AS i",
-        ).getOrThrow()
-        fixtures.execute(
-            "INSERT INTO github_webhook_deliveries (delivery_id, received_at) SELECT 'd-' || i, " +
-                "NOW() - (i || ' minutes')::interval FROM generate_series(1, 50000) AS i",
-        ).getOrThrow()
-        fixtures.execute("VACUUM ANALYZE github_installation_origins").getOrThrow()
-        fixtures.execute("VACUUM ANALYZE github_webhook_deliveries").getOrThrow()
+        server.database.superuserJdbc.query {
+            exec(
+                "INSERT INTO github_installation_origins (installation_id, sender, account, account_type, " +
+                    "created_at) SELECT 1000 + i, 'admin', 'org-' || i, 'Organization', NOW() " +
+                    "FROM generate_series(1, 20000) AS i",
+            )
+            exec(
+                "INSERT INTO github_webhook_deliveries (delivery_id, received_at) SELECT 'd-' || i, " +
+                    "NOW() - (i || ' minutes')::interval FROM generate_series(1, 50000) AS i",
+            )
+        }
+        server.database.superuserOutsideTransaction(
+            "VACUUM ANALYZE github_installation_origins",
+            "VACUUM ANALYZE github_webhook_deliveries",
+        )
         val database = server.koin.get<JdbcDatabase>()
         val plans = linkedMapOf(
             "who installed an installation" to
@@ -571,8 +574,8 @@ class GitHubPostgresTest {
         }
     }
 
-    private suspend fun QueryExecutor.count(table: String): String =
-        fetchAll("SELECT COUNT(*) AS n FROM $table").getOrThrow().first().get("n").asString()
+    private fun JdbcTransaction.count(table: String): String =
+        exec("SELECT COUNT(*) AS n FROM $table") { rs -> rs.next(); rs.getString("n") }.orEmpty()
 }
 
 private const val INSTALLED = "https://console.example/github?installed=1"

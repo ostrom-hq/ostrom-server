@@ -35,9 +35,9 @@ class ReportsReadsBenchTest {
     )
     private val orgs = listOf(ORG_A, ORG_B) + List(ORGS - 2) { Uuid.random() }
 
-    // No `::` cast and no colon at all in the seeds: the driver would read `:x` as a named parameter. A session makes
-    // 20 calls in its first 20 minutes, by its member: a tenth of the sessions are olga's, a tenth mia's, the rest of
-    // 28 other members; half are the launcher's (the session's id), half the gateway's (the launch's id, twice).
+    // A session makes 20 calls in its first 20 minutes, by its member: a tenth of the sessions are olga's, a tenth
+    // mia's, the rest of 28 other members; half are the launcher's (the session's id), half the gateway's (the
+    // launch's id, twice).
     private fun usageOf(org: Uuid): String {
         val epoch = NOW.epochSeconds
         val session = "(i / $CALLS_PER_SESSION)"
@@ -63,14 +63,17 @@ class ReportsReadsBenchTest {
     @Test
     fun theSpendingReportKeepsItsBudget() = benchTest(modules, reportsOverrides(FixedClock())) { server ->
         server.seedPeople()
-        val fixtures = server.database.superuser
-        orgs.forEach { org ->
-            fixtures.execute(usageOf(org)).getOrThrow()
-            fixtures.execute(sessionsOf(org)).getOrThrow()
+        server.database.superuserJdbc.query {
+            orgs.forEach { org ->
+                exec(usageOf(org))
+                exec(sessionsOf(org))
+            }
         }
-        fixtures.execute("VACUUM ANALYZE usage_events").getOrThrow()
-        fixtures.execute("VACUUM ANALYZE usage_daily").getOrThrow()
-        fixtures.execute("VACUUM ANALYZE sessions_sessions").getOrThrow()
+        server.database.superuserOutsideTransaction(
+            "VACUUM ANALYZE usage_events",
+            "VACUUM ANALYZE usage_daily",
+            "VACUUM ANALYZE sessions_sessions",
+        )
 
         val measures = listOf(
             Triple("GET /api/v1/spending (owner, month)", "olga", "/api/v1/spending"),

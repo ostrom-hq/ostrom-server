@@ -5,7 +5,8 @@ import run.ostrom.server.kernel.logging.JsonLogger
 import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.receipts.infrastructure.ReceiptsMigrations
 import run.ostrom.server.testing.TestDatabase
-import io.github.smyrgeorge.sqlx4k.SQLError
+import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -31,27 +32,32 @@ class ReceiptsOwnerMigrationPostgresTest {
         "INSERT INTO receipts_receipts (org_id, id, subject_kind, subject_id, body, created_at) " +
             "VALUES ('$ORG_A', '$id', '$kind', '$subject', '$body', now())"
 
+    private fun <T> JdbcTransaction.rowsOf(sql: String, row: (java.sql.ResultSet) -> T): List<T> =
+        exec(sql) { rs -> buildList { while (rs.next()) add(row(rs)) } }.orEmpty()
+
     @Test
     fun theReceiptsSignedBeforeNameTheirSessionAndItsPerson() = runTest {
         val database = TestDatabase.create() ?: return@runTest
         try {
             val migrator = database.migrationRunner(JsonLogger(LogLevel.WARN))
             migrator.migrate("receipts", ReceiptsMigrations.take(2))
-            database.owner.execute(sessions).getOrThrow()
-            val fixtures = database.superuser
-            fixtures.execute("INSERT INTO sessions_sessions VALUES ('$ORG_A', 's-1', 'lyes')").getOrThrow()
-            fixtures.execute(receipt("rcpt_session", "session", "s-1", "{}")).getOrThrow()
-            fixtures.execute(receipt("rcpt_gate", "gate", "g-1", """{"sessionId": "s-1"}""")).getOrThrow()
-            fixtures.execute(receipt("rcpt_gone", "gate", "g-2", """{"sessionId": "s-gone"}""")).getOrThrow()
-            fixtures.execute(receipt("rcpt_harness", "harness", "h-1", "{}")).getOrThrow()
+            database.ownerJdbc.query { exec(sessions) }
+            val fixtures = database.superuserJdbc
+            fixtures.query {
+                exec("INSERT INTO sessions_sessions VALUES ('$ORG_A', 's-1', 'lyes')")
+                exec(receipt("rcpt_session", "session", "s-1", "{}"))
+                exec(receipt("rcpt_gate", "gate", "g-1", """{"sessionId": "s-1"}"""))
+                exec(receipt("rcpt_gone", "gate", "g-2", """{"sessionId": "s-gone"}"""))
+                exec(receipt("rcpt_harness", "harness", "h-1", "{}"))
+            }
 
             migrator.migrate("receipts", ReceiptsMigrations)
 
-            val rows = fixtures.fetchAll("SELECT id, session_id, member FROM receipts_receipts ORDER BY id")
-                .getOrThrow().map {
-                    val member = it.get("member").asStringOrNull()
-                    Triple(it.get("id").asString(), it.get("session_id").asStringOrNull(), member)
+            val rows = fixtures.query {
+                rowsOf("SELECT id, session_id, member FROM receipts_receipts ORDER BY id") { rs ->
+                    Triple(rs.getString("id"), rs.getString("session_id"), rs.getString("member"))
                 }
+            }
             assertEquals(
                 listOf(
                     Triple("rcpt_gate", "s-1", "lyes"),
@@ -62,14 +68,16 @@ class ReceiptsOwnerMigrationPostgresTest {
                 rows,
             )
             // The trigger is back, for every role, and so is row level security, on both tables.
-            val refused = assertFailsWith<SQLError> {
-                fixtures.execute("UPDATE receipts_receipts SET member = 'mallory'").getOrThrow()
+            val refused = assertFailsWith<ExposedSQLException> {
+                fixtures.query { exec("UPDATE receipts_receipts SET member = 'mallory'") }
             }
             assertTrue("append-only" in refused.message.orEmpty(), refused.message)
-            val forced = fixtures.fetchAll(
-                "SELECT relname FROM pg_class WHERE relforcerowsecurity " +
-                    "AND relname IN ('receipts_receipts', 'sessions_sessions') ORDER BY relname",
-            ).getOrThrow().map { it.get("relname").asString() }
+            val forced = fixtures.query {
+                rowsOf(
+                    "SELECT relname FROM pg_class WHERE relforcerowsecurity " +
+                        "AND relname IN ('receipts_receipts', 'sessions_sessions') ORDER BY relname",
+                ) { rs -> rs.getString("relname") }
+            }
             assertEquals(listOf("receipts_receipts", "sessions_sessions"), forced)
         } finally {
             database.close()
@@ -82,11 +90,14 @@ class ReceiptsOwnerMigrationPostgresTest {
         try {
             val migrator = database.migrationRunner(JsonLogger(LogLevel.WARN))
             migrator.migrate("receipts", ReceiptsMigrations.take(2))
-            database.superuser.execute(receipt("rcpt_session", "session", "s-1", "{}")).getOrThrow()
+            database.superuserJdbc.query { exec(receipt("rcpt_session", "session", "s-1", "{}")) }
             migrator.migrate("receipts", ReceiptsMigrations)
-            val row = database.superuser.fetchAll("SELECT session_id, member FROM receipts_receipts")
-                .getOrThrow().single()
-            assertEquals("s-1" to null, row.get("session_id").asStringOrNull() to row.get("member").asStringOrNull())
+            val row = database.superuserJdbc.query {
+                rowsOf("SELECT session_id, member FROM receipts_receipts") { rs ->
+                    rs.getString("session_id") to rs.getString("member")
+                }
+            }.single()
+            assertEquals("s-1" to null, row)
         } finally {
             database.close()
         }

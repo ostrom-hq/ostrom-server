@@ -6,7 +6,6 @@ import run.ostrom.server.compiler.CompilerModule
 import run.ostrom.server.gates.GatesModule
 import run.ostrom.server.identity.IdentityModule
 import run.ostrom.server.instance.InstanceModule
-import run.ostrom.server.kernel.database.withOrganization
 import run.ostrom.server.orgs.OrgsModule
 import run.ostrom.server.receipts.ReceiptsModule
 import run.ostrom.server.reports.domain.ActivityCursor
@@ -19,8 +18,8 @@ import run.ostrom.server.sessions.SessionsModule
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
 import run.ostrom.server.usage.UsageModule
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
+import java.time.OffsetDateTime
+import kotlin.time.toKotlinInstant
 import kotlinx.datetime.LocalDate
 import kotlin.math.roundToLong
 import kotlin.test.Test
@@ -41,8 +40,7 @@ class ReportsExposedOraclePostgresTest {
         SecretsModule, UsageModule, BudgetsModule, ReportsModule,
     )
 
-    // No `::` cast and no colon in the seeds but the JSON's: the driver would read `:x` as a named parameter. Ten rows
-    // of each source share each time, so every page ends inside a tie.
+    // Ten rows of each source share each time, so every page ends inside a tie.
     private fun feedOf(org: Uuid): List<String> {
         val epoch = NOW.epochSeconds
         val at = "to_timestamp($epoch) - (i / 10) * INTERVAL '1 hour'"
@@ -72,18 +70,19 @@ class ReportsExposedOraclePostgresTest {
     }
 
     private suspend fun TestServer.pageBySql(before: ActivityCursor?, repo: String?, limit: Int): List<String> {
-        val statement = Statement.create(ReportsSqlBeforeExposed.activity(cursor = before != null, repo = repo != null))
-            .bind("org_id", ORG_A).bind("limit", limit)
-        before?.let { statement.bind("before_at", it.at).bind("before_id", it.id) }
-        repo?.let { statement.bind("repo", it) }
-        return driver.withOrganization(ORG_A) { tx ->
-            tx.fetchAll(statement).getOrThrow().map { row ->
-                val cost = row.get("cost_usd").asStringOrNull()?.let { (it.toDouble() * 1_000_000.0).roundToLong() }
+        val text = ReportsSqlBeforeExposed.activity(cursor = before != null, repo = repo != null)
+        val values = mutableMapOf<String, Any?>("org_id" to ORG_A, "limit" to limit)
+        before?.let { values["before_at"] = it.at; values["before_id"] = it.id }
+        repo?.let { values["repo"] = it }
+        return inOrganization(ORG_A) {
+            queryNamed(text, values) { row ->
+                val cost = row.getString("cost_usd")?.let { (it.toDouble() * 1_000_000.0).roundToLong() }
                 listOf(
-                    row.get("item_id").asString(), row.get("at").asInstant(), row.get("kind").asString(),
-                    row.get("actor").asString(), row.get("subject").asString(), row.get("outcome").asStringOrNull(),
-                    row.get("repo").asStringOrNull(), cost, row.get("session_id").asStringOrNull(),
-                    row.get("gate_id").asStringOrNull(),
+                    row.getString("item_id"),
+                    row.getObject("at", OffsetDateTime::class.java).toInstant().toKotlinInstant(),
+                    row.getString("kind"), row.getString("actor"), row.getString("subject"),
+                    row.getString("outcome"), row.getString("repo"), cost, row.getString("session_id"),
+                    row.getString("gate_id"),
                 ).joinToString("|")
             }
         }
@@ -111,7 +110,7 @@ class ReportsExposedOraclePostgresTest {
     fun theFeedPagesAreTheOnesTheSqlGave() = serverTest(modules, reportsOverrides(FixedClock())) { server ->
         server.seedPeople()
         for (org in listOf(ORG_A, ORG_B)) {
-            server.driver.withOrganization(org) { tx -> feedOf(org).forEach { tx.execute(it).getOrThrow() } }
+            server.seedIn(org, feedOf(org))
         }
         val first = server.koin.get<ReportsRepository>().activity(ORG_A, null, null, 200)
         assertTrue(first.any { it.actor == "olga" }, "A member who decided is shown by login")
@@ -139,10 +138,7 @@ class ReportsExposedOraclePostgresTest {
     fun theSpendingLinesAreTheOnesTheSqlGave() = serverTest(modules, reportsOverrides(FixedClock())) { server ->
         server.seedPeople()
         for (org in listOf(ORG_A, ORG_B)) {
-            server.driver.withOrganization(org) { tx ->
-                feedOf(org).forEach { tx.execute(it).getOrThrow() }
-                tx.execute(ledgerOf(org)).getOrThrow()
-            }
+            server.seedIn(org, feedOf(org) + ledgerOf(org))
         }
         val windows = listOf(
             startOf(LocalDate(2026, 10, 1)) to NOW,

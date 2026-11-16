@@ -267,8 +267,10 @@ class LaunchModelSpendPostgresTest {
                 "Every call is in the ledger, the refused ones at no cost",
             )
             assertEquals(14_400, events.sumOf { it.costMicros })
-            val holds = database.superuser.fetchAll("SELECT COUNT(*) AS n FROM usage_holds").getOrThrow()
-            assertEquals("0", holds.first().get("n").asString(), "Every hold is settled by its call's record")
+            val holds = database.superuserJdbc.query {
+                exec("SELECT COUNT(*) AS n FROM usage_holds") { rs -> rs.next(); rs.getString("n") }
+            }
+            assertEquals("0", holds, "Every hold is settled by its call's record")
         }
     }
 

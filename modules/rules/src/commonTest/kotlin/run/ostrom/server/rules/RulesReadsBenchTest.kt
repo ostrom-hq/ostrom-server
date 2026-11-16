@@ -41,8 +41,7 @@ class RulesReadsBenchTest {
     private val orgs = listOf(orgA, orgB) + List(ORGS - 2) { Uuid.random() }
 
     // Copies the rule the API wrote, under new ids, groups and organizations: one in four proposed, one in a hundred
-    // rejected, and two in three scoped to `acme/r<i % 5>`. No `::` cast and no colon at all: the driver would read
-    // `:x` as a named parameter.
+    // rejected, and two in three scoped to `acme/r<i % 5>`.
     private fun copiesOf(org: Uuid, from: Int) =
         "INSERT INTO rules_rules (org_id, id, statement, output, rule_group, scope, sources, why, strength, " +
             "confidence, status, found_by, found_at, review_by, decided_by, decided_at, origin, gate, updated_at) " +
@@ -59,10 +58,11 @@ class RulesReadsBenchTest {
     ) { server ->
         val created = server.call("POST", "/api/v1/rules", "admin-a", NewRuleRequest("Ship", "Releases"))
         assertEquals(HttpStatusCode.Created, created.status)
-        val fixtures = server.database.superuser
-        orgs.drop(1).forEach { fixtures.execute(copiesOf(it, 0)).getOrThrow() }
-        fixtures.execute(copiesOf(orgA, 1)).getOrThrow()
-        fixtures.execute("VACUUM ANALYZE rules_rules").getOrThrow()
+        server.database.superuserJdbc.query {
+            orgs.drop(1).forEach { exec(copiesOf(it, 0)) }
+            exec(copiesOf(orgA, 1))
+        }
+        server.database.superuserOutsideTransaction("VACUUM ANALYZE rules_rules")
 
         val first = server.call("GET", "/api/v1/rules?limit=$PAGE", "member-a").body<RulesPage>()
         val after = checkNotNull(first.next).encodeURLParameter()

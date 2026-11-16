@@ -24,10 +24,8 @@ import run.ostrom.server.rules.infrastructure.PostgresRulesRepository
 import run.ostrom.server.rules.infrastructure.RulesMigrations
 import run.ostrom.server.testing.TestDatabase
 import run.ostrom.server.kernel.database.JdbcDatabase
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.SQLError
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
+import org.jetbrains.exposed.v1.core.UuidColumnType
+import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -49,7 +47,7 @@ class RulesRowLevelSecurityPostgresTest {
     private val tables = listOf("rules_rules", "rules_decisions", "rules_gate_policy", "rules_analyses")
 
     private fun asServingRole(
-        block: suspend (superuser: Driver, serving: PostgresRulesRepository, raw: Driver) -> Unit,
+        block: suspend (database: TestDatabase, serving: PostgresRulesRepository, raw: JdbcDatabase) -> Unit,
     ) = runTest {
         val database = TestDatabase.create() ?: return@runTest
         try {
@@ -57,7 +55,7 @@ class RulesRowLevelSecurityPostgresTest {
             database.migrationRunner(RecordingLogger()).migrate("rules", RulesMigrations)
             JdbcDatabase(database.servingConfig, JdbcDatabase.MIN_POOL_SIZE).use {
                 jdbc = it
-                block(database.superuser, PostgresRulesRepository(it), database.driver)
+                block(database, PostgresRulesRepository(it), it)
             }
         } finally {
             database.close()
@@ -77,7 +75,7 @@ class RulesRowLevelSecurityPostgresTest {
     )
 
     @Test
-    fun eachOrganizationSeesAndChangesOnlyItsOwnRules() = asServingRole { superuser, rules, _ ->
+    fun eachOrganizationSeesAndChangesOnlyItsOwnRules() = asServingRole { database, rules, _ ->
         rules.transaction(orgA) {
             insertRule(RulesFixtures.rule("rule_1"))
             insertDecision(decision("dec_a", orgA))
@@ -103,8 +101,10 @@ class RulesRowLevelSecurityPostgresTest {
         assertEquals(1, rules.rules(orgA, RuleQuery(), 10).size, "Org B's delete leaves A's rule_1")
 
         listOf("rules_rules", "rules_decisions", "rules_gate_policy").forEach { table ->
-            val count = superuser.fetchAll("SELECT count(*) AS n FROM $table").getOrThrow().single().get("n").asLong()
-            assertTrue(count >= 1, "The superuser sees $table")
+            val count = database.superuserJdbc.query {
+                exec("SELECT count(*) AS n FROM $table") { rs -> rs.next(); rs.getLong("n") }
+            }
+            assertTrue(count != null && count >= 1, "The superuser sees $table")
         }
     }
 
@@ -204,10 +204,14 @@ class RulesRowLevelSecurityPostgresTest {
         rules.transaction(orgA) { insertRule(RulesFixtures.rule("rule_1", orgB)) }
         assertEquals(orgA, rules.rule(orgA, "rule_1")?.orgId, "A transaction writes its own organization's row")
         assertNull(rules.rule(orgB, "rule_1"))
-        val planted = Statement.create(
-            "INSERT INTO rules_gate_policy (org_id, self_approval, updated_at) VALUES (:org, 'never', now())",
-        ).bind("org", orgB)
-        assertFailsWith<SQLError> { raw.withOrganization(orgA) { it.execute(planted).getOrThrow() } }
+        assertFailsWith<ExposedSQLException> {
+            raw.withOrganization(orgA) {
+                exec(
+                    "INSERT INTO rules_gate_policy (org_id, self_approval, updated_at) VALUES (?, 'never', now())",
+                    listOf(UuidColumnType() to orgB),
+                )
+            }
+        }
         assertNull(rules.selfApproval(orgB))
     }
 
@@ -215,7 +219,7 @@ class RulesRowLevelSecurityPostgresTest {
     fun withoutAnOrganizationNoRowIsVisible() = asServingRole { _, rules, raw ->
         rules.transaction(orgA) { insertRule(RulesFixtures.rule("rule_1")) }
         tables.forEach { table ->
-            val count = raw.fetchAll("SELECT count(*) AS n FROM $table").getOrThrow().single().get("n").asLong()
+            val count = raw.query { exec("SELECT count(*) AS n FROM $table") { rs -> rs.next(); rs.getLong("n") } }
             assertEquals(0L, count, "$table without ostrom.org_id")
         }
     }

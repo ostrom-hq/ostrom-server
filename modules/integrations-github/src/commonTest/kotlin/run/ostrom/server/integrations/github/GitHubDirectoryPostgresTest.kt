@@ -41,7 +41,19 @@ import run.ostrom.server.integrations.github.infrastructure.teamsPage
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.withOrganization
 import run.ostrom.server.testing.plan
+import org.jetbrains.exposed.v1.core.IntegerColumnType
+import org.jetbrains.exposed.v1.core.UuidColumnType
+import org.jetbrains.exposed.v1.core.TextColumnType
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import org.jetbrains.exposed.v1.jdbc.Query
+import org.jetbrains.exposed.v1.jdbc.deleteAll
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.selectAll
+import org.jetbrains.exposed.v1.jdbc.update
+import run.ostrom.server.integrations.github.infrastructure.GitHubApps
+import run.ostrom.server.integrations.github.infrastructure.GitHubLinks
+import run.ostrom.server.integrations.github.infrastructure.GitHubRepos
 import run.ostrom.server.integrations.github.infrastructure.GitHubSettings
 import run.ostrom.server.integrations.github.infrastructure.PostgresGitHubAppStore
 import run.ostrom.server.integrations.github.presentation.GitHubAppConfigurationResponse
@@ -79,9 +91,6 @@ import run.ostrom.server.testing.serverTest
 import dev.whyoleg.cryptography.CryptographyProvider
 import dev.whyoleg.cryptography.algorithms.HMAC
 import dev.whyoleg.cryptography.algorithms.SHA256
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.QueryExecutor
-import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.call.body
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -109,6 +118,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -356,32 +366,29 @@ class GitHubDirectoryPostgresTest {
         server.get("user:a:owner", "/api/v1/repos")
         server.get("user:b:owner", "/api/v1/repos")
         val tables = listOf("github_repos", "github_teams", "github_directory_syncs")
-        val counts = server.driver.asTenant(null) { tables.map { count(it) } }
+        val counts = server.asTenant(null) { tables.map { count(it) } }
         assertEquals(listOf("0", "0", "0"), counts, "No organization set: nothing")
-        val b = server.driver.asTenant(OTHER_ORG) { tables.map { count(it) } }
+        val b = server.asTenant(OTHER_ORG) { tables.map { count(it) } }
         assertEquals(listOf("1", "1", "1"), b, "Org B: its own rows only")
-        val names = server.driver.asTenant(OTHER_ORG) {
-            fetchAll("SELECT name FROM github_repos").getOrThrow().map { it.get("name").asString() }
-        }
+        val names = server.asTenant(OTHER_ORG) { GitHubRepos.select(GitHubRepos.name).map { it[GitHubRepos.name] } }
         assertEquals(listOf("globex-secret"), names)
         for (table in tables) {
             val insert = when (table) {
                 "github_repos" -> "INSERT INTO github_repos (org_id, name, default_branch, archived, owners) " +
-                    "VALUES (:org, 'x', 'main', FALSE, '[]')"
+                    "VALUES (?, 'x', 'main', FALSE, '[]')"
                 "github_teams" -> "INSERT INTO github_teams (org_id, slug, name, members, repos) " +
-                    "VALUES (:org, 'x', 'x', '[]', '[]')"
-                else -> "INSERT INTO github_directory_syncs (org_id, checked_at) VALUES (:org, NOW())"
+                    "VALUES (?, 'x', 'x', '[]', '[]')"
+                else -> "INSERT INTO github_directory_syncs (org_id, checked_at) VALUES (?, NOW())"
             }
             val forged = attempt {
-                server.driver.asTenant(OTHER_ORG) { execute(Statement.create(insert).bind("org", Uuid.random())) }
+                server.asTenant(OTHER_ORG) { exec(insert, listOf(UuidColumnType() to Uuid.random())) }
             }
             assertTrue(forged.isFailure, "$table refuses a row of another organization")
         }
-        val updated = server.driver.asTenant(OTHER_ORG) {
-            execute(Statement.create("UPDATE github_repos SET archived = TRUE WHERE org_id = :org").bind("org", ORG))
-                .getOrThrow()
+        val updated = server.asTenant(OTHER_ORG) {
+            GitHubRepos.update({ GitHubRepos.orgId eq ORG }) { it[archived] = true }
         }
-        assertEquals(0L, updated, "Org B cannot touch org A's rows")
+        assertEquals(0, updated, "Org B cannot touch org A's rows")
     }
 
     @Test
@@ -494,8 +501,10 @@ class GitHubDirectoryPostgresTest {
         val stored = PostgresGitHubAppStore(server.koin.get(), AesGcmSecretCipher(ByteArray(32) { 7 })).app()
         assertEquals(NEXT_KEY to APP_SECRET, stored?.privateKeyPem to stored?.clientSecret)
         assertEquals("whsec-next" to "ostrom-next", stored?.webhookSecret to stored?.slug)
-        val row = server.driver.fetchAll("SELECT updated_by, version FROM github_apps").getOrThrow().single()
-        assertEquals("user:a:owner" to "2", row.get("updated_by").asString() to row.get("version").asString())
+        val row = server.koin.get<JdbcDatabase>().query {
+            GitHubApps.select(GitHubApps.updatedBy, GitHubApps.version).single()
+        }
+        assertEquals("user:a:owner" to 2, row[GitHubApps.updatedBy] to row[GitHubApps.version])
     }
 
     @Test
@@ -510,17 +519,20 @@ class GitHubDirectoryPostgresTest {
         // A link whose tokens no longer open goes too, with nothing to revoke.
         val member = Uuid.random()
         links.saveLink(ORG, member, GitHubIdentity(4, "dev-d"), "Iv1.former", tokens("ghu_d"), NOW)
-        server.database.superuser.execute("UPDATE github_links SET tokens_sealed = 'x' WHERE github_login = 'dev-d'")
-            .getOrThrow()
+        server.database.superuserJdbc.query {
+            GitHubLinks.update({ GitHubLinks.githubLogin eq "dev-d" }) { it[tokensSealed] = "x" }
+        }
 
         val removed = links.removeLinksOfOtherClients("Iv1.kept")
         assertEquals(setOf("ghu_a", "ghu_b"), removed.map { it.accessToken }.toSet())
         assertEquals(setOf("Iv1.former"), removed.map { it.clientId }.toSet())
-        val left = server.database.superuser.fetchAll("SELECT github_login FROM github_links").getOrThrow()
-        assertEquals(listOf("dev-c"), left.map { it.get("github_login").asString() })
+        val left = server.database.superuserJdbc.query {
+            GitHubLinks.select(GitHubLinks.githubLogin).map { it[GitHubLinks.githubLogin] }
+        }
+        assertEquals(listOf("dev-c"), left)
         assertEquals(emptyList(), links.removeLinksOfOtherClients("Iv1.kept"))
         // The serving role never reads the functions' rows directly.
-        val direct = server.driver.asTenant(null) { count("github_links") }
+        val direct = server.asTenant(null) { count("github_links") }
         assertEquals("0", direct)
     }
 
@@ -547,10 +559,15 @@ class GitHubDirectoryPostgresTest {
         assertEquals(createdApp().privateKeyPem, app?.privateKeyPem)
         assertEquals("whsec-created" to "client-secret", app?.webhookSecret to app?.clientSecret)
         assertEquals("Iv1.abc", app?.clientId)
-        val row = server.driver.fetchAll("SELECT * FROM github_apps").getOrThrow().first()
-        for (column in listOf("private_key_sealed", "client_secret_sealed", "webhook_secret_sealed")) {
-            val stored = row.get(column).asString()
-            assertFalse("secret" in stored || "PRIVATE KEY" in stored, "$column is sealed")
+        val row = server.koin.get<JdbcDatabase>().query { GitHubApps.selectAll().first() }
+        val sealedColumns = listOf(
+            GitHubApps.privateKeySealed,
+            GitHubApps.clientSecretSealed,
+            GitHubApps.webhookSecretSealed,
+        )
+        for (column in sealedColumns) {
+            val stored = assertNotNull(row[column], "${column.name} is stored")
+            assertFalse("secret" in stored || "PRIVATE KEY" in stored, "${column.name} is sealed")
         }
         val otherKey = PostgresGitHubAppStore(server.koin.get(), AesGcmSecretCipher(ByteArray(32) { 8 })).app()
         assertEquals(null to null, otherKey?.privateKeyPem to otherKey?.clientSecret)
@@ -569,13 +586,13 @@ class GitHubDirectoryPostgresTest {
         sealed.saveState("h2", "usr_admin", NOW + 10.minutes)
         assertEquals("usr_admin", sealed.takeState("h2", NOW))
 
-        server.driver.execute("DELETE FROM github_apps").getOrThrow()
+        server.koin.get<JdbcDatabase>().query { GitHubApps.deleteAll() }
         val noHook = createdApp().copy(webhookSecret = null)
         sealed.saveApp(noHook, "usr_admin", NOW)
         assertNull(sealed.app()?.webhookSecret)
 
         // An App imported once from the former variables may have no OAuth client.
-        server.driver.execute("DELETE FROM github_apps").getOrThrow()
+        server.koin.get<JdbcDatabase>().query { GitHubApps.deleteAll() }
         sealed.saveApp(createdApp().copy(clientId = null, clientSecret = null), "environment", NOW)
         val imported = sealed.app()
         assertEquals(null to null, imported?.clientId to imported?.clientSecret)
@@ -585,31 +602,37 @@ class GitHubDirectoryPostgresTest {
     @Test
     fun theDirectorysRequestPathReadsUseTheirIndexes() = gitHubTest { server ->
         // Fixtures only: the rows of many organizations at once and the statistics, which no request writes (#68).
-        val fixtures = server.database.superuser
-        val driver = server.driver
+        val fixtures = server.database.superuserJdbc
         for ((org, count) in listOf(OTHER_ORG to 20_000, ORG to 2_000)) {
-            fixtures.execute(
-                "INSERT INTO github_repos (org_id, name, default_branch, archived, owners) " +
-                    "SELECT CAST('$org' AS uuid), 'repo-' || i, 'main', FALSE, '[]' " +
-                    "FROM generate_series(1, $count) AS i",
-            ).getOrThrow()
-            fixtures.execute(
-                "INSERT INTO github_teams (org_id, slug, name, members, repos) SELECT CAST('$org' AS uuid), " +
-                    "'team-' || i, 'Team', '[]', '[]' FROM generate_series(1, $count) AS i",
-            ).getOrThrow()
-            fixtures.execute(
-                "INSERT INTO github_directory_syncs (org_id, synced_at, checked_at) VALUES (CAST('$org' AS uuid), " +
-                    "NOW(), NOW())",
-            ).getOrThrow()
+            fixtures.query {
+                exec(
+                    "INSERT INTO github_repos (org_id, name, default_branch, archived, owners) " +
+                        "SELECT ?, 'repo-' || i, 'main', FALSE, '[]' FROM generate_series(1, ?) AS i",
+                    listOf(UuidColumnType() to org, IntegerColumnType() to count),
+                )
+                exec(
+                    "INSERT INTO github_teams (org_id, slug, name, members, repos) SELECT ?, " +
+                        "'team-' || i, 'Team', '[]', '[]' FROM generate_series(1, ?) AS i",
+                    listOf(UuidColumnType() to org, IntegerColumnType() to count),
+                )
+                exec(
+                    "INSERT INTO github_directory_syncs (org_id, synced_at, checked_at) VALUES (?, NOW(), NOW())",
+                    listOf(UuidColumnType() to org),
+                )
+            }
         }
         // One row per organization: as many others as an instance can hold.
-        fixtures.execute(
-            "INSERT INTO github_directory_syncs (org_id, synced_at, checked_at) SELECT gen_random_uuid(), NOW(), " +
-                "NOW() FROM generate_series(1, 20000)",
-        ).getOrThrow()
-        fixtures.execute("VACUUM ANALYZE github_repos").getOrThrow()
-        fixtures.execute("VACUUM ANALYZE github_teams").getOrThrow()
-        fixtures.execute("VACUUM ANALYZE github_directory_syncs").getOrThrow()
+        fixtures.query {
+            exec(
+                "INSERT INTO github_directory_syncs (org_id, synced_at, checked_at) SELECT gen_random_uuid(), NOW(), " +
+                    "NOW() FROM generate_series(1, 20000)",
+            )
+        }
+        server.database.superuserOutsideTransaction(
+            "VACUUM ANALYZE github_repos",
+            "VACUUM ANALYZE github_teams",
+            "VACUUM ANALYZE github_directory_syncs",
+        )
         val database = server.koin.get<JdbcDatabase>()
         suspend fun explain(query: Query): String =
             database.withOrganization(ORG) { plan { query }.also { rollback() } }
@@ -686,26 +709,25 @@ class GitHubDirectoryPostgresTest {
         assertEquals(setOf(42L), contentsApi.reads.map { it.first }.toSet(), "Only acme's installation read")
     }
 
-    private suspend fun QueryExecutor.count(table: String): String =
-        fetchAll("SELECT COUNT(*) AS n FROM $table").getOrThrow().first().get("n").asString()
+    private fun JdbcTransaction.count(table: String): String =
+        exec("SELECT COUNT(*) AS n FROM $table") { rs -> rs.next(); rs.getString("n") }.orEmpty()
 }
 
 /**
  * Runs [block] in one transaction under row level security, the organization set when [org] is given. The tests'
- * driver is the serving role, subject to it as in production (#68).
+ * JDBC pool is the serving role, subject to it as in production (#68).
  */
-private suspend fun <T> Driver.asTenant(org: Uuid?, block: suspend QueryExecutor.() -> T): T =
-    transaction {
+private suspend fun <T> TestServer.asTenant(org: Uuid?, block: JdbcTransaction.() -> T): T =
+    koin.get<JdbcDatabase>().query {
         if (org != null) {
-            fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", org.toString()))
-                .getOrThrow()
+            exec("SELECT set_config('ostrom.org_id', ?, TRUE)", listOf(TextColumnType() to org.toString())) {}
         }
         block()
     }
 
 // PostgreSQL refuses the row (WITH CHECK): the statement fails, or the commit of the aborted transaction does.
-private suspend fun attempt(block: suspend () -> Result<Long>): Result<Long> = try {
-    block().also { it.getOrThrow() }
+private suspend fun attempt(block: suspend () -> Unit): Result<Unit> = try {
+    Result.success(block())
 } catch (error: CancellationException) {
     throw error
 } catch (expected: Exception) {

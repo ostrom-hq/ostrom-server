@@ -11,11 +11,22 @@ import run.ostrom.server.kernel.config.ConfigSource
 import run.ostrom.server.kernel.config.EnvironmentConfigSource
 import run.ostrom.server.kernel.config.LayeredConfigSource
 import run.ostrom.server.kernel.config.MapConfigSource
+import run.ostrom.server.kernel.database.InstantColumnType
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.withOrganization
 import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import run.ostrom.server.testing.TestServer
-import io.github.smyrgeorge.sqlx4k.Statement
+import org.jetbrains.exposed.v1.core.BooleanColumnType
+import org.jetbrains.exposed.v1.core.DoubleColumnType
+import org.jetbrains.exposed.v1.core.IColumnType
+import org.jetbrains.exposed.v1.core.IntegerColumnType
+import org.jetbrains.exposed.v1.core.LongColumnType
+import org.jetbrains.exposed.v1.core.TextColumnType
+import org.jetbrains.exposed.v1.core.UuidColumnType
+import org.jetbrains.exposed.v1.core.statements.StatementType
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
+import java.sql.ResultSet
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.koin.dsl.module
@@ -68,9 +79,60 @@ fun reportsOverrides(clock: Clock) = module {
 
 /** One statement in [org], under its row level security like the server's reads. */
 suspend fun TestServer.sql(org: Uuid, text: String, vararg values: Pair<String, Any>) {
-    val statement = Statement.create(text)
-    for ((name, value) in values) statement.bind(name, value)
-    driver.withOrganization(org) { it.execute(statement).getOrThrow() }
+    inOrganization(org) { execNamed(text, values.toMap()) }
+}
+
+/** [block] in one transaction of [org] on the serving pool, under its row level security like the server's reads. */
+suspend fun <T> TestServer.inOrganization(org: Uuid, block: JdbcTransaction.() -> T): T =
+    koin.get<JdbcDatabase>().withOrganization(org, block)
+
+/** Runs each of [statements] (no parameter) in [org], in one transaction, under its row level security. */
+suspend fun TestServer.seedIn(org: Uuid, statements: List<String>) {
+    inOrganization(org) { statements.forEach { exec(it) } }
+}
+
+/** Runs [text], its `:name` markers bound from [values] (see [positional]). */
+fun JdbcTransaction.execNamed(text: String, values: Map<String, Any?> = emptyMap()) {
+    val (sql, args) = positional(text, values)
+    exec(sql, args)
+}
+
+/** Runs the query [text] ([positional]), [row] read from each of its rows. */
+fun <T> JdbcTransaction.queryNamed(text: String, values: Map<String, Any?>, row: (ResultSet) -> T): List<T> {
+    val (sql, args) = positional(text, values)
+    return exec(sql, args, StatementType.SELECT) { rs -> buildList { while (rs.next()) add(row(rs)) } }.orEmpty()
+}
+
+/**
+ * [text] with each `:name` marker (outside a string literal, and not a `::` cast) turned into a `?`, and the typed
+ * value of each marker in order: the SQL written with named
+ * parameters (the former driver's), run through JDBC.
+ */
+fun positional(text: String, values: Map<String, Any?>): Pair<String, List<Pair<IColumnType<*>, Any?>>> {
+    val args = mutableListOf<Pair<IColumnType<*>, Any?>>()
+    val sql = MARKER.replace(text) { match ->
+        val name = match.groups[NAME]?.value ?: return@replace match.value
+        require(name in values) { "No value for :$name in: $text" }
+        val value = values.getValue(name)
+        args += columnTypeOf(value) to value
+        "?"
+    }
+    return sql to args
+}
+
+// A string literal, a `::` cast, or a `:name` marker: only the last is replaced.
+private val MARKER = Regex("'(?:[^']|'')*'|::|:([A-Za-z_][A-Za-z0-9_]*)")
+private const val NAME = 1
+
+private fun columnTypeOf(value: Any?): IColumnType<*> = when (value) {
+    is Uuid -> UuidColumnType()
+    is Instant -> InstantColumnType()
+    is Int -> IntegerColumnType()
+    is Long -> LongColumnType()
+    is Double -> DoubleColumnType()
+    is Boolean -> BooleanColumnType()
+    is String -> TextColumnType()
+    else -> error("No column type for ${value?.let { it::class.simpleName }}")
 }
 
 /** The two organizations and their people. */

@@ -56,9 +56,6 @@ import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.QueryExecutor
-import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.call.body
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
@@ -72,7 +69,17 @@ import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.writeString
+import org.jetbrains.exposed.v1.core.IntegerColumnType
+import org.jetbrains.exposed.v1.core.TextColumnType
+import org.jetbrains.exposed.v1.core.UuidColumnType
+import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.statements.StatementBuilder
+import org.jetbrains.exposed.v1.core.statements.UpdateStatement
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.update
+import run.ostrom.server.integrations.github.infrastructure.GitHubLinkAttempts
+import run.ostrom.server.integrations.github.infrastructure.GitHubLinks as GitHubLinksTable
 import org.koin.dsl.module
 import org.jetbrains.exposed.v1.core.statements.Statement as ExposedStatement
 import kotlin.test.Test
@@ -346,31 +353,29 @@ class GitHubLinkPostgresTest {
         assertEquals("octocat", store.link(ORG, DEV)?.identity?.login, "A's link is untouched")
 
         val tables = listOf("github_links", "github_link_attempts")
-        assertEquals(listOf("0", "0"), server.driver.asTenant(null) { tables.map { count(it) } }, "No organization")
-        assertEquals(listOf("0", "0"), server.driver.asTenant(OTHER_ORG) { tables.map { count(it) } })
-        assertEquals(listOf("1", "1"), server.driver.asTenant(ORG) { tables.map { count(it) } })
-        val forged = forgedInsert(server.driver)
+        assertEquals(listOf("0", "0"), server.asTenant(null) { tables.map { count(it) } }, "No organization")
+        assertEquals(listOf("0", "0"), server.asTenant(OTHER_ORG) { tables.map { count(it) } })
+        assertEquals(listOf("1", "1"), server.asTenant(ORG) { tables.map { count(it) } })
+        val forged = forgedInsert(server)
         assertTrue(forged, "Org B cannot write a row of org A")
-        val updated = server.driver.asTenant(OTHER_ORG) {
-            execute(Statement.create("UPDATE github_links SET state = 'linked' WHERE org_id = :org").bind("org", ORG))
-                .getOrThrow()
+        val updated = server.asTenant(OTHER_ORG) {
+            GitHubLinksTable.update({ GitHubLinksTable.orgId eq ORG }) { it[GitHubLinksTable.state] = "linked" }
         }
-        assertEquals(0L, updated)
-        val sealed = server.driver.asTenant(ORG) {
-            fetchAll("SELECT tokens_sealed FROM github_links").getOrThrow().single().get("tokens_sealed").asString()
+        assertEquals(0, updated)
+        val sealed = server.asTenant(ORG) {
+            GitHubLinksTable.select(GitHubLinksTable.tokensSealed).single()[GitHubLinksTable.tokensSealed]
         }
         assertFalse("ghu_" in sealed || "ghr_" in sealed, "The tokens are sealed")
     }
 
-    private suspend fun forgedInsert(driver: Driver): Boolean = try {
-        driver.asTenant(OTHER_ORG) {
-            execute(
-                Statement.create(
-                    "INSERT INTO github_links (org_id, member_id, github_user_id, github_login, client_id, " +
-                        "tokens_sealed, state, token_version, linked_at, refreshed_at) VALUES (:org, :org, 1, 'x', " +
-                        "'c', 'x', 'linked', 1, NOW(), NOW())",
-                ).bind("org", ORG),
-            ).getOrThrow()
+    private suspend fun forgedInsert(server: TestServer): Boolean = try {
+        server.asTenant(OTHER_ORG) {
+            exec(
+                "INSERT INTO github_links (org_id, member_id, github_user_id, github_login, client_id, " +
+                    "tokens_sealed, state, token_version, linked_at, refreshed_at) VALUES (?, ?, 1, 'x', " +
+                    "'c', 'x', 'linked', 1, NOW(), NOW())",
+                listOf(UuidColumnType() to ORG, UuidColumnType() to ORG),
+            )
         }
         false
     } catch (error: CancellationException) {
@@ -411,13 +416,12 @@ class GitHubLinkPostgresTest {
 
         // A row this version cannot read is no attempt.
         store.startAttempt(device, now)
-        server.driver.asTenant(ORG) { execute("UPDATE github_link_attempts SET kind = 'other'").getOrThrow() }
+        server.asTenant(ORG) { GitHubLinkAttempts.update({ GitHubLinkAttempts.orgId eq ORG }) { it[kind] = "other" } }
         assertNull(store.attempt(ORG, "a-1"))
         store.startAttempt(device, now)
         val foreign = cipher.seal("dc".encodeToByteArray(), "github-attempt:$ORG:other:$DEV")
-        server.driver.asTenant(ORG) {
-            execute(Statement.create("UPDATE github_link_attempts SET secret_sealed = :s").bind("s", foreign))
-                .getOrThrow()
+        server.asTenant(ORG) {
+            GitHubLinkAttempts.update({ GitHubLinkAttempts.orgId eq ORG }) { it[secretSealed] = foreign }
         }
         assertNull(store.attempt(ORG, "a-1"), "An envelope moved from another row does not open")
 
@@ -519,23 +523,21 @@ class GitHubLinkPostgresTest {
 
         // A pending refresh without its start time (an older row) is no refresh at all.
         store.saveLink(ORG, DEV, octocat, CLIENT_ID, GitHubTokens("ghu_c", now + 30.minutes, "ghr", null), now)
-        server.driver.asTenant(ORG) { execute("UPDATE github_links SET refresh_pending = TRUE").getOrThrow() }
+        server.updateLinks { it[refreshPending] = true }
         assertIs<GitHubTokenClaim.Refresh>(claim(now))
         assertEquals("ghu_c", assertIs<GitHubTokenClaim.Ready>(claim(now)).accessToken, "Pending: its token, usable")
-        server.driver.asTenant(ORG) { execute("UPDATE github_links SET access_expires_at = NULL").getOrThrow() }
+        server.updateLinks { it[accessExpiresAt] = null }
         assertIs<GitHubTokenClaim.Ready>(claim(now), "Pending, but a token that never expires")
 
         // Sealed by another key, or not tokens at all: the member links again.
         val notTokens = cipher.seal("not json".encodeToByteArray(), "github-link:$ORG:$DEV")
-        server.driver.asTenant(ORG) {
-            execute(Statement.create("UPDATE github_links SET tokens_sealed = :t").bind("t", notTokens)).getOrThrow()
-        }
+        server.updateLinks { it[tokensSealed] = notTokens }
         assertEquals(GitHubTokenClaim.ReconnectRequired("tokens_unreadable"), claim(now))
         assertEquals(GitHubLinkState.RECONNECT_REQUIRED, store.link(ORG, DEV)?.state, "The member is told")
         assertEquals(GitHubTokenClaim.ReconnectRequired(), claim(now), "Ended once")
         assertNull(store.removeLink(ORG, DEV), "Removed, with nothing to revoke")
         store.saveLink(ORG, DEV, octocat, CLIENT_ID, GitHubTokens("ghu_d", null, null, null), now)
-        server.driver.asTenant(ORG) { execute("UPDATE github_links SET tokens_sealed = 'garbage'").getOrThrow() }
+        server.updateLinks { it[tokensSealed] = "garbage" }
         assertEquals(GitHubTokenClaim.ReconnectRequired("tokens_unreadable"), claim(now))
         val relinked = store.saveLink(ORG, DEV, octocat, CLIENT_ID, GitHubTokens("ghu_e", null, null, null), now)
         assertNull(relinked.replaced, "Unreadable: nothing to revoke")
@@ -544,22 +546,27 @@ class GitHubLinkPostgresTest {
     @Test
     fun theLinksRequestPathReadsUseTheirIndexes() = linkTest { server ->
         // Fixtures only: many organizations' links and attempts, and the statistics, which no request writes.
-        val fixtures = server.database.superuser
         for ((org, count) in listOf(OTHER_ORG to 20_000, ORG to 2_000)) {
-            fixtures.execute(
-                "INSERT INTO github_links (org_id, member_id, github_user_id, github_login, client_id, " +
-                    "tokens_sealed, state, token_version, linked_at, refreshed_at) SELECT CAST('$org' AS uuid), " +
-                    "gen_random_uuid(), i, 'login-' || i, 'c', 'x', 'linked', 1, NOW(), NOW() " +
-                    "FROM generate_series(1, $count) AS i",
-            ).getOrThrow()
-            fixtures.execute(
-                "INSERT INTO github_link_attempts (org_id, id, member_id, kind, secret_sealed, poll_interval, " +
-                    "next_poll_at, expires_at) SELECT CAST('$org' AS uuid), 'a-' || i, gen_random_uuid(), 'device', " +
-                    "'x', 5, NOW(), NOW() FROM generate_series(1, $count) AS i",
-            ).getOrThrow()
+            server.database.superuserJdbc.query {
+                exec(
+                    "INSERT INTO github_links (org_id, member_id, github_user_id, github_login, client_id, " +
+                        "tokens_sealed, state, token_version, linked_at, refreshed_at) SELECT ?, " +
+                        "gen_random_uuid(), i, 'login-' || i, 'c', 'x', 'linked', 1, NOW(), NOW() " +
+                        "FROM generate_series(1, ?) AS i",
+                    listOf(UuidColumnType() to org, IntegerColumnType() to count),
+                )
+                exec(
+                    "INSERT INTO github_link_attempts (org_id, id, member_id, kind, secret_sealed, poll_interval, " +
+                        "next_poll_at, expires_at) SELECT ?, 'a-' || i, gen_random_uuid(), 'device', " +
+                        "'x', 5, NOW(), NOW() FROM generate_series(1, ?) AS i",
+                    listOf(UuidColumnType() to org, IntegerColumnType() to count),
+                )
+            }
         }
-        fixtures.execute("VACUUM ANALYZE github_links").getOrThrow()
-        fixtures.execute("VACUUM ANALYZE github_link_attempts").getOrThrow()
+        server.database.superuserOutsideTransaction(
+            "VACUUM ANALYZE github_links",
+            "VACUUM ANALYZE github_link_attempts",
+        )
         val database = server.koin.get<JdbcDatabase>()
         val statements: Map<String, StatementBuilder.() -> ExposedStatement<*>> = linkedMapOf(
             "a member's link" to { linkOf(ORG, DEV) },
@@ -582,8 +589,12 @@ class GitHubLinkPostgresTest {
         }
     }
 
-    private suspend fun QueryExecutor.count(table: String): String =
-        fetchAll("SELECT COUNT(*) AS n FROM $table").getOrThrow().first().get("n").asString()
+    // One change to ORG's links, as its own tenant.
+    private suspend fun TestServer.updateLinks(change: GitHubLinksTable.(UpdateStatement) -> Unit) =
+        asTenant(ORG) { GitHubLinksTable.update({ GitHubLinksTable.orgId eq ORG }) { change(it) } }
+
+    private fun JdbcTransaction.count(table: String): String =
+        exec("SELECT COUNT(*) AS n FROM $table") { rs -> rs.next(); rs.getString("n") }.orEmpty()
 
     private companion object {
         const val CONSOLE = "https://console.example"
@@ -592,11 +603,10 @@ class GitHubLinkPostgresTest {
 }
 
 /** Runs [block] in one transaction under row level security, the organization set when [org] is given. */
-private suspend fun <T> Driver.asTenant(org: Uuid?, block: suspend QueryExecutor.() -> T): T =
-    transaction {
+private suspend fun <T> TestServer.asTenant(org: Uuid?, block: JdbcTransaction.() -> T): T =
+    koin.get<JdbcDatabase>().query {
         if (org != null) {
-            fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", org.toString()))
-                .getOrThrow()
+            exec("SELECT set_config('ostrom.org_id', ?, TRUE)", listOf(TextColumnType() to org.toString())) {}
         }
         block()
     }

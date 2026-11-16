@@ -6,7 +6,6 @@ import run.ostrom.server.compiler.CompilerModule
 import run.ostrom.server.gates.GatesModule
 import run.ostrom.server.identity.IdentityModule
 import run.ostrom.server.instance.InstanceModule
-import run.ostrom.server.kernel.database.withOrganization
 import run.ostrom.server.orgs.OrgsModule
 import run.ostrom.server.receipts.ReceiptsModule
 import run.ostrom.server.reports.domain.startOf
@@ -39,7 +38,6 @@ class ReportsDailyTotalsPostgresTest {
         SecretsModule, UsageModule, BudgetsModule, ReportsModule,
     )
 
-    // No `::` cast and no colon at all in the seeds: the driver would read `:x` as a named parameter.
     private fun ledger(org: Uuid): List<String> {
         val epoch = NOW.epochSeconds
         val member = "CASE i % 3 WHEN 0 THEN CAST('${OLGA.memberId}' AS uuid) WHEN 1 THEN " +
@@ -90,13 +88,11 @@ class ReportsDailyTotalsPostgresTest {
             server.seedPeople()
             for (statement in ledger(ORG_A) + ledger(ORG_B)) {
                 val org = if ("'$ORG_A'" in statement) ORG_A else ORG_B
-                server.driver.withOrganization(org) { it.execute(statement).getOrThrow() }
+                server.seedIn(org, listOf(statement))
             }
             server.assertSameReport("a ledger written in two passes")
 
-            server.driver.withOrganization(ORG_A) {
-                it.execute("DELETE FROM usage_events WHERE cost_micros % 5 = 0").getOrThrow()
-            }
+            server.seedIn(ORG_A, listOf("DELETE FROM usage_events WHERE cost_micros % 5 = 0"))
             server.assertSameReport("after calls are deleted")
 
             assertTrue(server.koin.get<UsageRepository>().purge(NOW - 20.days, 10_000) > 0)

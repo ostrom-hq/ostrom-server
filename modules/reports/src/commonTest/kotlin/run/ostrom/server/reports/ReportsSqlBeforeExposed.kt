@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.reports
 
-import run.ostrom.server.kernel.database.withOrganization
+
 import run.ostrom.server.reports.domain.ReportsRepository
 import run.ostrom.server.reports.infrastructure.ReportsRepositoryImpl
 import run.ostrom.server.reports.infrastructure.SpendingRanges
 import run.ostrom.server.testing.TestServer
-import io.github.smyrgeorge.sqlx4k.Statement
 import kotlin.uuid.Uuid
 
 /**
@@ -178,14 +177,18 @@ internal object ReportsSqlBeforeExposed {
  * @return The lines.
  */
 internal suspend fun TestServer.spendingBySql(orgId: Uuid, memberId: Uuid?, ranges: SpendingRanges): List<String> {
-    val statement = Statement.create(ReportsSqlBeforeExposed.spending(member = memberId != null)).bind("org_id", orgId)
-        .bind("day_from", ranges.days.first.toString()).bind("day_to", ranges.days.second.toString())
-        .bind("head_from", ranges.head.first).bind("head_to", ranges.head.second)
-        .bind("tail_from", ranges.tail.first).bind("tail_to", ranges.tail.second)
-    memberId?.let { statement.bind("member_id", it) }
-    return driver.withOrganization(orgId) { tx ->
-        tx.fetchAll(statement).getOrThrow().map { row ->
-            listOf("dim", "group_key", "label", "micros", "sessions").joinToString("|") { row.get(it).asString() }
+    val values = mutableMapOf<String, Any?>(
+        "org_id" to orgId,
+        "day_from" to ranges.days.first.toString(), "day_to" to ranges.days.second.toString(),
+        "head_from" to ranges.head.first, "head_to" to ranges.head.second,
+        "tail_from" to ranges.tail.first, "tail_to" to ranges.tail.second,
+    )
+    memberId?.let { values["member_id"] = it }
+    return inOrganization(orgId) {
+        queryNamed(ReportsSqlBeforeExposed.spending(member = memberId != null), values) { row ->
+            listOf("dim", "group_key", "label", "micros", "sessions").joinToString("|") {
+                checkNotNull(row.getString(it)) { "$it is null" }
+            }
         }.sorted()
     }
 }
