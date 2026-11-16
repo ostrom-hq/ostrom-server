@@ -51,7 +51,6 @@ import kotlin.uuid.Uuid
  * @property superuser The connection pool of the configured user, never the path under test.
  * @property ownerConfig How the owner connects, for a migrator on another driver (Flyway).
  * @property servingConfig How the serving role connects, for the JDBC pool.
- * @property superuserConfig How the configured user connects to this database.
  */
 class TestDatabase @Suppress("LongParameterList") private constructor( // Each role's pool and credentials.
     val driver: Driver,
@@ -59,7 +58,7 @@ class TestDatabase @Suppress("LongParameterList") private constructor( // Each r
     val superuser: Driver,
     val ownerConfig: DatabaseConfig,
     val servingConfig: DatabaseConfig,
-    val superuserConfig: DatabaseConfig,
+    internal val superuserConfig: DatabaseConfig,
     private val admin: DatabaseConfig,
     private val id: String,
 ) {
@@ -230,8 +229,8 @@ class TestDatabase @Suppress("LongParameterList") private constructor( // Each r
     /** Closes the pools, drops the database and its owner and serving roles. */
     suspend fun close() {
         try {
-            if (ownerPool.isInitialized()) ownerPool.value.close()
-            if (superuserPool.isInitialized()) superuserPool.value.close()
+            // Closing a Hikari pool does not throw; the database is dropped WITH (FORCE) whatever is left open.
+            listOf(ownerPool, superuserPool).filter { it.isInitialized() }.forEach { it.value.close() }
             driver.close()
             owner.close()
             superuser.close()
@@ -260,8 +259,8 @@ class TestDatabase @Suppress("LongParameterList") private constructor( // Each r
 
         /**
          * The largest pool of [withRole]: CI's PostgreSQL service keeps 97 of its 100 connections for roles other than
-         * superusers, and a few test processes at once each hold up to 14 ([create] and a test server's JDBC pool)
-         * besides the one large pool.
+         * superusers, and a few test processes at once each hold up to 18 ([create], [ownerJdbc], [superuserJdbc] and
+         * a test server's JDBC pool) besides the one large pool.
          */
         const val LARGEST_POOL = 20
 

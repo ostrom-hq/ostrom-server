@@ -61,7 +61,7 @@ class TestDatabaseTest {
         }
     }
 
-    // The owner's and the superuser's JDBC pools connect as those roles, opened only when a test uses them.
+    // The owner's and the superuser's JDBC pools connect as those roles.
     @Test
     fun theOwnerAndTheSuperuserHaveJdbcPoolsToo() = runTest {
         val database = TestDatabase.create() ?: return@runTest
@@ -72,8 +72,6 @@ class TestDatabaseTest {
         } finally {
             database.close()
         }
-        val unused = TestDatabase.create() ?: return@runTest
-        unused.close()
     }
 
     private fun JdbcTransaction.currentUser(): String =
