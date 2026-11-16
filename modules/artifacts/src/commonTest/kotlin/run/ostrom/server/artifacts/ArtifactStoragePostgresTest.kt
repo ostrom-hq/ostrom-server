@@ -20,16 +20,16 @@ import run.ostrom.server.artifacts.fakes.InMemoryBucket
 import run.ostrom.server.artifacts.fakes.ORG_A
 import run.ostrom.server.artifacts.fakes.ORG_B
 import run.ostrom.server.artifacts.fakes.TestCipher
-import run.ostrom.server.artifacts.fakes.inTenant
 import run.ostrom.server.artifacts.fakes.testIdentities
+import run.ostrom.server.artifacts.infrastructure.ArtifactsStorage
 import run.ostrom.server.artifacts.infrastructure.storage.S3ObjectStore
 import run.ostrom.server.artifacts.presentation.ArtifactPolicyResponse
 import run.ostrom.server.artifacts.presentation.ArtifactSettingsResponse
 import run.ostrom.server.artifacts.presentation.ArtifactStorageResponse
 import run.ostrom.server.artifacts.presentation.ArtifactStorageTestResponse
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
@@ -43,6 +43,8 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.update
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -94,13 +96,12 @@ class ArtifactStoragePostgresTest {
         assertNull(repository.overview(ORG_B).storage)
         // An envelope copied to another organization's row does not open there.
         repository.saveStorage(ORG_B, 0, input("b"), t0)
-        val envelope = server.driver.inTenant(ORG_A) {
-            fetchAll(Statement.create("SELECT secret_sealed FROM artifacts_storage")).getOrThrow().single()
-                .get("secret_sealed").asString()
+        val database = server.koin.get<JdbcDatabase>()
+        val envelope = database.inOrg(ORG_A) {
+            ArtifactsStorage.select(ArtifactsStorage.secretSealed).single()[ArtifactsStorage.secretSealed]
         }
-        server.driver.inTenant(ORG_B) {
-            execute(Statement.create("UPDATE artifacts_storage SET secret_sealed = :s").bind("s", envelope))
-                .getOrThrow()
+        database.inOrg(ORG_B) {
+            ArtifactsStorage.update { it[secretSealed] = envelope }
         }
         assertNull(repository.connection(ORG_B))
         assertEquals("secret-a", repository.connection(ORG_A)?.secretAccessKey)

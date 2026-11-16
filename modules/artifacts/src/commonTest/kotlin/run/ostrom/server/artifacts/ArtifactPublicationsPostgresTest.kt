@@ -8,13 +8,13 @@ import run.ostrom.server.artifacts.fakes.ALICE
 import run.ostrom.server.artifacts.fakes.ORG_A
 import run.ostrom.server.artifacts.fakes.ORG_B
 import run.ostrom.server.artifacts.fakes.activateArtifacts
-import run.ostrom.server.artifacts.fakes.fetchInOrg
+import run.ostrom.server.artifacts.fakes.superuserSql
+import run.ostrom.server.artifacts.fakes.vacuumAnalyze
 import run.ostrom.server.artifacts.fakes.testIdentities
 import run.ostrom.server.artifacts.infrastructure.publicationsSince
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -80,14 +80,13 @@ class ArtifactPublicationsPostgresTest {
 
     @Test
     fun theHourlyCountReadsItsIndex() = serverTest(listOf(ArtifactsModule)) { server ->
-        val fixtures = server.database.superuser
         // 20 000 publications of 2 000 organizations and their members.
-        fixtures.execute(
+        server.superuserSql(
             "INSERT INTO artifacts_publications (org_id, member_id, artifact_id, published_at) " +
                 "SELECT CAST(md5('o' || (i % 2000)) AS uuid), 'm' || (i % 7), CAST(md5('a' || i) AS uuid), " +
                 "now() - (i || ' seconds')::interval FROM generate_series(0, 19999) AS i",
-        ).getOrThrow()
-        fixtures.execute("VACUUM ANALYZE artifacts_publications").getOrThrow()
+        )
+        server.vacuumAnalyze("artifacts_publications")
         val plan = server.koin.get<JdbcDatabase>().inOrg(ORG_A) {
             plan { publicationsSince(ORG_A, ALICE.toString(), t0, 60) }.also { rollback() }
         }

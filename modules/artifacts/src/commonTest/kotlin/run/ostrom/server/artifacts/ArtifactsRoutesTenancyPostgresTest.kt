@@ -9,13 +9,16 @@ import run.ostrom.server.artifacts.domain.ArtifactsRepository
 import run.ostrom.server.artifacts.fakes.ALICE
 import run.ostrom.server.artifacts.fakes.ORG_A
 import run.ostrom.server.artifacts.fakes.ORG_B
-import run.ostrom.server.artifacts.fakes.inTenant
+import run.ostrom.server.artifacts.infrastructure.ArtifactsRoutes
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.selectAll
+import org.jetbrains.exposed.v1.jdbc.update
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -37,28 +40,25 @@ class ArtifactsRoutesTenancyPostgresTest {
         val repository = server.koin.get<ArtifactsRepository>()
         val (artifact, version) = published("slug-a")
         repository.create(artifact, version)
-        val count = Statement.create("SELECT COUNT(*) AS n FROM artifacts_routes")
+        val database = server.koin.get<JdbcDatabase>()
 
-        // The test server's driver is the serving role: without an organization, no route at all.
-        assertEquals(0L, server.driver.fetchAll(count).getOrThrow().first().get("n").asLong())
-        assertEquals(1L, server.driver.inTenant(ORG_A) { fetchAll(count).getOrThrow().first().get("n").asLong() })
-        assertEquals(0L, server.driver.inTenant(ORG_B) { fetchAll(count).getOrThrow().first().get("n").asLong() })
+        // The serving role, without an organization: no route at all.
+        assertEquals(0L, database.query { ArtifactsRoutes.selectAll().count() })
+        assertEquals(1L, database.inOrg(ORG_A) { ArtifactsRoutes.selectAll().count() })
+        assertEquals(0L, database.inOrg(ORG_B) { ArtifactsRoutes.selectAll().count() })
 
         // Organization B can neither move A's link to itself nor write a route in A's name.
-        val stolen = server.driver.inTenant(ORG_B) {
-            execute(
-                Statement.create("UPDATE artifacts_routes SET link_slug = 'stolen' WHERE artifact_id = :id")
-                    .bind("id", artifact.id),
-            ).getOrThrow()
+        val stolen = database.inOrg(ORG_B) {
+            ArtifactsRoutes.update({ ArtifactsRoutes.artifactId eq artifact.id }) { it[linkSlug] = "stolen" }
         }
-        assertEquals(0L, stolen)
+        assertEquals(0, stolen)
         assertFailsWith<Exception> {
-            server.driver.inTenant(ORG_B) {
-                execute(
-                    Statement.create(
-                        "INSERT INTO artifacts_routes (artifact_id, org_id, link_slug) VALUES (:id, :org, 'forged')",
-                    ).bind("id", Uuid.random()).bind("org", ORG_A),
-                ).getOrThrow()
+            database.inOrg(ORG_B) {
+                ArtifactsRoutes.insert {
+                    it[artifactId] = Uuid.random()
+                    it[orgId] = ORG_A
+                    it[linkSlug] = "forged"
+                }
             }
         }
 

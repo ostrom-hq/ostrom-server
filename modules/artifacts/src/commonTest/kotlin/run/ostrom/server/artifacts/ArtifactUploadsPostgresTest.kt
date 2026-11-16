@@ -13,10 +13,14 @@ import run.ostrom.server.artifacts.fakes.ALICE
 import run.ostrom.server.artifacts.fakes.ORG_A
 import run.ostrom.server.artifacts.fakes.ORG_B
 import run.ostrom.server.artifacts.fakes.activateArtifacts
+import run.ostrom.server.artifacts.fakes.superuserSql
+import run.ostrom.server.artifacts.fakes.vacuumAnalyze
 import run.ostrom.server.artifacts.fakes.alice
-import run.ostrom.server.artifacts.fakes.fetchInOrg
-import run.ostrom.server.artifacts.fakes.inTenant
+import run.ostrom.server.artifacts.fakes.countInOrg
 import run.ostrom.server.artifacts.fakes.testIdentities
+import run.ostrom.server.artifacts.infrastructure.ArtifactsArtifacts
+import run.ostrom.server.artifacts.infrastructure.ArtifactsUploadBlobs
+import run.ostrom.server.artifacts.infrastructure.ArtifactsUploads
 import run.ostrom.server.artifacts.infrastructure.Sha256ContentDigest
 import run.ostrom.server.artifacts.infrastructure.chunksReceived
 import run.ostrom.server.artifacts.infrastructure.drafts
@@ -33,9 +37,6 @@ import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.http.ErrorDetail
 import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.post
@@ -44,6 +45,7 @@ import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import org.jetbrains.exposed.v1.core.Table
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -131,12 +133,10 @@ class ArtifactUploadsPostgresTest {
         val later = t0 + (2 * UploadLimits.DRAFTS + 2).hours
         val refused = draft()
         assertFalse(uploads.open(upload(refused.id, at = later), refused, later))
-        suspend fun count(org: Uuid, table: String) = server.driver.inTenant(org) {
-            fetchAll(Statement.create("SELECT COUNT(*) AS n FROM $table")).getOrThrow().first().get("n").asLong()
-        }
-        assertEquals(1L, count(ORG_B, "artifacts_uploads"))
-        assertEquals(2L, count(ORG_B, "artifacts_upload_blobs"))
-        assertEquals(UploadLimits.DRAFTS.toLong(), count(ORG_A, "artifacts_artifacts"))
+        suspend fun count(org: Uuid, table: Table) = server.countInOrg(org, table)
+        assertEquals(1L, count(ORG_B, ArtifactsUploads))
+        assertEquals(2L, count(ORG_B, ArtifactsUploadBlobs))
+        assertEquals(UploadLimits.DRAFTS.toLong(), count(ORG_A, ArtifactsArtifacts))
     }
 
     @Test
@@ -242,37 +242,34 @@ class ArtifactUploadsPostgresTest {
 
     @Test
     fun theUploadsRequestPathReadsUseTheirIndexes() = serverTest(listOf(ArtifactsModule)) { server ->
-        val fixtures = server.database.superuser
         // 20 000 artifacts and uploads of 2 000 other organizations, a tenth of them drafts.
-        fixtures.execute(
+        server.superuserSql(
             "INSERT INTO artifacts_artifacts (id, org_id, owner_id, title, access, latest_version, created_at, " +
                 "updated_at) SELECT CAST(md5('a' || i) AS uuid), CAST(md5('o' || (i % 2000)) AS uuid), 'm' || " +
                 "(i % 7), 'T', 'team', CASE WHEN i % 10 = 0 THEN 0 ELSE 1 END, now(), now() " +
                 "FROM generate_series(0, 19999) AS i",
-        ).getOrThrow()
-        fixtures.execute(
+        )
+        server.superuserSql(
             "INSERT INTO artifacts_uploads (id, org_id, artifact_id, member_id, created_at, expires_at) " +
                 "SELECT CAST(md5('u' || i) AS uuid), CAST(md5('o' || (i % 2000)) AS uuid), CAST(md5('a' || i) " +
                 "AS uuid), 'm' || (i % 7), now(), now() + interval '1 hour' FROM generate_series(0, 19999) AS i",
-        ).getOrThrow()
-        fixtures.execute(
+        )
+        server.superuserSql(
             "INSERT INTO artifacts_upload_blobs (upload_id, org_id, sha256, size, state, position) " +
                 "SELECT CAST(md5('u' || i) AS uuid), CAST(md5('o' || (i % 2000)) AS uuid), 'x', 1, 'waiting', 0 " +
                 "FROM generate_series(0, 19999) AS i",
-        ).getOrThrow()
-        fixtures.execute(
+        )
+        server.superuserSql(
             "INSERT INTO artifacts_upload_chunks (upload_id, org_id, sha256, chunk_index) " +
                 "SELECT CAST(md5('u' || i) AS uuid), CAST(md5('o' || (i % 2000)) AS uuid), 'x', 0 " +
                 "FROM generate_series(0, 19999) AS i",
-        ).getOrThrow()
+        )
         val uploads = server.koin.get<ArtifactUploadsRepository>()
         val draft = draft()
         val mine = upload(draft.id)
         uploads.open(mine, draft, t0)
         uploads.receive(ORG_A, mine.id, sha, 0)
-        for (table in listOf("artifacts_artifacts", "artifacts_uploads", "artifacts_upload_chunks")) {
-            fixtures.execute("VACUUM ANALYZE $table").getOrThrow()
-        }
+        server.vacuumAnalyze("artifacts_artifacts", "artifacts_uploads", "artifacts_upload_chunks")
         val plans = server.koin.get<JdbcDatabase>().inOrg(ORG_A) {
             mapOf(
                 "artifacts_uploads" to plan { openUploads(ORG_A, ALICE.toString(), t0).query },

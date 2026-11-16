@@ -21,9 +21,13 @@ import run.ostrom.server.artifacts.fakes.VIEWER
 import run.ostrom.server.artifacts.fakes.activateArtifacts
 import run.ostrom.server.artifacts.fakes.alice
 import run.ostrom.server.artifacts.fakes.bob
+import run.ostrom.server.artifacts.fakes.countInOrg
 import run.ostrom.server.artifacts.fakes.dave
-import run.ostrom.server.artifacts.fakes.inTenant
 import run.ostrom.server.artifacts.fakes.testIdentities
+import run.ostrom.server.artifacts.infrastructure.ArtifactsArtifacts
+import run.ostrom.server.artifacts.infrastructure.ArtifactsBlobs
+import run.ostrom.server.artifacts.infrastructure.ArtifactsMembers
+import run.ostrom.server.artifacts.infrastructure.ArtifactsVersions
 import run.ostrom.server.artifacts.presentation.ArtifactMembersResponse
 import run.ostrom.server.artifacts.presentation.ArtifactResponse
 import run.ostrom.server.artifacts.presentation.ArtifactTicketResponse
@@ -34,13 +38,12 @@ import run.ostrom.server.artifacts.presentation.FileDto
 import run.ostrom.server.artifacts.presentation.PublishArtifactRequest
 import run.ostrom.server.artifacts.presentation.PublishVersionRequest
 import run.ostrom.server.artifacts.presentation.UpdateArtifactRequest
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.logging.JsonLogger
 import run.ostrom.server.kernel.logging.LogLevel
 import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
@@ -59,6 +62,8 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import kotlinx.coroutines.delay
+import org.jetbrains.exposed.v1.core.Table
+import org.jetbrains.exposed.v1.jdbc.insert
 import org.koin.dsl.module
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
@@ -146,24 +151,22 @@ class ArtifactsPostgresTest {
         val mine = artifact()
         repository.create(mine, version(mine, 1, "a.txt" to "sha-a"))
         repository.setMember(ORG_A, mine.id, BOB.toString(), share = true)
-        suspend fun count(org: Uuid, table: String) = server.driver.inTenant(org) {
-            fetchAll(Statement.create("SELECT COUNT(*) AS n FROM $table")).getOrThrow().first().get("n").asLong()
-        }
-        for (table in listOf("artifacts_artifacts", "artifacts_versions", "artifacts_blobs", "artifacts_members")) {
-            assertEquals(1L, count(ORG_A, table), table)
+        suspend fun count(org: Uuid, table: Table) = server.countInOrg(org, table)
+        for (table in listOf(ArtifactsArtifacts, ArtifactsVersions, ArtifactsBlobs, ArtifactsMembers)) {
+            assertEquals(1L, count(ORG_A, table), table.tableName)
             // No WHERE org_id: the policy alone hides organization A's rows.
-            assertEquals(0L, count(ORG_B, table), table)
+            assertEquals(0L, count(ORG_B, table), table.tableName)
         }
         // A write for another organization is refused, and no row of B points at an artifact of A.
         for (org in listOf(ORG_A, ORG_B)) {
             assertFailsWith<Exception> {
-                server.driver.inTenant(ORG_B) {
-                    execute(
-                        Statement.create(
-                            "INSERT INTO artifacts_blobs (artifact_id, org_id, sha256, size) VALUES (:id, :org, " +
-                                "'sha-x', 0)",
-                        ).bind("id", mine.id).bind("org", org),
-                    ).getOrThrow()
+                server.koin.get<JdbcDatabase>().inOrg(ORG_B) {
+                    ArtifactsBlobs.insert {
+                        it[artifactId] = mine.id
+                        it[orgId] = org
+                        it[sha256] = "sha-x"
+                        it[size] = 0
+                    }
                 }
             }
         }
@@ -173,12 +176,10 @@ class ArtifactsPostgresTest {
 
     @Test
     fun noFileByteIsKeptInPostgreSql() = serverTest(listOf(ArtifactsModule)) { server ->
-        val columns = server.driver.inTenant(ORG_A) {
-            fetchAll(
-                Statement.create(
-                    "SELECT column_name FROM information_schema.columns WHERE table_name = 'artifacts_blobs'",
-                ),
-            ).getOrThrow().map { it.get("column_name").asString() }
+        val columns = server.koin.get<JdbcDatabase>().inOrg(ORG_A) {
+            exec("SELECT column_name FROM information_schema.columns WHERE table_name = 'artifacts_blobs'") { rs ->
+                buildList { while (rs.next()) add(rs.getString("column_name")) }
+            }.orEmpty()
         }
         assertTrue("size" in columns)
         assertFalse("bytes" in columns)

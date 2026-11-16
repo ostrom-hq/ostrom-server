@@ -113,14 +113,9 @@ class CompilerReadsBenchTest {
         }
         assertEquals(HttpStatusCode.Created, created.status)
         assertEquals(HttpStatusCode.OK, server.client.get("/api/v1/packages/current") { bearerAuth("lead") }.status)
-        val fixtures = server.database.superuser
-        copies().forEach { fixtures.execute(it).getOrThrow() }
-        orgs.drop(1).flatMap(::copiedTo).forEach { fixtures.execute(it).getOrThrow() }
-        TABLES.forEach { fixtures.execute("VACUUM ANALYZE $it").getOrThrow() }
-
-        // No lookup per package: 1000 packages send the statements of 20, checked before the bench replays them.
-        val sent = PACKAGES.map { path -> server.driver.record { server.client.get(path) { bearerAuth("lead") } } }
-        assertEquals(1, sent.map { it.size }.distinct().size, "Statements: ${sent.map { it.size }}")
+        copies().forEach { server.superuserSql(it) }
+        orgs.drop(1).flatMap(::copiedTo).forEach { server.superuserSql(it) }
+        server.vacuumAnalyze(*TABLES.toTypedArray())
 
         val reads = listOf(
             // A page of 50 (TeamCode's), read from all of the organization's workflows, as a filter needs them.
@@ -132,6 +127,9 @@ class CompilerReadsBenchTest {
         val measures = reads.map { read ->
             server.measureRead("GET ${read.path}") { get(read.path) { bearerAuth("lead") } }
         }
+        // No lookup per package: 1000 packages send the statements of 20 (the two package reads are the last two).
+        val sent = measures.takeLast(PACKAGES.size).map { it.statements.size }
+        assertEquals(1, sent.distinct().size, "Statements: $sent")
         writeReadReport("compiler", measures)
         measures.forEach { it.assertWithinBudget(setOf("compiler_workflows", "compiler_packages"), MAX_QUERIES) }
         reads.zip(measures).forEach { (read, measure) ->
