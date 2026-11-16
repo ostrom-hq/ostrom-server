@@ -200,9 +200,9 @@ class ApprovalNotePostgresTest {
         val answered = server.answer(
             "user:a:rev-b",
             approval.id,
-            AnswerApprovalRequest(ApprovalAnswer.APPROVE, approval.shownDigest, comment = "Ship it."),
+            AnswerApprovalRequest(ApprovalAnswer.APPROVE, approval.shownDigest, comment = "Ship it.", note = " "),
         ).body<ApprovalViewResponse>()
-        assertEquals("Ship it.", answered.note, "`comment`, the field's first name, is still read")
+        assertEquals("Ship it.", answered.note, "`comment`, the field's first name, is read past an empty `note`")
 
         server.push("b")
         val other = server.pendingOf("user:b:rev-b")
