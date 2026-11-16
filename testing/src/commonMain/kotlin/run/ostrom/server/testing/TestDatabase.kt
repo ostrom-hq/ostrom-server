@@ -84,8 +84,11 @@ class TestDatabase @Suppress("LongParameterList") private constructor( // Each r
         superuserJdbc.query {
             // Back to a transaction afterwards, which the block's end commits, empty.
             connection.autoCommit = true
-            statements.forEach { exec(it) }
-            connection.autoCommit = false
+            try {
+                statements.forEach { exec(it) }
+            } finally {
+                connection.autoCommit = false
+            }
         }
     }
 

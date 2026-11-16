@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.sessions
 
+import run.ostrom.server.sessions.infrastructure.SessionsSessions
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.confineToOrganization
+import run.ostrom.server.kernel.database.databaseNow
+import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.selectAll
+import org.jetbrains.exposed.v1.jdbc.update
 import org.koin.core.qualifier.named
 import run.ostrom.server.kernel.observability.CachedCount
 import run.ostrom.server.kernel.sessions.LaunchLabels
@@ -40,7 +48,6 @@ import run.ostrom.server.sessions.presentation.SessionsPage
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.assertApiCatalogue
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.call.body
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -52,7 +59,6 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -412,40 +418,35 @@ class SessionsPostgresTest {
     @Test
     fun theDatabaseItselfKeepsOrganizationsApart() = sessionsTest { server ->
         server.start("agent:a:launch-1", "s-1")
-        val count = "SELECT COUNT(*) AS n FROM sessions_sessions"
-        // The test server's driver is the serving role, as in production: row level security applies to it.
-        val seen = server.driver.transaction {
-            val none = fetchAll(count).getOrThrow().first().get("n").asString()
-            fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", orgB.toString()))
-                .getOrThrow()
-            val other = fetchAll(count).getOrThrow().first().get("n").asString()
-            fetchAll("SELECT set_config('ostrom.sweep', 'lost-sessions', TRUE)").getOrThrow()
-            val swept = fetchAll(count).getOrThrow().first().get("n").asString()
-            val written = execute("UPDATE sessions_sessions SET dev = 'mallory'").getOrThrow()
-            listOf(none, other, swept, written.toString())
+        val t = SessionsSessions
+        // The test server's pool is the serving role, as in production: row level security applies to it.
+        val database = server.koin.get<JdbcDatabase>()
+        val seen = database.query {
+            val none = t.selectAll().count()
+            confineToOrganization(orgB)
+            val other = t.selectAll().count()
+            exec("SELECT set_config('ostrom.sweep', 'lost-sessions', TRUE)")
+            val swept = t.selectAll().count()
+            val written = t.update { it[dev] = "mallory" }.toLong()
+            listOf(none, other, swept, written)
         }
         // The old sweep setting opens nothing any more (RLS audit R4): only sessions_stale reads across organizations.
-        assertEquals(listOf("0", "0", "0", "0"), seen, "No setting opens another organization, nothing is written")
-        // The driver throws a refused write rather than returning it as a failure: both count as refused.
-        val insert = try {
-            server.driver.transaction {
-                fetchAll(
-                    Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", orgB.toString()),
-                ).getOrThrow()
-                execute(
-                    Statement.create(
-                        "INSERT INTO sessions_sessions (org_id, id, root_id, segment, agent, dev, started_at) " +
-                            "VALUES (:org, 'x', 'x', 1, 'a', 'd', now())",
-                    ).bind("org", orgA),
-                ).getOrThrow()
+        assertEquals(listOf(0L, 0L, 0L, 0L), seen, "No setting opens another organization, nothing is written")
+        val refused = assertFailsWith<ExposedSQLException>("A row of another organization cannot be written") {
+            database.query {
+                confineToOrganization(orgB)
+                t.insert {
+                    it[orgId] = orgA
+                    it[id] = "x"
+                    it[rootId] = "x"
+                    it[segment] = 1
+                    it[agent] = "a"
+                    it[dev] = "d"
+                    it[startedAt] = databaseNow()
+                }
             }
-            Result.success(Unit)
-        } catch (error: CancellationException) {
-            throw error
-        } catch (expected: Exception) {
-            Result.failure(expected)
         }
-        assertTrue(insert.isFailure, "A row of another organization cannot be written")
+        assertTrue("row-level security" in refused.message.orEmpty(), refused.message)
         assertEquals("lyes", server.koin.get<SessionsRepository>().get(orgA, "s-1")?.dev)
     }
 
