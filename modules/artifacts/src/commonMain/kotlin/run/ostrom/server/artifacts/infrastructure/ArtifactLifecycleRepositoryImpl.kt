@@ -106,7 +106,7 @@ internal fun StatementBuilder.expiryUpdate(orgId: Uuid, artifactId: Uuid, expire
 
 /**
  * Whether the JSON list of files [files] holds a file of content [sha256]: PostgreSQL's `files::jsonb @>
- * jsonb_build_array(jsonb_build_object('sha256', sha256))`, true for any element that has this `sha256` (the sqlx4k
+ * jsonb_build_array(jsonb_build_object('sha256', sha256))`, true for any element that has this `sha256` (the former
  * version unnested the list with `jsonb_array_elements`, which Exposed cannot join).
  */
 private class ListsFile(private val files: Expression<String>, private val sha256: Expression<String>) :

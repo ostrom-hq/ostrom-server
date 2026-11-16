@@ -78,7 +78,7 @@ class PostgresStartedRunsRepository(
         database.withOrganizationRecording(this.audit, orgId, child.id, listOf(audit)) { record ->
             val parent = "${child.parentRunId}"
             // A second start of the same visit stores nothing and returns no row: `ON CONFLICT (org_id, parent_run_id,
-            // parent_seq) DO UPDATE … WHERE FALSE`, the sqlx4k `DO NOTHING` on that target alone.
+            // parent_seq) DO UPDATE … WHERE FALSE`, the former `DO NOTHING` on that target alone.
             val stored = R.upsertReturning(
                 R.orgId, R.parentRunId, R.parentSeq,
                 returning = listOf(R.id),

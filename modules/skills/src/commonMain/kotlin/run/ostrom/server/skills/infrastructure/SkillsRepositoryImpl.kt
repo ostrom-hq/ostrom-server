@@ -44,7 +44,7 @@ import kotlin.uuid.Uuid
 /**
  * [SkillsRepository] on the tables of [SkillsMigrations]: every transaction confined to its organization (`inOrg`,
  * row-level security) and every statement filtered on it. A write takes the organization's catalog lock first (a
- * transaction-scoped advisory lock, the `hashtextextended` of the sqlx4k repository, so that both versions take turns
+ * transaction-scoped advisory lock, the `hashtextextended` of the former repository, so that both versions take turns
  * during a rollout), so the organization's catalog writes run one after the other, on any replica.
  *
  * @param database The serving role's pool.
@@ -328,7 +328,7 @@ private class ExposedSkillsStore(private val orgId: Uuid) : SkillsStore {
     private fun status(wire: String) = InstallationStatus.entries.first { it.wire == wire }
 }
 
-// The advisory lock's key, `'skills:' || CAST(org_id AS TEXT)` as the sqlx4k repository hashed it.
+// The advisory lock's key, `'skills:' || CAST(org_id AS TEXT)` as the former repository hashed it.
 private fun lockKey(orgId: Uuid): String = "skills:$orgId"
 
 private val s = SkillsSkills
