@@ -12,10 +12,13 @@ import kotlin.uuid.Uuid
 
 /**
  * The kind of token a workstation holds: the CLI's, issued by `ostrom login` (device flow) or the launcher's login. A
- * device is one installation of the CLI (`devices.v1`) and the live CLI tokens signed in on it; a CLI token from
+ * device is one installation of the CLI or the app (`devices.v1`) and the live tokens signed in on it; a CLI token from
  * before devices, or without an installation, is listed on its own and signing it out revokes the token.
  */
 private val DEVICE_KIND: TokenKind = TokenKind.CLI
+
+/** The tokens that are sign-ins of a registered device: the CLI's, and the app's when it named its installation. */
+private val SIGN_IN_KINDS: Set<TokenKind> = setOf(DEVICE_KIND, TokenKind.MOBILE)
 
 /**
  * Who sees and signs out every member's tokens of `ostrom login --admin` in an organization, and reads and renames a
@@ -87,7 +90,7 @@ class ListDevicesUseCaseImpl(
 ) : ListDevicesUseCase {
     override suspend fun invoke(userId: Uuid, member: OrgPrincipal?, callerToken: Uuid?): List<SignedInDevice> {
         val now = clock.now()
-        val live = tokens.listLive(userId, setOf(DEVICE_KIND), now)
+        val live = tokens.listLive(userId, SIGN_IN_KINDS, now)
         val currentDevice = live.firstOrNull { it.id == callerToken }?.deviceId
         val sessions = live.filter { it.deviceId != null }.groupBy { it.deviceId }
         val registered = devices.list(userId).map { device ->
@@ -106,7 +109,8 @@ class ListDevicesUseCaseImpl(
                 daemon = DaemonPresence.of(device.daemonSeenAt, device.daemonVersion, now, device.daemonFeatures),
             )
         }
-        val alone = live.filter { it.deviceId == null }.map {
+        // An app token without a device (an app older than devices) stays among the tokens, not the devices.
+        val alone = live.filter { it.deviceId == null && it.kind == DEVICE_KIND }.map {
             val current = (it.id == callerToken).takeIf { itself -> itself }
             SignedInDevice(it.id, it.name, lastSeenAt = it.lastUsedAt, current = current)
         }

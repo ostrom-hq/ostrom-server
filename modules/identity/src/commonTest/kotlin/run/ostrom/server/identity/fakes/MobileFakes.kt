@@ -3,6 +3,8 @@
 package run.ostrom.server.identity.fakes
 
 import run.ostrom.server.identity.domain.ApiToken
+import run.ostrom.server.identity.domain.DeviceSignIn
+import run.ostrom.server.identity.domain.DeviceSignInRequest
 import run.ostrom.server.identity.domain.MobileCode
 import run.ostrom.server.identity.domain.MobileCodesRepository
 import run.ostrom.server.identity.domain.MobileTokensRepository
@@ -29,7 +31,10 @@ class InMemoryMobileCodesRepository : MobileCodesRepository {
 }
 
 /** The app's tokens, stored in [tokens] like every other token, with their unlock keys on the side. */
-class InMemoryMobileTokensRepository(val tokens: InMemoryApiTokensRepository) : MobileTokensRepository {
+class InMemoryMobileTokensRepository(
+    val tokens: InMemoryApiTokensRepository,
+    val devices: InMemoryDevicesRepository = InMemoryDevicesRepository(tokens),
+) : MobileTokensRepository {
     val unlockKeys = mutableMapOf<Uuid, String>()
 
     /** The request each token's last unlock was for (Q-APP-STEPUP-RISK). */
@@ -38,6 +43,18 @@ class InMemoryMobileTokensRepository(val tokens: InMemoryApiTokensRepository) : 
     override suspend fun create(token: ApiToken, secretHash: String, unlockKeyHash: String) {
         tokens.create(token, secretHash)
         unlockKeys[token.id] = unlockKeyHash
+    }
+
+    override suspend fun createOnDevice(
+        token: ApiToken,
+        secretHash: String,
+        unlockKeyHash: String,
+        login: DeviceSignInRequest,
+        now: Instant,
+    ): DeviceSignIn {
+        val signIn = devices.signIn(token.userId, login, now)
+        create(token.copy(deviceId = signIn.device.id), secretHash, unlockKeyHash)
+        return signIn
     }
 
     override suspend fun unlock(

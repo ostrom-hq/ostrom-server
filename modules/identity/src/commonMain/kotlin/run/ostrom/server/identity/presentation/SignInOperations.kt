@@ -4,6 +4,7 @@ package run.ostrom.server.identity.presentation
 import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.http.docs.badRequest
 import run.ostrom.server.kernel.http.docs.body
+import run.ostrom.server.kernel.http.docs.conflict
 import run.ostrom.server.kernel.http.docs.empty
 import run.ostrom.server.kernel.http.docs.error
 import run.ostrom.server.kernel.http.docs.html
@@ -219,11 +220,17 @@ private fun ApiCatalog.launcherAndMobileOperations() {
         summary = "Exchange the one-time code of the mobile sign-in (PKCE) for a token."
         description = "The code works once (a wrong verifier spends it), for 60 s, with the exact `redirectUri` of " +
             "the start. The token (`osm_…`, 30 days) answers a gate only within 5 minutes of `unlockMobileApp`. A " +
-            "person keeps 5 phones: a sixth sign-in revokes the oldest app token."
+            "person keeps 5 phones: a sixth sign-in revokes the oldest app token. With `devices.v1`, an app that " +
+            "sends `installationId` signs in on that installation's device, registered if new (as `ostrom login`)."
         body<MobileTokenRequest>("The code, its PKCE verifier and the deep link the sign-in started with.")
         responses {
             ok<MobileTokenResponse>("The app's token, and the key that unlocks it.")
-            badRequest("The code is unknown, spent or expired, or the verifier is wrong (`invalid_request`).")
+            badRequest(
+                "The code is unknown, spent or expired, or the verifier is wrong (`invalid_request`); or the " +
+                    "installation, device name, platform or system version is invalid (`invalid_installation`, " +
+                    "`invalid_device_name`, `invalid_platform`, `invalid_os_version`), the code unspent.",
+            )
+            conflict("The installation is new and its person holds 50 devices already (`device_limit`).")
             tooManyAttempts()
         }
     }

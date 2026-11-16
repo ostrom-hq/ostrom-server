@@ -184,8 +184,8 @@ enum class TokenKind(val prefix: String) {
  * @property revokedAt When it was revoked, if so.
  * @property authenticatedAt For a [TokenKind.MOBILE] token, the last biometric unlock of the phone (S2-54); null
  *   before the first one, and for every other kind.
- * @property deviceId For a [TokenKind.CLI] token signed in with an installation (`devices.v1`), the device it is a
- *   sign-in of; null for every other token, and for a CLI token from before devices.
+ * @property deviceId For a [TokenKind.CLI] or [TokenKind.MOBILE] token signed in with an installation (`devices.v1`),
+ *   the device it is a sign-in of; null for every other token, and for one from before devices.
  */
 data class ApiToken(
     val id: Uuid,

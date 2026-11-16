@@ -10,6 +10,15 @@ import run.ostrom.server.identity.domain.CompleteMobileSignInUseCaseImpl
 import run.ostrom.server.identity.domain.CompleteOAuthSignInUseCaseImpl
 import run.ostrom.server.identity.domain.CredentialAuthenticatorImpl
 import run.ostrom.server.identity.domain.ExchangeMobileCodeUseCaseImpl
+import run.ostrom.server.identity.domain.DeviceLimitException
+import run.ostrom.server.identity.domain.DeviceLoginIdentity
+import run.ostrom.server.identity.domain.DeviceSignInRequest
+import run.ostrom.server.identity.domain.InvalidDeviceNameException
+import run.ostrom.server.identity.domain.InvalidInstallationException
+import run.ostrom.server.identity.domain.InvalidOsVersionException
+import run.ostrom.server.identity.domain.InvalidPlatformException
+import run.ostrom.server.identity.domain.IssuedMobileToken
+import run.ostrom.server.identity.domain.MAX_REGISTERED_DEVICES
 import run.ostrom.server.identity.domain.IdentityProvider
 import run.ostrom.server.identity.domain.InvalidMobileCodeException
 import run.ostrom.server.identity.domain.InvalidMobileSignInException
@@ -360,6 +369,83 @@ class MobileSignInTest {
     }
 
     @Test
+    fun anAppThatNamesItsInstallationSignsInOnItsDeviceAsTheCliDoes() = runTest {
+        suspend fun signIn(device: DeviceLoginIdentity?): IssuedMobileToken {
+            clock.now += 1.seconds
+            val state = startMobile()
+            val code = assertNotNull(completeMobile("github", state, state, "good", null).code)
+            return exchange(code, verifier, APP_REDIRECT_URI, "ip", device)
+        }
+        val installation = INSTALLATION
+
+        val first = signIn(DeviceLoginIdentity(installation, "  Ostrom iOS · iPhone  ", "ios"))
+        val device = mobileTokens.devices.devices.values.single()
+        assertEquals(device.id, first.token.token.deviceId)
+        assertEquals(installation, device.installationId)
+        assertEquals("Ostrom iOS · iPhone", device.name)
+        assertEquals("ios", device.platform)
+        val registered = audit.entries.single { it.action == "device.registered" }
+        assertEquals(device.id.toString(), registered.targetId)
+        assertEquals(mapOf("platform" to "ios"), registered.details)
+
+        // The same installation again: the same device, its name kept, a second sign-in of it.
+        mobileTokens.devices.rename(device.id, "Ada's phone")
+        val again = signIn(DeviceLoginIdentity(installation, "Ostrom iOS · iPhone", "ios", "18.1"))
+        assertEquals(device.id, again.token.token.deviceId)
+        val kept = mobileTokens.devices.devices.values.single()
+        assertEquals("Ada's phone", kept.name)
+        assertEquals("18.1", kept.osVersion)
+        assertEquals(1, audit.entries.count { it.action == "device.registered" })
+
+        // No name: the app's; no installation: no device, as an app older than devices.
+        signIn(DeviceLoginIdentity("1f8fad5b-d9cb-469f-a165-70867728950e"))
+        assertEquals("Ostrom app", mobileTokens.devices.devices.values.single { it.id != device.id }.name)
+        assertNull(signIn(DeviceLoginIdentity(deviceName = "Ignored", platform = "ios")).token.token.deviceId)
+        assertNull(signIn(null).token.token.deviceId)
+        assertEquals(2, mobileTokens.devices.devices.size)
+    }
+
+    @Test
+    fun aBadInstallationIsRefusedBeforeTheCodeIsSpent() = runTest {
+        val state = startMobile()
+        val code = assertNotNull(completeMobile("github", state, state, "good", null).code)
+        val refused = listOf(
+            DeviceLoginIdentity("not-a-uuid") to InvalidInstallationException::class,
+            DeviceLoginIdentity("0F8FAD5B-D9CB-469F-A165-70867728950E") to InvalidInstallationException::class,
+            DeviceLoginIdentity(INSTALLATION, " ") to InvalidDeviceNameException::class,
+            DeviceLoginIdentity(INSTALLATION, platform = "beos") to InvalidPlatformException::class,
+            DeviceLoginIdentity(INSTALLATION, osVersion = "18.1") to InvalidOsVersionException::class,
+        )
+        refused.forEach { (device, error) ->
+            assertFailsWith(error, device.toString()) { exchange(code, verifier, APP_REDIRECT_URI, "ip", device) }
+        }
+        assertTrue(mobileTokens.devices.devices.isEmpty())
+
+        val issued = exchange(code, verifier, APP_REDIRECT_URI, "ip", DeviceLoginIdentity(INSTALLATION))
+        assertNotNull(issued.token.token.deviceId, "The code was still good")
+    }
+
+    @Test
+    fun aNewInstallationPastTheDeviceLimitIsRefused() = runTest {
+        suspend fun code(): String {
+            val state = startMobile()
+            return assertNotNull(completeMobile("github", state, state, "good", null).code)
+        }
+        val userId = exchange(code(), verifier, APP_REDIRECT_URI, "ip").user.id
+        repeat(MAX_REGISTERED_DEVICES) {
+            val other = DeviceSignInRequest(Uuid.random().toString(), "d", null, null)
+            mobileTokens.devices.signIn(userId, other, clock.now)
+        }
+
+        assertFailsWith<DeviceLimitException> {
+            exchange(code(), verifier, APP_REDIRECT_URI, "ip", DeviceLoginIdentity(INSTALLATION))
+        }
+        val known = mobileTokens.devices.devices.values.first().installationId
+        val signedIn = exchange(code(), verifier, APP_REDIRECT_URI, "ip", DeviceLoginIdentity(known))
+        assertNotNull(signedIn.token.token.deviceId, "A known installation still signs in")
+    }
+
+    @Test
     fun aSixthPhoneSignsInAndTheOldestIsSignedOut() = runTest {
         val phones = (1..MAX_PHONES_PER_USER + 1).map {
             clock.now += 1.seconds
@@ -442,3 +528,5 @@ class MobileSignInTest {
         )
     }
 }
+
+private const val INSTALLATION = "0f8fad5b-d9cb-469f-a165-70867728950e"

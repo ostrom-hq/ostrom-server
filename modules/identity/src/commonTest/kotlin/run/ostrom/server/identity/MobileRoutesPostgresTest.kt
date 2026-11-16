@@ -4,7 +4,9 @@ package run.ostrom.server.identity
 
 import run.ostrom.server.identity.fakes.offered
 import run.ostrom.server.identity.domain.APP_REDIRECT_URI
+import run.ostrom.server.identity.domain.DevicesRepository
 import run.ostrom.server.identity.domain.IdentityProvider
+import run.ostrom.server.identity.domain.ListDevicesUseCase
 import run.ostrom.server.identity.domain.SignInMethods
 import run.ostrom.server.identity.domain.VerifiedIdentity
 import run.ostrom.server.identity.fakes.FakeOAuthProvider
@@ -52,6 +54,7 @@ import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
+import kotlin.uuid.Uuid
 import org.koin.dsl.module
 
 /**
@@ -116,9 +119,11 @@ class MobileRoutesPostgresTest {
         code: String,
         codeVerifier: String = verifier,
         uri: String = APP_REDIRECT_URI,
-    ) = post("/api/v1/auth/mobile/token") {
+    ) = exchange(MobileTokenRequest(code, codeVerifier, uri))
+
+    private suspend fun HttpClient.exchange(request: MobileTokenRequest) = post("/api/v1/auth/mobile/token") {
         contentType(ContentType.Application.Json)
-        setBody(MobileTokenRequest(code, codeVerifier, uri))
+        setBody(request)
     }
 
     private suspend fun HttpClient.preferences(token: String) =
@@ -309,6 +314,44 @@ class MobileRoutesPostgresTest {
         }
         assertEquals(HttpStatusCode.BadRequest, invalid.status)
         assertEquals(chosen, phone.preferences(ada))
+    }
+
+    // TeamCode's companion names its installation at its login: the phone is a device, as the CLI's workstation is.
+    @Test
+    fun aPhoneThatNamesItsInstallationIsADeviceOfItsPerson() = serverTest(listOf(IdentityModule), overrides) { server ->
+        val phone = browser()
+        val installation = "0f8fad5b-d9cb-469f-a165-70867728950e"
+        suspend fun signIn(name: String = "Ostrom iOS · iPhone", platform: String? = "ios"): HttpResponse {
+            val code = assertNotNull(phone.signInOnThePhone().parameters["code"])
+            return phone.exchange(MobileTokenRequest(code, verifier, APP_REDIRECT_URI, installation, name, platform))
+        }
+
+        val badName = signIn(name = "\u0007")
+        assertEquals(HttpStatusCode.BadRequest, badName.status)
+        assertTrue("invalid_device_name" in badName.bodyAsText())
+        assertEquals(HttpStatusCode.BadRequest, signIn(platform = "beos").status)
+
+        val first = signIn().body<MobileTokenResponse>()
+        val second = signIn(name = "Another name").body<MobileTokenResponse>()
+        // An app older than devices names no installation: its token is no device's, and no device of its own.
+        val legacy = assertNotNull(phone.signInOnThePhone().parameters["code"])
+        assertEquals(HttpStatusCode.OK, phone.exchange(legacy).status)
+        val principal = assertNotNull(server.koin.get<TokenAuthenticator>().authenticate(second.token))
+        val userId = Uuid.parse(principal.subjectId)
+        val device = server.koin.get<ListDevicesUseCase>()(userId).single()
+        assertEquals(
+            listOf("Ostrom iOS · iPhone", "ios", 2),
+            listOf(device.name, device.platform, device.activeSessions),
+        )
+        val stored = server.koin.get<DevicesRepository>().find(userId, installation)
+        assertEquals(device.id, stored?.id)
+
+        // Signing out on the phone ends that sign-in; the device stays, with the other.
+        assertEquals(HttpStatusCode.NoContent, phone.post("/api/v1/auth/logout") { bearerAuth(first.token) }.status)
+        assertEquals(1, server.koin.get<ListDevicesUseCase>()(userId).single().activeSessions)
+        // Removing the device signs the phone out.
+        assertTrue(server.koin.get<DevicesRepository>().remove(userId, device.id, Clock.System.now()))
+        assertEquals(HttpStatusCode.Unauthorized, phone.get("/api/v1/auth/me") { bearerAuth(second.token) }.status)
     }
 
     // Q-APP-STEPUP-RISK: the unlock names the request; the yes to it takes it once, recent enough, never for another.

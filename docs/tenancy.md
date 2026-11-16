@@ -57,7 +57,7 @@ listed table that gained one. The migrator's own tables, one per module (`flyway
 | `identity_device_authorizations` | identity | serving role, device sign-in | a person's pending CLI sign-in |
 | `identity_device_daemon_listings` | identity | serving role | a device daemon's pending conversation listings (`runners.cloud.remote.daemon.v1`), kept 30 s at most, their answers sealed |
 | `identity_device_folders` | identity | serving role | the folders a person's device daemon publishes (`runners.cloud.remote.daemon.v1`), with the device |
-| `identity_devices` | identity | serving role | the CLI's registered installations (`devices.v1`), one per person and installation, across their organizations |
+| `identity_devices` | identity | serving role | the CLI's and the app's registered installations (`devices.v1`), one per person and installation, across their organizations |
 | `identity_identities` | identity | serving role, sign-in | a person's external accounts |
 | `identity_magic_links` | identity | serving role, sign-in | e-mail sign-in links, by hash |
 | `identity_mobile_codes` | identity | serving role, the app's sign-in | one-time codes, by hash |

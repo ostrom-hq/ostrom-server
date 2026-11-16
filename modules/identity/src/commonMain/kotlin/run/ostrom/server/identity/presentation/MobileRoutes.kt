@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.identity.presentation
 
+import run.ostrom.server.identity.domain.DeviceLoginIdentity
 import run.ostrom.server.identity.domain.MobileUnlockRefusedException
 import run.ostrom.server.identity.domain.NOTIFICATIONS_WRITE_SCOPE
 import run.ostrom.server.kernel.auth.PrincipalChannel
@@ -24,7 +25,9 @@ import io.ktor.server.routing.Route
 fun Route.mobileRoutes(dependencies: MobileRoutesDependencies) = with(dependencies) {
     post<MobileApi.Token, MobileTokenRequest> { _, request ->
         val source = call.request.origin.remoteAddress
-        call.respond(exchangeCode(request.code, request.codeVerifier, request.redirectUri, source).toResponse())
+        val device = with(request) { DeviceLoginIdentity(installationId, deviceName, platform, osVersion) }
+        val issued = exchangeCode(request.code, request.codeVerifier, request.redirectUri, source, device)
+        call.respond(issued.toResponse())
     }
     authenticated {
         post<MobileApi.Unlock, MobileUnlockRequest> { _, request ->
