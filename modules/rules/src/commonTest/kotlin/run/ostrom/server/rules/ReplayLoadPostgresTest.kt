@@ -9,6 +9,7 @@ import run.ostrom.server.gates.domain.models.SelfApprovalPolicy
 import run.ostrom.server.gates.domain.repositories.GateHistory
 import run.ostrom.server.gates.domain.repositories.GatesRepository
 import run.ostrom.server.instance.InstanceModule
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.withOrganization
 import run.ostrom.server.kernel.observability.ProcessMetrics
 import run.ostrom.server.receipts.ReceiptsModule
@@ -29,7 +30,6 @@ import run.ostrom.server.testing.SentStatement
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.benchTest
 import run.ostrom.server.testing.checkTime
-import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.call.body
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
@@ -164,19 +164,19 @@ class ReplayLoadPostgresTest {
                 }
             }
         }
-        val fixtures = server.database.superuser
-        fixtures.execute(
-            "INSERT INTO gates_gates ($GATE_COLUMNS) SELECT gen_random_uuid(), CAST('$orgB' AS uuid), " +
-                "gate_key || '-' || i, ${GATE_COLUMNS.substringAfter("gate_key, ")} FROM gates_gates " +
-                "CROSS JOIN generate_series(1, $COPIES) AS i WHERE org_id = CAST('$orgA' AS uuid)",
-        ).getOrThrow()
-        fixtures.execute(
-            "INSERT INTO rules_rules ($RULE_COLUMNS) SELECT CAST('$orgB' AS uuid), id || '-' || i, " +
-                "${RULE_COLUMNS.substringAfter("org_id, id, ")} FROM rules_rules " +
-                "CROSS JOIN generate_series(1, $COPIES) AS i WHERE org_id = CAST('$orgA' AS uuid)",
-        ).getOrThrow()
-        fixtures.execute("VACUUM ANALYZE gates_gates").getOrThrow()
-        fixtures.execute("VACUUM ANALYZE rules_rules").getOrThrow()
+        server.database.superuserJdbc.query {
+            exec(
+                "INSERT INTO gates_gates ($GATE_COLUMNS) SELECT gen_random_uuid(), CAST('$orgB' AS uuid), " +
+                    "gate_key || '-' || i, ${GATE_COLUMNS.substringAfter("gate_key, ")} FROM gates_gates " +
+                    "CROSS JOIN generate_series(1, $COPIES) AS i WHERE org_id = CAST('$orgA' AS uuid)",
+            )
+            exec(
+                "INSERT INTO rules_rules ($RULE_COLUMNS) SELECT CAST('$orgB' AS uuid), id || '-' || i, " +
+                    "${RULE_COLUMNS.substringAfter("org_id, id, ")} FROM rules_rules " +
+                    "CROSS JOIN generate_series(1, $COPIES) AS i WHERE org_id = CAST('$orgA' AS uuid)",
+            )
+        }
+        server.database.superuserOutsideTransaction("VACUUM ANALYZE gates_gates", "VACUUM ANALYZE rules_rules")
     }
 
     // The replay's reads of the rules and the gates, again under `EXPLAIN (ANALYZE, BUFFERS)`, as the serving role.
@@ -184,13 +184,8 @@ class ReplayLoadPostgresTest {
         statements.filter { sent ->
             sent.sql.trimStart().startsWith("SELECT") && ("gates_gates" in sent.sql || "rules_rules" in sent.sql)
         }.map { sent ->
-            val explain = Statement.create("EXPLAIN (ANALYZE, BUFFERS) ${sent.sql}")
-            sent.statement?.namedParametersValues.orEmpty().forEach { (name, value) -> explain.bind(name, value) }
-            // The modules on Exposed send `?` placeholders, recorded with their values by position (ExposedRecorder).
-            sent.statement?.positionalParametersValues.orEmpty()
-                .forEachIndexed { index, value -> explain.bind(index, value) }
-            server.driver.withOrganization(orgA) { tx ->
-                tx.fetchAll(explain).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
+            server.koin.get<JdbcDatabase>().withOrganization(orgA) {
+                replayRecorded(sent, "EXPLAIN (ANALYZE, BUFFERS) ").joinToString("\n")
             }
         }
 

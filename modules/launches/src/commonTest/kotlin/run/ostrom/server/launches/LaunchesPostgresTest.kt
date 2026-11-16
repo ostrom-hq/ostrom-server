@@ -322,7 +322,7 @@ class LaunchesPostgresTest {
             repeat(OTHERS_BEFORE) {
                 assertNull(launches.create(stored(ada.org.id, Uuid.random(), now - 3.hours), roomy))
             }
-            server.database.owner.execute("ANALYZE launches_launches").getOrThrow() // the serving role owns no table
+            server.database.ownerJdbc.query { exec("ANALYZE launches_launches") } // the serving role owns no table
             val plan = server.planInOrg(ada.org.id) { launchRead(ada.org.id, "lch_absent").query }
             println("-- a launch by its id (each agent request)\n$plan")
             assertTrue("launches_launches_pkey" in plan, plan)
@@ -597,7 +597,7 @@ class LaunchesPostgresTest {
             repeat(OTHERS_BEFORE) {
                 assertNull(launches.create(stored(ada.org.id, Uuid.random(), now - 3.hours), roomy))
             }
-            server.database.owner.execute("ANALYZE launches_launches").getOrThrow()
+            server.database.ownerJdbc.query { exec("ANALYZE launches_launches") }
             val since = now - 1.hours
             listOf(
                 personWindow(ada.org.id, ada.user.id, since) to "launches_launches_person",
@@ -631,7 +631,7 @@ class LaunchesPostgresTest {
             assertEquals(listOf(second.id), launches.ofCloudSession(ada.org.id, cloud, 1))
             assertEquals(emptyList(), launches.ofCloudSession(eve.org.id, cloud, 10), "Another organization's")
 
-            server.database.owner.execute("ANALYZE launches_launches").getOrThrow()
+            server.database.ownerJdbc.query { exec("ANALYZE launches_launches") }
             val plan = server.planInOrg(ada.org.id) { ofCloudSessionRead(ada.org.id, cloud, 10) }
             println("-- the launches of a cloud session (a workflow step's pending delivery)\n$plan")
             assertTrue("launches_launches_cloud_session" in plan, plan)

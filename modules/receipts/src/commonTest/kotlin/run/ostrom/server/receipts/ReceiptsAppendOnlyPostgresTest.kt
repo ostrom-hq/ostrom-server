@@ -6,7 +6,6 @@ import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.receipts.domain.usecases.SignReceiptUseCase
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.SQLError
 import org.jetbrains.exposed.v1.core.TextColumnType
 import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
@@ -35,7 +34,7 @@ class ReceiptsAppendOnlyPostgresTest {
 
     private suspend fun refusedAsAppendOnly(what: String, block: suspend () -> Unit) {
         val error = assertFails(what) { block() }
-        assertTrue(error is SQLError || error is ExposedSQLException, "$what: $error")
+        assertTrue(error is ExposedSQLException, "$what: $error")
         assertTrue("append-only" in error.message.orEmpty(), "$what: ${error.message}")
     }
 
@@ -62,11 +61,11 @@ class ReceiptsAppendOnlyPostgresTest {
         // A statement that reaches no row is refused all the same: never zero rows in silence.
         refusedAsAppendOnly("serving, B, erase") { server.asServingRole(ORG_B) { exec(erase) } }
         val truncate = "TRUNCATE receipts_receipts"
-        refusedAsAppendOnly("owner, truncate") { server.database.owner.execute(truncate).getOrThrow() }
+        refusedAsAppendOnly("owner, truncate") { server.database.ownerJdbc.query { exec(truncate) } }
         refusedAsAppendOnly("superuser, replica, erase") {
-            server.database.superuser.transaction {
-                execute("SET LOCAL session_replication_role = replica").getOrThrow()
-                execute(erase).getOrThrow()
+            server.database.superuserJdbc.query {
+                exec("SET LOCAL session_replication_role = replica")
+                exec(erase)
             }
         }
         assertEquals(signed, server.bodies(ORG_A))

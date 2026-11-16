@@ -16,7 +16,6 @@ import run.ostrom.server.rules.infrastructure.RulesMigrations
 import run.ostrom.server.testing.TestDatabase
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.testing.plan
-import io.github.smyrgeorge.sqlx4k.Driver
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -36,14 +35,14 @@ class RulesListPostgresTest {
     private lateinit var jdbc: JdbcDatabase
 
     private fun withRepository(
-        block: suspend (superuser: Driver, rules: PostgresRulesRepository, raw: Driver) -> Unit,
+        block: suspend (database: TestDatabase, rules: PostgresRulesRepository, raw: JdbcDatabase) -> Unit,
     ) = runTest(timeout = 5.minutes) {
         val database = TestDatabase.create() ?: return@runTest
         try {
             database.migrationRunner(RecordingLogger()).migrate("rules", RulesMigrations)
             JdbcDatabase(database.servingConfig, JdbcDatabase.MIN_POOL_SIZE).use {
                 jdbc = it
-                block(database.superuser, PostgresRulesRepository(it), database.driver)
+                block(database, PostgresRulesRepository(it), it)
             }
         } finally {
             database.close()
@@ -113,17 +112,18 @@ class RulesListPostgresTest {
     }
 
     @Test
-    fun theRepositoryFilterReadsTheOrganizationsRowsByAnIndex() = withRepository { superuser, rules, _ ->
+    fun theRepositoryFilterReadsTheOrganizationsRowsByAnIndex() = withRepository { database, rules, _ ->
         seed(rules)
-        // Fixtures only: another organization's rows around, then the statistics, which no request writes. No `::`
-        // cast and no colon: the driver would read `:x` as a named parameter.
-        superuser.execute(
+        // Fixtures only: another organization's rows around, then the statistics, which no request writes.
+        database.superuserJdbc.query {
+            exec(
             "INSERT INTO rules_rules (org_id, id, statement, output, rule_group, scope, sources, strength, " +
                 "confidence, status, found_by, found_at, updated_at) SELECT CAST('$orgB' AS uuid), 'rule_' || i, " +
                 "'Seed', 'rule', 'Group ' || (i % 40), '[\"acme/web\"]', '[]', 'required', 0.8, 'proposed', " +
                 "'analysis', now(), now() FROM generate_series(1, 20000) AS i",
-        ).getOrThrow()
-        superuser.execute("VACUUM ANALYZE rules_rules").getOrThrow()
+            )
+        }
+        database.superuserOutsideTransaction("VACUUM ANALYZE rules_rules")
 
         suspend fun plan(query: RuleQuery): String = jdbc.withOrganization(orgA) {
             plan { PostgresRulesRepository.rulesQuery(orgA, query, ListRulesUseCase.MAX_RULES + 1) }

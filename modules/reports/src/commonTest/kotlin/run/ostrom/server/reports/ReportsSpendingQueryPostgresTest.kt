@@ -16,7 +16,6 @@ import run.ostrom.server.sessions.SessionsModule
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
 import run.ostrom.server.usage.UsageModule
-import io.github.smyrgeorge.sqlx4k.Statement
 import kotlinx.datetime.LocalDate
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -40,7 +39,6 @@ class ReportsSpendingQueryPostgresTest {
         SecretsModule, UsageModule, BudgetsModule, ReportsModule,
     )
 
-    // No `::` cast and no colon at all in the seeds: the driver would read `:x` as a named parameter.
     private fun ledger(): List<String> {
         val epoch = NOW.epochSeconds
         val org = "CAST('$ORG_A' AS uuid)"
@@ -72,11 +70,13 @@ class ReportsSpendingQueryPostgresTest {
     @Test
     fun theQueryAnswersWhatTheQueryBeforeItAnswered() = serverTest(modules, reportsOverrides(FixedClock())) { server ->
         server.seedPeople()
-        ledger().forEach { statement -> server.driver.withOrganization(ORG_A) { it.execute(statement).getOrThrow() } }
-        server.database.superuser.execute(
+        server.seedIn(ORG_A, ledger())
+        server.database.superuserJdbc.query {
+            exec(
             "INSERT INTO budgets_limits (org_id, member_id, scope, limit_micros, updated_at) VALUES " +
-                "(CAST('$ORG_A' AS uuid), CAST('${MIA.memberId}' AS uuid), 'MEMBER', 5000000, now())",
-        ).getOrThrow()
+                    "(CAST('$ORG_A' AS uuid), CAST('${MIA.memberId}' AS uuid), 'MEMBER', 5000000, now())",
+            )
+        }
         val windows = listOf(
             "the month" to (startOf(LocalDate(2026, 10, 1)) to NOW),
             "the week" to (startOf(LocalDate(2026, 10, 26)) to NOW),
@@ -90,11 +90,13 @@ class ReportsSpendingQueryPostgresTest {
 
     private suspend fun TestServer.assertSameLines(name: String, member: Uuid?, window: Pair<Instant, Instant>) {
         val (from, to) = window
-        val legacy = Statement.create(legacySpending(member = member != null)).bind("org_id", ORG_A)
-        member?.let { legacy.bind("member_id", it) }
-        val before = driver.withOrganization(ORG_A) { tx ->
-            tx.fetchAll(bindRanges(legacy, SpendingRanges.of(from, to))).getOrThrow().map { row ->
-                listOf("dim", "group_key", "label", "micros", "sessions").joinToString("|") { row.get(it).asString() }
+        val values = bindRanges(mutableMapOf<String, Any?>("org_id" to ORG_A), SpendingRanges.of(from, to))
+        member?.let { values["member_id"] = it }
+        val before = inOrganization(ORG_A) {
+            queryNamed(legacySpending(member = member != null), values) { row ->
+                listOf("dim", "group_key", "label", "micros", "sessions").joinToString("|") {
+                    row.getString(it).toString()
+                }
             }.sorted()
         }
         val after = spendingByExposed(ORG_A, member, SpendingRanges.of(from, to))
@@ -112,10 +114,15 @@ class ReportsSpendingQueryPostgresTest {
     }
 }
 
-private fun bindRanges(statement: Statement, ranges: SpendingRanges): Statement = statement
-    .bind("day_from", ranges.days.first.toString()).bind("day_to", ranges.days.second.toString())
-    .bind("head_from", ranges.head.first).bind("head_to", ranges.head.second)
-    .bind("tail_from", ranges.tail.first).bind("tail_to", ranges.tail.second)
+private fun bindRanges(values: MutableMap<String, Any?>, ranges: SpendingRanges): MutableMap<String, Any?> =
+    values.apply {
+        put("day_from", ranges.days.first.toString())
+        put("day_to", ranges.days.second.toString())
+        put("head_from", ranges.head.first)
+        put("head_to", ranges.head.second)
+        put("tail_from", ranges.tail.first)
+        put("tail_to", ranges.tail.second)
+    }
 
 private fun legacySpending(member: Boolean): String {
     val mine = if (member) " AND member_id = :member_id" else ""
