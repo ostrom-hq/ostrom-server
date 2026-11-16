@@ -7,6 +7,7 @@ import run.ostrom.server.runners.domain.BackgroundWork
 import run.ostrom.server.runners.domain.CloudSession
 import run.ostrom.server.runners.domain.CloudTransfer
 import run.ostrom.server.runners.domain.CompleteCloudTransferUseCase
+import run.ostrom.server.runners.domain.MemberSessionCaps
 import run.ostrom.server.runners.domain.DesiredState
 import run.ostrom.server.runners.domain.ExecutionStatus
 import run.ostrom.server.runners.domain.GitHubAccessMode
@@ -173,6 +174,36 @@ class CompleteCloudTransferUseCaseTest {
         val failed = transfers.transfers.getValue(transfer.id)
         assertEquals(TransferState.FAILED, failed.state)
         assertEquals("recipient_unavailable", failed.failure?.code)
+        assertTrue(audit.isEmpty())
+    }
+
+    @Test
+    fun aRecipientWhoReachedTheRetainedCapSinceTheAcceptanceFailsTheTransfer() = runTest {
+        val capped = CompleteCloudTransferUseCase(
+            repository,
+            transfers,
+            driver,
+            recipients,
+            OrgAuditTrail { audit += it },
+            clock,
+            caps = object : MemberSessionCaps {
+                override suspend fun runningLimit(): Int = Int.MAX_VALUE
+
+                override suspend fun retainedLimit(): Int = 1
+            },
+        )
+        val (paused, transfer) = moving()
+        // A session created for the recipient after the acceptance: the race the owner change still checks.
+        repository.put(session(state = SessionState.PAUSED, desired = DesiredState.PAUSED, ownerId = "bob"))
+        capped.begin(paused)
+
+        capped.step(stored(paused))
+
+        val after = stored(paused)
+        assertEquals("alice" to SessionState.PAUSED, after.ownerId to after.state)
+        assertNull(after.transferId)
+        val failed = transfers.transfers.getValue(transfer.id)
+        assertEquals(TransferState.FAILED to "cloud_session_limit", failed.state to failed.failure?.code)
         assertTrue(audit.isEmpty())
     }
 

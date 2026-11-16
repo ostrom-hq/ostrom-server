@@ -83,12 +83,16 @@ class InMemoryCloudTransfersRepository(
         return next
     }
 
+    override suspend fun retained(orgId: Uuid, memberId: String): Int = sessions.retained(orgId, memberId)
+
     @Suppress("ReturnCount") // A fake mirrors the guards of the SQL one by one.
     override suspend fun complete(
         expected: CloudSession,
         next: CloudSession,
         transfer: CloudTransfer,
+        retainedLimit: Int,
     ): TransferCompletion {
+        if (retained(transfer.orgId, transfer.toMemberId) >= retainedLimit) return TransferCompletion.RecipientAtLimit
         val current = transfers[transfer.id]?.takeIf { it.version == transfer.version - 1 }
             ?: return TransferCompletion.Conflict
         val stored = sessions.compareAndSet(next, next.updatedAt) ?: return TransferCompletion.Conflict

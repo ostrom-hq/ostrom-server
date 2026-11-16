@@ -100,6 +100,7 @@ data class TransferListing(
  * @param policy Whether members may offer their sessions.
  * @param audit The organization's audit log.
  * @param clock The time.
+ * @param caps The recipient's retained cap, told at the request and at the acceptance (TeamCode #279).
  */
 // A refusal per rule of the family, each its own answer.
 @Suppress("TooManyFunctions", "ThrowsCount", "LongParameterList")
@@ -110,6 +111,7 @@ class CloudTransfersUseCaseImpl(
     private val policy: MemberTransferPolicy,
     private val audit: OrgAuditTrail,
     private val clock: Clock,
+    private val caps: MemberSessionCaps = NoMemberSessionCaps,
 ) : CloudTransfersUseCase {
     override suspend fun request(
         caller: Caller,
@@ -127,6 +129,7 @@ class CloudTransfersUseCaseImpl(
         if (toMemberId == session.ownerId) throw InvalidTransferException("The recipient already owns this session.")
         if (!caller.admin && !policy.membersMayOffer()) throw TransferDisabledException()
         requireEligible(session, toMemberId)
+        requireRoom(session, toMemberId)
         val transfer = newTransfer(caller, session, toMemberId, request, idempotency, now)
         val change = if (caller.admin) change(session, toward(session, transfer, now), now) else null
         return when (val opening = transfers.open(transfer, now, change)) {
@@ -200,6 +203,7 @@ class CloudTransfersUseCaseImpl(
             }
             transferable(session, transfer.id)
             requireEligible(session, transfer.toMemberId)
+            requireRoom(session, transfer.toMemberId)
             val accepted = transfer.copy(
                 state = TransferState.ACCEPTED,
                 resume = resume ?: transfer.resume,
@@ -304,6 +308,18 @@ class CloudTransfersUseCaseImpl(
     private suspend fun requireEligible(session: CloudSession, memberId: String) {
         if (!recipients.eligible(session.orgId, memberId)) {
             throw RecipientIneligibleException(listOf("recipient_not_found"))
+        }
+    }
+
+    /**
+     * The recipient's retained cap, told now (TeamCode #279): the owner change checks it too, but only after the
+     * session paused, and a transfer that failed there left the owner with a session that went nowhere. The check at
+     * the change stays for the race.
+     */
+    private suspend fun requireRoom(session: CloudSession, memberId: String) {
+        val limit = caps.retainedLimit()
+        if (limit != Int.MAX_VALUE && transfers.retained(session.orgId, memberId) >= limit) {
+            throw CloudSessionRetainedLimitException(CloudSessionRetainedLimitException.RECIPIENT)
         }
     }
 

@@ -36,6 +36,8 @@ import kotlin.time.Instant
  * @param clock The time.
  * @param retention How long a paused session keeps its workspace: the recipient gets all of it, as TeamCode's, so a
  *   session about to expire is not handed over for deletion.
+ * @param caps The recipient's retained cap, checked again in the owner change's transaction: a session created for
+ *   them since the acceptance fails the transfer with `cloud_session_limit`.
  */
 @Suppress("LongParameterList") // The ports a step reads and writes, each named at its one call site.
 class CompleteCloudTransferUseCase(
@@ -46,6 +48,7 @@ class CompleteCloudTransferUseCase(
     private val audit: OrgAuditTrail,
     private val clock: Clock,
     private val retention: PausedRetention = KeepPausedSessions,
+    private val caps: MemberSessionCaps = NoMemberSessionCaps,
 ) {
     /** A paused session with an accepted transfer starts its owner change. */
     suspend fun begin(session: CloudSession): Instant? {
@@ -131,7 +134,17 @@ class CompleteCloudTransferUseCase(
             updatedAt = now,
             version = transfer.version + 1,
         )
-        if (transfers.complete(session, next, completed) is TransferCompletion.Completed) {
+        val completion = transfers.complete(session, next, completed, caps.retainedLimit())
+        if (completion == TransferCompletion.RecipientAtLimit) {
+            return fail(
+                session,
+                transfer,
+                now,
+                CloudSessionRetainedLimitException.CODE,
+                "The recipient already retains the maximum number of cloud sessions.",
+            )
+        }
+        if (completion is TransferCompletion.Completed) {
             audit.record(
                 OrgAuditRecord(
                     session.orgId,

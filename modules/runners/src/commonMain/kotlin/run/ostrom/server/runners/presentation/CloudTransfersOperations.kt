@@ -69,8 +69,10 @@ private fun ApiCatalog.transferOffer() {
             "only then, and the workspace is marked untrusted for the recipient. At most one open transfer " +
             "per session (409 `transfer_pending`); a session still being created is 409 " +
             "`session_preparing`, an ended one 409 `session_not_running`; a recipient who cannot own the " +
-            "session (disabled, not a member, at their cloud session limit) is 422 `recipient_ineligible` " +
-            "naming every reason. `Idempotency-Key` is required (400 `idempotency_key_required`): a retry " +
+            "session (disabled, not a member) is 422 `recipient_ineligible` naming every reason, one who already " +
+            "keeps the instance's `maxRetainedSessionsPerMember` cloud sessions 409 `cloud_session_limit` (nothing " +
+            "is paused; the owner change checks it again, and a race fails the transfer with that code). " +
+            "`Idempotency-Key` is required (400 `idempotency_key_required`): a retry " +
             "returns the first transfer (`Idempotency-Replayed: true`), the same key with another request " +
             "is 422 `idempotency_conflict`. With `runners.cloud.onbehalf.writes.v1`, `Ostrom-On-Behalf-Of` " +
             "journals the member it names as the effective one, on the caller's own session, while the transfer " +
@@ -98,7 +100,8 @@ private fun ApiCatalog.transferOffer() {
             notFound(NO_SESSION)
             conflict("The session already has an open transfer (`transfer_pending`), is still being created " +
                 "(`session_preparing`), is over (`session_not_running`), or is being transferred " +
-                "(`session_transferring`).")
+                "(`session_transferring`); or the recipient keeps as many cloud sessions as allowed " +
+                "(`cloud_session_limit`).")
             error(HttpStatusCode.UnprocessableEntity, "The recipient cannot own the session " +
                 "(`recipient_ineligible`), the key was used with another request (`idempotency_conflict`), or " +
                 "`Ostrom-On-Behalf-Of` names no active member (`invalid_effective_member`).")
@@ -168,8 +171,9 @@ private fun ApiCatalog.transferAcceptance() {
             ok<CloudTransferResponse>("Accepted, the transfer is under way.", HttpStatusCode.Accepted)
             error(HttpStatusCode.Forbidden, PERSON_OR_ON_BEHALF)
             notFound(NO_TRANSFER)
-            conflict("The offer expired (`transfer_expired`), or the transfer is decided already " +
-                "(`transfer_not_open`).")
+            conflict("The offer expired (`transfer_expired`), the transfer is decided already " +
+                "(`transfer_not_open`), or the caller already keeps the instance's `maxRetainedSessionsPerMember` " +
+                "cloud sessions (`cloud_session_limit`, nothing is paused: delete one first).")
             error(HttpStatusCode.UnprocessableEntity, "The recipient can no longer own the session " +
                 "(`recipient_ineligible`), or `Ostrom-On-Behalf-Of` names no active member " +
                 "(`invalid_effective_member`).")

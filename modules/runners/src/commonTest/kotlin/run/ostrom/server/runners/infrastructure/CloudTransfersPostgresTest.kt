@@ -245,6 +245,34 @@ class CloudTransfersPostgresTest {
     }
 
     @Test
+    fun anOwnerChangeToARecipientAtTheRetainedCapWritesNothing() = runTest {
+        val database = TestDatabase.create() ?: return@runTest
+        try {
+            val (sessions, transfers) = repositories(database)
+            val target = pausedSession(sessions)
+            // Bob keeps one paused session and one failed one: only the paused one counts.
+            check(sessions.createWithinCap(session(SessionState.PAUSED, DesiredState.PAUSED, ownerId = "bob"), 50))
+            check(sessions.createWithinCap(session(SessionState.FAILED, DesiredState.PAUSED, ownerId = "bob"), 50))
+            assertEquals(1, transfers.retained(ORG_A, "bob"))
+            assertEquals(0, transfers.retained(ORG_B, "bob"))
+            val accepted = transfer(target.id).copy(state = TransferState.ACCEPTED)
+            assertIs<TransferOpening.Opened>(transfers.open(accepted, now, null))
+            val stored = sessions.get(ORG_A, target.id)!!
+            val done = accepted.copy(state = TransferState.COMPLETED, version = 2, completedAt = now)
+            val owned = stored.copy(ownerId = "bob", updatedAt = now)
+
+            assertIs<TransferCompletion.RecipientAtLimit>(transfers.complete(stored, owned, done, 1))
+            assertEquals(TransferState.ACCEPTED, transfers.find(ORG_A, accepted.id)?.state)
+            assertEquals("alice", sessions.get(ORG_A, target.id)?.ownerId)
+            // Under a cap of two the same change completes.
+            assertIs<TransferCompletion.Completed>(transfers.complete(stored, owned, done, 2))
+            assertEquals(2, transfers.retained(ORG_A, "bob"))
+        } finally {
+            finish(database)
+        }
+    }
+
+    @Test
     fun anAdministratorsTransferAndItsSessionChangeAreStoredTogether() = runTest {
         val database = TestDatabase.create() ?: return@runTest
         try {

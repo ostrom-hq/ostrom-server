@@ -13,6 +13,8 @@ import run.ostrom.server.runners.domain.CloudSessionNotFoundException
 import run.ostrom.server.runners.domain.CloudTransfer
 import run.ostrom.server.runners.domain.CloudTransfersUseCase
 import run.ostrom.server.runners.domain.CloudTransfersUseCaseImpl
+import run.ostrom.server.runners.domain.CloudSessionRetainedLimitException
+import run.ostrom.server.runners.domain.MemberSessionCaps
 import run.ostrom.server.runners.domain.DesiredState
 import run.ostrom.server.runners.domain.IdempotencyConflictException
 import run.ostrom.server.runners.domain.InvalidTransferException
@@ -67,8 +69,16 @@ class CloudTransfersUseCaseTest {
     private val clock = SettableClock()
     private val audit = mutableListOf<OrgAuditRecord>()
     private val principal = AuthenticatedPrincipal("alice", PrincipalKind.USER, emptySet())
+    private val caps = Caps()
     private val use: CloudTransfersUseCase =
-        CloudTransfersUseCaseImpl(sessions, transfers, recipients, policy, OrgAuditTrail { audit += it }, clock)
+        CloudTransfersUseCaseImpl(sessions, transfers, recipients, policy, OrgAuditTrail { audit += it }, clock, caps)
+
+    /** A retained cap the test sets. */
+    private class Caps(var retained: Int = Int.MAX_VALUE) : MemberSessionCaps {
+        override suspend fun runningLimit(): Int = Int.MAX_VALUE
+
+        override suspend fun retainedLimit(): Int = retained
+    }
 
     private val alice = Caller(ORG_A, "alice")
     private val bob = Caller(ORG_A, "bob")
@@ -220,6 +230,29 @@ class CloudTransfersUseCaseTest {
         // Accepting twice changes nothing.
         assertEquals(accepted, use.accept(bob, principal, offered.id, null))
         assertFailsWith<TransferForbiddenException> { use.accept(alice, principal, offered.id, null) }
+    }
+
+    @Test
+    fun aRecipientAtTheRetainedCapIsRefusedAtTheRequestAndAtTheAcceptanceWithNothingPaused() = runTest {
+        // TeamCode #279: told at once, not after the session paused for an owner change that would fail.
+        running(owner = "bob").copy(state = SessionState.PAUSED).also(sessions::put)
+        val offered = offer()
+        caps.retained = 1
+        val atAccept = assertFailsWith<CloudSessionRetainedLimitException> {
+            use.accept(bob, principal, offered.id, null)
+        }
+        assertEquals("cloud_session_limit", atAccept.type)
+        assertEquals(TransferState.OFFERED, transfers.transfers.getValue(offered.id).state)
+        val own = running(owner = "carol")
+        assertFailsWith<CloudSessionRetainedLimitException> {
+            use.request(carol, principal, own.id, TransferRequest("bob", false), TransferIdempotency("k-2", "d-2"))
+        }
+        // The administrator's transfer would have paused the session at once: it is left running for its owner.
+        val left = sessions.sessions.getValue(own.id)
+        assertEquals(DesiredState.RUNNING to null, left.desiredState to left.transferId)
+        // With room under the cap, the acceptance goes through.
+        caps.retained = 2
+        assertEquals(TransferState.ACCEPTED, use.accept(bob, principal, offered.id, null).state)
     }
 
     @Test

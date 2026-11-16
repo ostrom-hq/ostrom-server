@@ -47,6 +47,13 @@ data class CloudRuntime(
     val messageFileMebibytes: Int = DEFAULT_MESSAGE_FILE_MEBIBYTES,
     val updatedAt: Instant? = null,
 ) {
+    /** The running cap as a number to compare with: [Int.MAX_VALUE] when it is 0 (no limit), as TeamCode's. */
+    val runningLimit: Int get() = if (maxRunningSessionsPerMember == 0) Int.MAX_VALUE else maxRunningSessionsPerMember
+
+    /** The retained cap as a number to compare with: [Int.MAX_VALUE] when it is 0 (no limit), as TeamCode's. */
+    val retainedLimit: Int
+        get() = if (maxRetainedSessionsPerMember == 0) Int.MAX_VALUE else maxRetainedSessionsPerMember
+
     /** The defaults and the accepted values. */
     companion object {
         /** Where the CLI release's runner image keeps the binary. */

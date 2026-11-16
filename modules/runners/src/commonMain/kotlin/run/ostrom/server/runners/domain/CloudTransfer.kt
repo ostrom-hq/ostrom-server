@@ -167,6 +167,9 @@ sealed interface TransferCompletion {
 
     /** The session or the transfer changed meanwhile; nothing was written. */
     data object Conflict : TransferCompletion
+
+    /** The recipient keeps as many cloud sessions as the retained cap allows (a race past the request's check). */
+    data object RecipientAtLimit : TransferCompletion
 }
 
 /** Storage of transfers. Every write that touches a session is a compare-and-set on its generation. */
@@ -211,10 +214,28 @@ interface CloudTransfersRepository {
     suspend fun update(expected: CloudTransfer, next: CloudTransfer, session: SessionChange? = null): CloudTransfer?
 
     /**
-     * Changes the owner, in one transaction: the session's compare-and-set (with its new owner), the transfer
-     * completed, and the session's terminal tickets removed, so nothing issued to the former owner survives.
+     * How many cloud sessions [memberId] keeps (neither terminated nor failed): what the retained cap counts, as the
+     * owner change does (TeamCode's `retained`).
+     *
+     * @param orgId The organization.
+     * @param memberId The member.
      */
-    suspend fun complete(expected: CloudSession, next: CloudSession, transfer: CloudTransfer): TransferCompletion
+    suspend fun retained(orgId: Uuid, memberId: String): Int
+
+    /**
+     * Changes the owner, in one transaction: the recipient's retained sessions counted again under the creations'
+     * lock (none when [retainedLimit] is [Int.MAX_VALUE]), the session's compare-and-set (with its new owner), the
+     * transfer completed, and the session's terminal tickets removed, so nothing issued to the former owner survives.
+     *
+     * @param retainedLimit The recipient's retained cap: at it, nothing is written
+     *   ([TransferCompletion.RecipientAtLimit]).
+     */
+    suspend fun complete(
+        expected: CloudSession,
+        next: CloudSession,
+        transfer: CloudTransfer,
+        retainedLimit: Int = Int.MAX_VALUE,
+    ): TransferCompletion
 }
 
 /** Who a session can be given to, from the organization's members. */

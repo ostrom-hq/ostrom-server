@@ -88,7 +88,9 @@ private fun ApiCatalog.cloudSessionCreation() {
             "session, for 24 hours. The same key with the same request answers `202` with the session's current view " +
             "and `Idempotency-Replayed: true`, creating nothing; the same key with another request is 422 " +
             "`idempotency_conflict`; concurrent requests with one key create one session and the others replay. A " +
-            "malformed key is 400 `invalid_request`. The key is optional. $ORG_RESOLUTION"
+            "malformed key is 400 `invalid_request`. The key is optional. A cloud session a member creates counts " +
+            "toward the retained cap of its owner (the instance's `maxRetainedSessionsPerMember`, 0 for none): the " +
+            "sessions they keep, neither terminated nor failed, paused ones included. $ORG_RESOLUTION"
         parameters {
             onBehalfHeader()
             organizationHeader()
@@ -116,7 +118,8 @@ private fun ApiCatalog.cloudSessionCreation() {
                 "caller's has the `launchId` (`launch_not_found`), or the caller is no member of an organization " +
                 "the request can act in (`not_found`).")
             conflict("The profile's cluster is gone or its namespace is no longer allowed (`cluster_unavailable`, " +
-                "`namespace_not_allowed`).")
+                "`namespace_not_allowed`), or the owner already keeps the instance's `maxRetainedSessionsPerMember` " +
+                "cloud sessions, paused ones included (`cloud_session_limit`).")
             error(HttpStatusCode.UnprocessableEntity, "The `Idempotency-Key` was used with another request " +
                 "(`idempotency_conflict`), no profile was named while the owner may use several or none " +
                 "(`profile_required`), a remote session without a device (`remote_requires_device`), or a session " +

@@ -12,6 +12,7 @@ import run.ostrom.server.kernel.database.rowBefore
 import run.ostrom.server.kernel.database.write
 import run.ostrom.server.kernel.database.written
 import run.ostrom.server.runners.domain.CloudSession
+import run.ostrom.server.runners.domain.CloudSessionRetainedLimitException
 import run.ostrom.server.runners.domain.CloudSessionWritten
 import run.ostrom.server.runners.domain.CloudSessionsRepository
 import run.ostrom.server.runners.domain.CreateKey
@@ -77,10 +78,16 @@ class CloudSessionsRepositoryImpl(
     private val written: CloudSessionWritten = NoCloudSessionWritten,
     private val audit: TransactionalOrgAuditTrail = DiscardingTransactionalOrgAuditTrail(),
 ) : CloudSessionsRepository {
-    override suspend fun createWithinCap(session: CloudSession, maxRunning: Int, journal: OrgAuditRecord?): Boolean =
+    override suspend fun createWithinCap(
+        session: CloudSession,
+        maxRunning: Int,
+        journal: OrgAuditRecord?,
+        maxRetained: Int,
+    ): Boolean =
         recording(session.orgId, journal) { record ->
             lockOrg(session.orgId)
             if (countHolding(session.orgId, null) >= maxRunning) return@recording false
+            requireRoom(session, maxRetained)
             insertSession(session)
             record()
             true
@@ -91,6 +98,7 @@ class CloudSessionsRepositoryImpl(
         maxRunning: Int,
         key: CreateKey,
         journal: OrgAuditRecord?,
+        maxRetained: Int,
     ): KeyedCreateOutcome = recording(session.orgId, journal) { record ->
         // Serialized per organization like the cap: one of concurrent requests with a key creates, the others
         // then read its record.
@@ -106,6 +114,7 @@ class CloudSessionsRepositoryImpl(
         }
         if (existing != null) write { createKeyForgotten(session, member, key) }
         if (countHolding(session.orgId, null) >= maxRunning) return@recording KeyedCreateOutcome.AtCap
+        requireRoom(session, maxRetained)
         insertSession(session)
         write { createKeyInsert(session, member, key) }
         record()
@@ -291,8 +300,33 @@ private fun JdbcTransaction.select(id: Uuid): CloudSession? {
     return s.select(s.columns).where { s.id eq id }.firstOrNull()?.let(::toSession)
 }
 
-/** The per-organization lock of the running cap, taken until the transaction ends. */
-private fun JdbcTransaction.lockOrg(orgId: Uuid) = lockUntilCommit("runners:$orgId")
+/**
+ * The per-organization lock of the running and retained caps, taken until the transaction ends: a creation and an
+ * owner change ([CloudTransfersRepositoryImpl.complete]) count under it.
+ */
+internal fun JdbcTransaction.lockOrg(orgId: Uuid) = lockUntilCommit("runners:$orgId")
+
+/**
+ * The cloud sessions [ownerId] keeps (TeamCode's retained count): neither terminated nor failed, paused ones included.
+ * Local and remote sessions keep no workspace on a cluster, and an automation's are bounded by their automation: none
+ * is counted.
+ */
+internal fun JdbcTransaction.countRetained(orgId: Uuid, ownerId: String): Long {
+    val s = RunnersSessionsTable
+    val kept = s.id.count()
+    return s.select(kept)
+        .where {
+            (s.orgId eq orgId) and (s.ownerId eq ownerId) and (s.state notInList OVER) and
+                (s.kind eq SessionKind.CLOUD.wire) and s.automationId.isNull()
+        }
+        .single()[kept]
+}
+
+/** Refuses a cloud session whose owner already keeps [maxRetained]; counted only when there is a cap. */
+private fun JdbcTransaction.requireRoom(session: CloudSession, maxRetained: Int) {
+    if (session.kind != SessionKind.CLOUD || session.automationId != null || maxRetained == Int.MAX_VALUE) return
+    if (countRetained(session.orgId, session.ownerId) >= maxRetained) throw CloudSessionRetainedLimitException()
+}
 
 private fun JdbcTransaction.countHolding(orgId: Uuid, except: Uuid?): Long {
     val s = RunnersSessionsTable
