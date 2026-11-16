@@ -18,11 +18,11 @@ import run.ostrom.server.kernel.http.docs.queryText
 private const val STATE_CHANGE = "A session whose state does not allow it, or that changed meanwhile " +
     "(`conflict`, `session_busy`)."
 
-/** The cloud sessions a member manages: listing, creating, reading, stopping, pausing, resuming, and their access. */
 private const val WAITING_CAPACITY = "Past its owner's running cap (the instance's `maxRunningSessionsPerMember`, 0 " +
     "for none), a start waits in `creating` or `resuming` with phase `waiting_capacity`, and the owner's waiting " +
     "starts go oldest first as their running sessions pause."
 
+/** The cloud sessions a member manages: listing, creating, reading, stopping, pausing, resuming, and their access. */
 internal fun ApiCatalog.cloudSessionOperations() {
     cloudSessionListing()
     cloudSessionCreation()

@@ -77,7 +77,7 @@ internal object RunnersSessionsTable : Table("runners_sessions") {
     val workspaceProblemMessage = text("workspace_problem_message").nullable()
     val workspaceProblemRetryable = bool("workspace_problem_retryable")
 
-    // Version 28: the place of a start that waits for its owner's running cap.
+    // Version 29: the place of a start that waits for its owner's running cap.
     val capacityWaitingSince = instant("capacity_waiting_since").nullable()
 
     // Version 20: the transfers.
