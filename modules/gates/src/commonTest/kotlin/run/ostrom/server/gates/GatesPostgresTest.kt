@@ -5,6 +5,7 @@ import run.ostrom.server.gates.infrastructure.GatesGates
 import run.ostrom.server.gates.infrastructure.GatesRequests
 import run.ostrom.server.kernel.database.confineToOrganization
 import run.ostrom.server.kernel.database.databaseNow
+import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.select
@@ -558,7 +559,9 @@ class GatesPostgresTest {
         }
         assertEquals(listOf(0L, 0L, 1L), counts, "No org set: nothing; org B: nothing; org A: its gate")
         // A request on A's own gate, written with A's id while org B is set: the policy's check refuses it.
-        val gate = server.database.superuserJdbc.query { gates.select(gates.id).single()[gates.id] }
+        val gate = server.database.superuserJdbc.query {
+            gates.select(gates.id).where { gates.orgId eq orgA }.single()[gates.id]
+        }
         val refused = assertFailsWith<ExposedSQLException>("Org B cannot write org A's rows") {
             database.query {
                 confineToOrganization(orgB)
