@@ -14,7 +14,6 @@ import run.ostrom.server.kernel.events.OrgEventDraft
 import run.ostrom.server.kernel.events.OrgEventPublisher
 import run.ostrom.server.kernel.events.OrgEventType
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Transaction
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
@@ -47,9 +46,6 @@ class GateEventsPostgresTest {
         val published = mutableListOf<Pair<String, List<OrgEventDraft>>>()
 
         override suspend fun publish(orgId: Uuid, events: List<OrgEventDraft>) = error("Only in the gate's transaction")
-
-        override suspend fun publishIn(transaction: Transaction, orgId: Uuid, events: List<OrgEventDraft>) =
-            error("The gates are on Exposed")
 
         override fun publishIn(transaction: JdbcTransaction, orgId: Uuid, events: List<OrgEventDraft>) {
             val scope = transaction.exec("SELECT current_setting('ostrom.org_id') || '/' || current_user") {

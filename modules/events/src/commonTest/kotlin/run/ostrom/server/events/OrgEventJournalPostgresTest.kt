@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.events
 
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
+import run.ostrom.server.events.infrastructure.EventsReaders
+import org.jetbrains.exposed.v1.jdbc.selectAll
+import org.jetbrains.exposed.v1.core.eq
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.koin.dsl.module
 import run.ostrom.server.events.domain.OrgEventsRepository
 import run.ostrom.server.events.infrastructure.OrgEventJournalImpl
 import run.ostrom.server.kernel.database.JdbcDatabase
-import run.ostrom.server.kernel.database.withOrganization
 import run.ostrom.server.kernel.events.JournalPosition
 import run.ostrom.server.kernel.events.OrgEventDraft
 import run.ostrom.server.kernel.events.OrgEventJournal
@@ -41,9 +41,8 @@ class OrgEventJournalPostgresTest {
     private suspend fun TestServer.publish(org: Uuid, vararg events: OrgEventDraft) =
         koin.get<OrgEventPublisher>().publish(org, events.toList())
 
-    private suspend fun TestServer.readers(org: Uuid): Long = database.superuser.fetchAll(
-        "SELECT count(*) AS n FROM events_readers WHERE org_id = '$org'",
-    ).getOrThrow().first().get("n").asLong()
+    private suspend fun TestServer.readers(org: Uuid): Long =
+        database.superuserJdbc.query { EventsReaders.selectAll().where { EventsReaders.orgId eq org }.count() }
 
     @Test
     fun aReaderStartsAtTheHeadThenReadsItsTypesPageByPage() = serverTest(listOf(EventsModule), overrides) { server ->
@@ -78,15 +77,15 @@ class OrgEventJournalPostgresTest {
 
         // Rolled back with the reader's work, the cursor stays where it was.
         assertFailsWith<IllegalStateException> {
-            server.driver.withOrganization(orgA) { tx ->
-                assertTrue(journal.advanceIn(tx, reader, position, 5))
+            server.koin.get<JdbcDatabase>().inOrg(orgA) {
+                assertTrue(journal.advanceIn(this, reader, position, 5))
                 error("The work fails")
             }
         }
         assertEquals(listOf(position, JournalPosition(orgB, 0, 1)), journal.behind(reader, 10))
-        server.driver.withOrganization(orgA) { tx ->
-            assertTrue(journal.advanceIn(tx, reader, position, 5))
-            assertFalse(journal.advanceIn(tx, reader, position, 5), "A page is handled once")
+        server.koin.get<JdbcDatabase>().inOrg(orgA) {
+            assertTrue(journal.advanceIn(this, reader, position, 5))
+            assertFalse(journal.advanceIn(this, reader, position, 5), "A page is handled once")
         }
         assertEquals(listOf(JournalPosition(orgB, 0, 1)), journal.behind(reader, 10), "B is still to read")
         assertFailsWith<IllegalArgumentException> { journal.behind("Not a reader", 10) }
@@ -100,7 +99,7 @@ class OrgEventJournalPostgresTest {
         assertEquals(listOf(JournalPosition(orgA, 0, 1)), journal.behind(reader, 10), "Its very first event")
 
         // A reader whose cursors predate the starts' table (version 3) counts as started.
-        server.database.superuser.execute("DELETE FROM events_reader_starts").getOrThrow()
+        server.database.superuserJdbc.query { exec("DELETE FROM events_reader_starts") }
         server.publish(orgB, wait("w-2"), wait("w-3"))
         assertEquals(
             listOf(JournalPosition(orgA, 0, 1), JournalPosition(orgB, 0, 2)),
@@ -146,13 +145,11 @@ class OrgEventJournalPostgresTest {
             server.publish(orgA, wait("w-1"))
             server.publish(orgB, wait("w-2"))
             journal.behind(reader, 10)
-            val seen = server.driver.withOrganization(orgB) { tx ->
-                tx.fetchAll(Statement.create("SELECT count(*) AS n FROM events_readers")).getOrThrow()
-                    .first().get("n").asLong()
-            }
+            val database = server.koin.get<JdbcDatabase>()
+            val seen = database.inOrg(orgB) { EventsReaders.selectAll().count() }
             assertEquals(1, seen, "Row-level security confines events_readers to the transaction's organization")
-            server.driver.withOrganization(orgB) { tx ->
-                assertFalse(journal.advanceIn(tx, reader, JournalPosition(orgA, 1, 2), 2), "Not A's cursor")
+            database.inOrg(orgB) {
+                assertFalse(journal.advanceIn(this, reader, JournalPosition(orgA, 1, 2), 2), "Not A's cursor")
             }
 
             server.koin.get<OrgEventsRepository>().erase(orgA)

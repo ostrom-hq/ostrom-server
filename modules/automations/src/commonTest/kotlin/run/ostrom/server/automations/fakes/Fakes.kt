@@ -37,7 +37,6 @@ import run.ostrom.server.kernel.events.OrgEventDraft
 import run.ostrom.server.kernel.events.OrgEventPublisher
 import run.ostrom.server.kernel.sessions.AgentSession
 import run.ostrom.server.kernel.sessions.AgentSessions
-import io.github.smyrgeorge.sqlx4k.Transaction
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import org.koin.dsl.module
 import kotlin.time.Clock
@@ -367,14 +366,6 @@ class RecordingOrgEvents : OrgEventPublisher {
     val published = mutableListOf<Pair<Uuid, OrgEventDraft>>()
 
     override suspend fun publish(orgId: Uuid, events: List<OrgEventDraft>) {
-        events.forEach { published += orgId to it }
-    }
-
-    override suspend fun publishIn(
-        transaction: Transaction,
-        orgId: Uuid,
-        events: List<OrgEventDraft>,
-    ) {
         events.forEach { published += orgId to it }
     }
 

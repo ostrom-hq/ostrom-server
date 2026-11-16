@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.events
 
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
+import run.ostrom.server.events.infrastructure.EventsCursors
+import run.ostrom.server.events.infrastructure.EventsJournal
+import run.ostrom.server.kernel.database.JdbcDatabase
+import org.jetbrains.exposed.v1.jdbc.selectAll
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -36,7 +38,6 @@ import run.ostrom.server.kernel.auth.PrincipalChannel
 import run.ostrom.server.kernel.auth.PrincipalKind
 import run.ostrom.server.kernel.auth.PrincipalOrgResolver
 import run.ostrom.server.kernel.auth.TokenAuthenticator
-import run.ostrom.server.kernel.database.withOrganization
 import run.ostrom.server.kernel.events.OrgEventDraft
 import run.ostrom.server.kernel.events.OrgEventPublisher
 import run.ostrom.server.kernel.events.OrgEventType
@@ -134,14 +135,14 @@ class EventsPostgresTest {
         )
         // In the transaction of the change it reports: rolled back with it, committed with it.
         assertFailsWith<IllegalStateException> {
-            server.driver.withOrganization(orgA) { tx ->
-                publisher.publishIn(tx, orgA, listOf(draft(OrgEventType.TODO_UPDATED, "s-0", miaA)))
+            server.koin.get<JdbcDatabase>().inOrg(orgA) {
+                publisher.publishIn(this, orgA, listOf(draft(OrgEventType.TODO_UPDATED, "s-0", miaA)))
                 error("The change fails")
             }
         }
-        server.driver.withOrganization(orgA) { tx ->
-            publisher.publishIn(tx, orgA, emptyList())
-            publisher.publishIn(tx, orgA, listOf(draft(OrgEventType.TODO_UPDATED, "s-1", adminA)))
+        server.koin.get<JdbcDatabase>().inOrg(orgA) {
+            publisher.publishIn(this, orgA, emptyList())
+            publisher.publishIn(this, orgA, listOf(draft(OrgEventType.TODO_UPDATED, "s-1", adminA)))
         }
         server.publish(orgB, draft(OrgEventType.WAIT_RESOLVED, "w-9", null))
 
@@ -204,11 +205,9 @@ class EventsPostgresTest {
             draft(OrgEventType.WAIT_CREATED, "w-1", miaA),
             draft(OrgEventType.WAIT_CREATED, "w-2", null),
         )
-        for (table in listOf("events_journal", "events_cursors")) {
-            val seen = server.driver.withOrganization(orgB) { tx ->
-                tx.fetchAll(Statement.create("SELECT count(*) AS n FROM $table")).getOrThrow().first().get("n").asLong()
-            }
-            assertEquals(0, seen, "Row-level security confines $table to the transaction's organization")
+        for (table in listOf(EventsJournal, EventsCursors)) {
+            val seen = server.koin.get<JdbcDatabase>().inOrg(orgB) { table.selectAll().count() }
+            assertEquals(0, seen, "Row-level security confines ${table.tableName} to the transaction's organization")
         }
         val events = server.koin.get<OrgEventsRepository>()
         assertEquals(0, events.head(orgB))
@@ -223,10 +222,9 @@ class EventsPostgresTest {
             draft(OrgEventType.WAIT_CREATED, "w-2", miaA),
         )
         server.publish(orgB, draft(OrgEventType.WAIT_CREATED, "w-3", null))
-        server.database.superuser.execute(
-            "UPDATE events_journal SET at = at - INTERVAL '8 days' WHERE org_id = '$orgA' AND seq = 1",
-        )
-            .getOrThrow()
+        server.database.superuserJdbc.query {
+            exec("UPDATE events_journal SET at = at - INTERVAL '8 days' WHERE org_id = '$orgA' AND seq = 1")
+        }
         val events = server.koin.get<OrgEventsRepository>()
 
         val before = Clock.System.now() - 7.days
@@ -323,7 +321,7 @@ class EventsPostgresTest {
             draft(OrgEventType.WAIT_CREATED, "w-2", miaA),
         )
         server.publish(orgA, draft(OrgEventType.WAIT_CREATED, "w-3", miaA))
-        server.database.superuser.execute("DELETE FROM events_journal WHERE seq < 3").getOrThrow()
+        server.database.superuserJdbc.query { exec("DELETE FROM events_journal WHERE seq < 3") }
         server.client.prepareGet("/api/v1/events?after=1") { bearerAuth("revoked-a") }.execute { response ->
             val stream = response.bodyAsChannel()
             withTimeout(30.seconds) {

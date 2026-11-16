@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.notifications
 
-import io.github.smyrgeorge.sqlx4k.Transaction
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
@@ -57,13 +56,6 @@ class FakeJournal(
         read += position to types
         return slices.getValue(position.orgId)
     }
-
-    override suspend fun advanceIn(
-        transaction: Transaction,
-        reader: String,
-        position: JournalPosition,
-        through: Long,
-    ): Boolean = error("The router moves its cursor on Exposed")
 
     override fun advanceIn(
         transaction: JdbcTransaction,
