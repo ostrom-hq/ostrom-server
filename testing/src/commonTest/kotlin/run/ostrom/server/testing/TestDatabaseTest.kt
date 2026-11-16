@@ -3,6 +3,7 @@ package run.ostrom.server.testing
 
 import run.ostrom.server.kernel.config.EnvironmentConfigSource
 import run.ostrom.server.kernel.config.MapConfigSource
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.SchemaMigration
 import run.ostrom.server.kernel.database.UnsafeDatabaseRoleException
 import run.ostrom.server.kernel.database.requireRowLevelSecurity
@@ -18,6 +19,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.test.runTest
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import org.koin.core.module.Module
 import org.koin.dsl.module
 import kotlin.test.Test
@@ -58,6 +60,24 @@ class TestDatabaseTest {
             database.close()
         }
     }
+
+    // The owner's and the superuser's JDBC pools connect as those roles, opened only when a test uses them.
+    @Test
+    fun theOwnerAndTheSuperuserHaveJdbcPoolsToo() = runTest {
+        val database = TestDatabase.create() ?: return@runTest
+        try {
+            val owner = database.ownerJdbc.query { currentUser() }
+            val superuser = database.superuserJdbc.query { currentUser() }
+            assertEquals(database.ownerRole to database.superuserConfig.username, owner to superuser)
+        } finally {
+            database.close()
+        }
+        val unused = TestDatabase.create() ?: return@runTest
+        unused.close()
+    }
+
+    private fun JdbcTransaction.currentUser(): String =
+        exec("SELECT CAST(current_user AS text) AS value") { rs -> rs.next(); rs.getString("value") }.orEmpty()
 
     private suspend fun Driver.text(sql: String, role: String? = null): String {
         val statement = Statement.create(sql).let { if (role == null) it else it.bind("role", role) }
