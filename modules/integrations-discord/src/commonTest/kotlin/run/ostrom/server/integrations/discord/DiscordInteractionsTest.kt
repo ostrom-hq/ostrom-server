@@ -28,6 +28,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Instant
@@ -68,8 +69,10 @@ class DiscordInteractionsTest {
                 answer: Answer,
                 shownDigest: String,
                 channel: AnswerChannel,
+                note: String?,
             ): GateView {
                 refusal?.let { throw it }
+                assertNull(note, "A Discord button sends no note")
                 assertEquals(gate.shownDigest to AnswerChannel.DISCORD, shownDigest to channel)
                 answered += actor to answer
                 return GateView(gate, emptyList(), emptyList())

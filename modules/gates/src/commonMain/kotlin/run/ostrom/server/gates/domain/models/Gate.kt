@@ -41,6 +41,8 @@ import kotlin.uuid.Uuid
  * @property unlinkedAuthor The GitHub account id of a pull request's author whom no Ostrom person had linked when the
  *   gate opened: under the `never` self-approval policy, only an approver who linked another GitHub account says yes
  *   (Q-GATES-G1).
+ * @property note What the approver who decided told the agent with their answer, or null: sent to the sessions that
+ *   wait on the gate and written on the receipt of the decision. User content: never logged.
  */
 data class Gate(
     val id: Uuid,
@@ -67,6 +69,7 @@ data class Gate(
     val releasedAt: Instant? = null,
     val createdAt: Instant,
     val unlinkedAuthor: Long? = null,
+    val note: String? = null,
 ) {
     /**
      * Whether an approved yes outlived [YES_LIFETIME] without being reserved (SECURITY-AUDIT S2-29): it no longer

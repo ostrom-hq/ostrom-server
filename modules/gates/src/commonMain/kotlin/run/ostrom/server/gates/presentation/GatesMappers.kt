@@ -84,6 +84,7 @@ internal fun Gate.toRequest(approvalId: String?) = GateRequest(
     push = subject.push?.let { push ->
         GatePush(push.remote, push.refs.map { GatePushRef(it.ref, it.sha) }, push.force)
     },
+    note = note,
 )
 
 internal fun GateNode.toRef() = GateRef(

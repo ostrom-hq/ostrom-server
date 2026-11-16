@@ -118,11 +118,13 @@ class GateBench {
         approver: String,
         answer: Answer = Answer.YES,
         actor: GateActor = user(approver),
+        note: String? = null,
     ) = this.answer(
         actor.copy(authenticatedAt = actor.authenticatedAt ?: clock.now()),
         view.requests.first { it.approverId.equals(approver, ignoreCase = true) }.id,
         answer,
         view.gate.shownDigest,
         AnswerChannel.MOBILE,
+        note,
     )
 }

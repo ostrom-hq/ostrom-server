@@ -252,16 +252,18 @@ private fun ApiCatalog.answerOperations() {
             "app not unlocked in the last 5 minutes (`unlockMobileApp`), or from the phone app, to a " +
             "high-risk action, without an unlock bound to this request less than 60 seconds old and not used " +
             "yet (`unlockMobileApp.requestId`, `error.requestBound` true); the 200 is the `ApprovalView` of the " +
-            "answered approval, with its signed `receipt`, a no's included."
+            "answered approval, with its signed `receipt`, a no's included. The optional `note` (or its first " +
+            "name `comment`) is what the approver tells the agent: the gate's sessions read it as `gate.note`, the " +
+            "receipt's decision signs it, the view returns it as `note`; 400 note_too_long past 4000 characters."
         parameters {
             organizationHeader()
             pathId("id", "The approval's id.")
         }
         body<AnswerApprovalRequest>("The answer, the digest of what the approver was shown, and an optional " +
-            "comment.")
+            "note to the agent.")
         responses {
             ok<ApprovalViewResponse>("The answered approval, with its signed receipt, a no included.")
-            badRequest(BAD_ID)
+            badRequest("A malformed id (`invalid_request`), or a note longer than 4000 characters (`note_too_long`).")
             error(HttpStatusCode.Forbidden, "Only an approver who is a person answers, and not their own " +
                 "request while another approver exists (`self_approval_refused`), without a linked GitHub " +
                 "account where the gate requires one (`github_link_required`), nor with a sign-in older than 5 " +

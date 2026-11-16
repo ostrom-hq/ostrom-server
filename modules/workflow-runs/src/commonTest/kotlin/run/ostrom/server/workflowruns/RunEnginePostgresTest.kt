@@ -249,7 +249,7 @@ class RunEnginePostgresTest {
         val gate = assertNotNull(gates.get(person.org.id, gateId))
         val request = gates.requestsOf(person.org.id, gateId).first { it.approverId == APPROVER }
         val actor = GateActor.person(APPROVER, person.org.id, OrgRole.MEMBER, Clock.System.now())
-        koin.get<AnswerGateUseCase>()(actor, request.id, answer, gate.shownDigest, AnswerChannel.CONSOLE)
+        koin.get<AnswerGateUseCase>()(actor, request.id, answer, gate.shownDigest, AnswerChannel.CONSOLE, null)
     }
 
     private suspend fun TestServer.audit(orgId: Uuid, runId: String): List<String> = database.superuserTexts(

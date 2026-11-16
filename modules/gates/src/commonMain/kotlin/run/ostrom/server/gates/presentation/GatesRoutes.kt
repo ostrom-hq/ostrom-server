@@ -134,7 +134,9 @@ private fun Route.answerRoute(dependencies: GatesRoutesDependencies) = with(depe
         val body = call.receive<AnswerApprovalRequest>()
         val id = params.parent.id.toUuid()
         val choice = if (body.answer == ApprovalAnswer.APPROVE) Answer.YES else Answer.NO
-        val answered = answer(actor, id, choice, body.shownDigest, AnswerChannel.CONSOLE)
+        // `comment` is the note's first name: read when `note` says nothing, so an empty `note` never hides it.
+        val note = body.note?.takeIf { it.isNotBlank() } ?: body.comment
+        val answered = answer(actor, id, choice, body.shownDigest, AnswerChannel.CONSOLE, note)
         // The contract's 200 is the approval as the console and the app show it, answered, with the signed
         // receipt of the decision (a no's included).
         val receipt = receipts.read(answered.gate.orgId, answered.gate.receiptId)

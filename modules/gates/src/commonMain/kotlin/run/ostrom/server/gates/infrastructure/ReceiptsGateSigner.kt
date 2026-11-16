@@ -29,7 +29,8 @@ import kotlin.uuid.Uuid
  * Signs a gate's decision with the receipts module, the receipt the prototype signs (`bridge/index.ts`,
  * `onApprovalDecided`): its subject digest is the hash of what the approver was shown (gate, class, command,
  * repository, session, CI context, shown digest, pull request or push), and it cites the rules in force and the
- * answer. The receipt id comes from the gate, so signing twice returns the same receipt.
+ * answer, with the note the approver sent with it. The receipt id comes from the gate, so signing twice returns the
+ * same receipt.
 
  *
  * @param signReceipt Signs and stores.
@@ -56,6 +57,8 @@ class ReceiptsGateSigner(
             put("at", at.isoMillis())
             put("result", if (decided.status == RequestStatus.APPROVED) "approved" else "rejected")
             if (gate.selfApproved) put("selfApproved", true)
+            // Written only when the approver sent one: a decision without a note signs to the same bytes as before.
+            gate.note?.let { put("note", it) }
         }
         val draft = buildJsonObject {
             put(

@@ -45,6 +45,7 @@ data class ApprovalViewer(val login: String, val via: String)
  * @property askedVia The paths that asked (`hook`, `ci`, `mcp`).
  * @property you What the caller may do with it.
  * @property receipt The signed receipt of the decision, in the answer to a yes or a no.
+ * @property note What the approver told the agent with their answer, once answered with one.
  */
 @Serializable
 data class ApprovalViewResponse(
@@ -56,6 +57,7 @@ data class ApprovalViewResponse(
     val askedVia: List<String>,
     val you: ApprovalCallerView,
     val receipt: JsonElement? = null,
+    val note: String? = null,
 )
 
 /**

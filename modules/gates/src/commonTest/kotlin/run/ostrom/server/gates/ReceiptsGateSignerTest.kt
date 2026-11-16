@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.gates
 
+import run.ostrom.core.receipts.CanonicalJson
 import run.ostrom.core.receipts.Digests
 import run.ostrom.server.gates.domain.models.Answer
 import run.ostrom.server.gates.domain.models.AskedVia
@@ -115,6 +116,24 @@ class ReceiptsGateSignerTest {
         assertEquals("approved", decision.text("result"))
         assertEquals("2026-10-30T02:00:00.000Z", decision.text("at"))
         assertFalse("selfApproved" in decision)
+        // A decision without a note is written as before it existed: the same canonical bytes, the same signature.
+        assertEquals(
+            """{"approvalId":"${request.id}","at":"2026-10-30T02:00:00.000Z","by":"rev-b","result":"approved"}""",
+            CanonicalJson.encode(decision),
+        )
+    }
+
+    @Test
+    fun theApproversNoteIsSignedOnTheirDecision() = runTest {
+        val bench = GateBench()
+        val sign = RecordingSign()
+        val view = bench.open(bench.pushRequest())
+        val refused = bench.answer(view, "rev-b", Answer.NO, note = "Rebase on main first.")
+
+        signer(bench, sign).sign(refused.gate)
+        val decision = sign.drafts.single().first.getValue("decisions").jsonArray.single().jsonObject
+        assertEquals("Rebase on main first.", decision.text("note"))
+        assertEquals("rejected", decision.text("result"))
     }
 
     @Test

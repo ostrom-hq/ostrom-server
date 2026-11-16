@@ -282,7 +282,7 @@ class RunEngineLoadPostgresTest {
         val gate = assertNotNull(gates.get(owner.org.id, gateId))
         val request = gates.requestsOf(owner.org.id, gateId).first { it.approverId == APPROVER }
         val actor = GateActor.person(APPROVER, owner.org.id, OrgRole.MEMBER, Clock.System.now())
-        koin.get<AnswerGateUseCase>()(actor, request.id, Answer.YES, gate.shownDigest, AnswerChannel.CONSOLE)
+        koin.get<AnswerGateUseCase>()(actor, request.id, Answer.YES, gate.shownDigest, AnswerChannel.CONSOLE, null)
     }
 
     private suspend fun TestServer.stored(orgId: Uuid, id: String): WorkflowRun =
