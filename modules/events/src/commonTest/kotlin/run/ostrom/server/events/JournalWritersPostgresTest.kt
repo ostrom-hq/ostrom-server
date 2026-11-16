@@ -107,7 +107,7 @@ class JournalWritersPostgresTest {
                         val events = (0 until PER_CALL).map { draft("w$writer-$it") }.toTypedArray()
                         repeat(CALLS) { call ->
                             val named = events.map { e -> e.copy(subjectId = "${e.subjectId}-$call") }.toTypedArray()
-                            // Each writer alternates writers, and the writers start on different ones.
+                            // Each writer alternates the two ways to publish, and the writers start on different ones.
                             if ((writer + call) % 2 == 0) {
                                 server.viaOwnTransaction(orgA, *named)
                             } else {
