@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.notifications
 
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
+import run.ostrom.server.notifications.infrastructure.NotificationsMemberSettings
+import run.ostrom.server.kernel.database.JdbcDatabase
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.selectAll
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
@@ -213,21 +215,22 @@ class NotificationSettingsPostgresTest {
     fun anotherOrganizationNeverSeesTheSwitchesAndADeletedOneLosesThem() = serverTest(modules, overrides) { server ->
         server.change("mia-a", NotificationSettingChange("push", "waiting", false))
         server.change("leo-b", NotificationSettingChange("push", "waiting", false))
-        val seen = server.driver.withOrganization(orgB) { tx ->
-            tx.fetchAll(Statement.create("SELECT count(*) AS n FROM notifications_member_settings")).getOrThrow()
-                .first().get("n").asLong()
-        }
+        val database = server.koin.get<JdbcDatabase>()
+        val settings = NotificationsMemberSettings
+        val seen = database.withOrganization(orgB) { settings.selectAll().count() }
         assertEquals(1, seen, "Row-level security confines the switches to the transaction's organization")
         val repository = server.koin.get<NotificationSettingsRepository>()
         assertEquals(emptySet(), repository.disabled(orgB, setOf(miaA)), "Not A's member")
 
         // A kind a newer server stored is left out by this one.
-        server.driver.withOrganization(orgA) { tx ->
-            tx.execute(
-                Statement.create(
-                    "INSERT INTO notifications_member_settings VALUES (:org, :member, 'push', 'later', FALSE)",
-                ).bind("org", orgA).bind("member", miaA),
-            ).getOrThrow()
+        database.withOrganization(orgA) {
+            settings.insert {
+                it[orgId] = orgA
+                it[memberId] = miaA
+                it[channel] = "push"
+                it[kind] = "later"
+                it[enabled] = false
+            }
         }
         assertEquals(1, repository.settings(orgA, miaA).size)
         assertEquals(1, repository.disabled(orgA, setOf(miaA)).size)

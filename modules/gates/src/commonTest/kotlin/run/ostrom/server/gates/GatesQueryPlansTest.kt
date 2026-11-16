@@ -77,10 +77,9 @@ class GatesQueryPlansTest {
         // A gate the GitHub check opened has no session: nothing to link.
         val unlinked = gateOf(others.first(), TOTAL_GATES).copy(sessionIds = emptyList())
         repository.transaction(unlinked.orgId) { insertGate(unlinked) }
-        // Statistics are the owner's to gather; the reads run as the serving role, as every test does (#68).
-        for (table in listOf("gates_gates", "gates_requests", "gates_sessions", "gates_session_ends")) {
-            server.database.owner.execute("VACUUM ANALYZE $table").getOrThrow()
-        }
+        // Statistics gathered first; the reads run as the serving role, as every test does (#68).
+        val tables = listOf("gates_gates", "gates_requests", "gates_sessions", "gates_session_ends")
+        server.database.superuserOutsideTransaction(*tables.map { "VACUUM ANALYZE $it" }.toTypedArray())
         // Each statement as the repository sends it, in `inOrg` (the tenant role, org A set), each write rolled back.
         val database = server.koin.get<JdbcDatabase>()
         val plans = statementsOf(ofA).mapValues { (_, statement) ->

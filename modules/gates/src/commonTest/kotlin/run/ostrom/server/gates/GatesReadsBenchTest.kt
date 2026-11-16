@@ -83,11 +83,8 @@ class GatesReadsBenchTest {
                 insertRequests(listOf(requestOf(gate, 0), requestOf(gate, 1)))
             }
         }
-        val fixtures = server.database.superuser
-        orgs.drop(1).forEach { org -> copyOf(org).forEach { fixtures.execute(it).getOrThrow() } }
-        for (table in listOf("gates_gates", "gates_requests", "gates_sessions")) {
-            fixtures.execute("VACUUM ANALYZE $table").getOrThrow()
-        }
+        val vacuum = listOf("gates_gates", "gates_requests", "gates_sessions").map { "VACUUM ANALYZE $it" }
+        server.database.superuserOutsideTransaction(*(orgs.drop(1).flatMap(::copyOf) + vacuum).toTypedArray())
 
         // Who reads, and the pending requests their page shows. The pending gates are one in ten, and their first
         // approver is rev-1 or rev-11: rev-1 is the busiest of the 20 reviewers, rev-5 has none waiting.

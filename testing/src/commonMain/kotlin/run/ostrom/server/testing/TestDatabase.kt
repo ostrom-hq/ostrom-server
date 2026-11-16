@@ -17,6 +17,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import org.jetbrains.exposed.v1.core.statements.StatementType
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
 import kotlin.time.Duration.Companion.milliseconds
@@ -90,6 +91,20 @@ class TestDatabase @Suppress("LongParameterList") private constructor( // Each r
                 connection.autoCommit = false
             }
         }
+    }
+
+    /**
+     * The first column of every row [sql] returns, as text, read as the superuser: what a test must prove is stored,
+     * whatever row-level security would show the server.
+     *
+     * @param sql A query.
+     *
+     * @return The values, in the query's order; a SQL null as null.
+     */
+    suspend fun superuserTexts(sql: String): List<String?> = superuserJdbc.query {
+        exec(sql, explicitStatementType = StatementType.SELECT) { rows ->
+            buildList { while (rows.next()) add(rows.getString(1)) }
+        }.orEmpty()
     }
 
     /** The name of the owner role, which owns the database, its schema and its tables. */
