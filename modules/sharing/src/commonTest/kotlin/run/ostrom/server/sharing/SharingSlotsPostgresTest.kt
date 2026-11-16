@@ -1,10 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.sharing
 
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.databaseNowPlus
+import run.ostrom.server.sharing.infrastructure.SharingSlots
+import run.ostrom.server.sharing.infrastructure.SharingAffinities
+import org.jetbrains.exposed.v1.core.Table
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greater
+import org.jetbrains.exposed.v1.core.IntegerColumnType
+import org.jetbrains.exposed.v1.core.UuidColumnType
+import org.jetbrains.exposed.v1.core.TextColumnType
+import org.jetbrains.exposed.v1.jdbc.deleteAll
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.selectAll
+import org.jetbrains.exposed.v1.jdbc.update
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Duration.Companion.minutes
 import run.ostrom.server.kernel.logging.JsonLogger
 import run.ostrom.server.kernel.logging.LogLevel
-import run.ostrom.server.secrets.infrastructure.executeInOrg
-import run.ostrom.server.secrets.infrastructure.fetchInOrg
 import run.ostrom.server.sharing.domain.AccountProvider
 import run.ostrom.server.sharing.domain.AccountRefreshRepository
 import run.ostrom.server.sharing.domain.AccountSlotRepository
@@ -24,8 +38,6 @@ import run.ostrom.server.sharing.presentation.SharedAccountsResponse
 import run.ostrom.server.sharing.presentation.UpdateAccountRequest
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
@@ -90,22 +102,16 @@ class SharingSlotsPostgresTest : SharingPostgresHarness() {
             ).lease
             assertEquals(mapOf(account to 1), replicas[0].inFlight(Sharing.orgA))
             // A request still open renews its slot for a whole lease, by the database's clock.
-            val held = driver.fetchInOrg(Sharing.orgA, Statement.create("SELECT id FROM sharing_slots"))
-                .getOrThrow().single().get("id").asUuid()
-            driver.executeInOrg(
-                Sharing.orgA,
-                Statement.create("UPDATE sharing_slots SET expires_at = now() + INTERVAL '1 second'"),
-            ).getOrThrow()
+            val database = koin.get<JdbcDatabase>()
+            val held = database.inOrg(Sharing.orgA) { SharingSlots.select(SharingSlots.id).single()[SharingSlots.id] }
+            database.inOrg(Sharing.orgA) { SharingSlots.update { it[expiresAt] = databaseNowPlus(1.seconds) } }
             AccountSlotRepositoryImpl(koin.get()).renew(Sharing.orgA, AccountSlot(held, account))
-            val renewed = driver.fetchInOrg(
-                Sharing.orgA,
-                Statement.create("SELECT id FROM sharing_slots WHERE expires_at > now() + INTERVAL '14 minutes'"),
-            ).getOrThrow().size
+            val renewed = database.inOrg(Sharing.orgA) {
+                SharingSlots.select(SharingSlots.id)
+                    .where { SharingSlots.expiresAt greater databaseNowPlus(14.minutes) }.toList().size
+            }
             assertEquals(1, renewed)
-            driver.executeInOrg(
-                Sharing.orgA,
-                Statement.create("UPDATE sharing_slots SET expires_at = now() - INTERVAL '1 second'"),
-            ).getOrThrow()
+            database.inOrg(Sharing.orgA) { SharingSlots.update { it[expiresAt] = databaseNowPlus((-1).seconds) } }
             assertEquals(emptyMap(), replicas[0].inFlight(Sharing.orgA))
             assertEquals(account, orphan.account.id)
             repeat(4) {
@@ -113,8 +119,7 @@ class SharingSlotsPostgresTest : SharingPostgresHarness() {
                     replicas[0].lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, null),
                 )
             }
-            val rows = driver.fetchInOrg(Sharing.orgA, Statement.create("SELECT expires_at FROM sharing_slots"))
-                .getOrThrow().size
+            val rows = database.inOrg(Sharing.orgA) { SharingSlots.selectAll().toList().size }
             assertEquals(4, rows, "The expired slot was deleted by the next take on its account")
             orphan.release()
             assertEquals(mapOf(account to 4), replicas[0].inFlight(Sharing.orgA), "A late release changes nothing")
@@ -140,8 +145,10 @@ class SharingSlotsPostgresTest : SharingPostgresHarness() {
             assertEquals(placed, lease(1, "session-1"), "The session stays on its account on the other replica")
             assertEquals(other, lease(1, "session-1", Sharing.otherA.memberId), "Another member's id is theirs")
 
-            val hashes = Statement.create("SELECT session_hash FROM sharing_affinities")
-            val stored = driver.fetchInOrg(Sharing.orgA, hashes).getOrThrow().map { it.get("session_hash").asString() }
+            val database = koin.get<JdbcDatabase>()
+            val stored = database.inOrg(Sharing.orgA) {
+                SharingAffinities.select(SharingAffinities.sessionHash).map { it[SharingAffinities.sessionHash] }
+            }
             assertEquals(2, stored.size)
             assertTrue(stored.all { it.length == 64 && "session" !in it }, "A SHA-256 digest, never the id")
 
@@ -150,17 +157,17 @@ class SharingSlotsPostgresTest : SharingPostgresHarness() {
             patchAs("admin-a", "$base/$placed", UpdateAccountRequest(paused = false))
             assertEquals(other, lease(1, "session-1"), "Once moved, a session stays on its new account")
 
-            for (table in listOf("sharing_slots", "sharing_affinities")) {
-                val unfiltered = Statement.create("SELECT org_id FROM $table")
-                assertEquals(0, driver.fetchInOrg(Sharing.orgB, unfiltered).getOrThrow().size, "No leak: $table")
+            for (table in listOf<Table>(SharingSlots, SharingAffinities)) {
+                val seen = database.inOrg(Sharing.orgB) { table.selectAll().toList().size }
+                assertEquals(0, seen, "No leak: ${table.tableName}")
                 assertEquals(
-                    0L,
-                    driver.executeInOrg(Sharing.orgB, Statement.create("DELETE FROM $table")).getOrThrow(),
-                    "No change: $table",
+                    0,
+                    database.inOrg(Sharing.orgB) { table.deleteAll() },
+                    "No change: ${table.tableName}",
                 )
             }
-            val kept = driver.fetchInOrg(Sharing.orgA, Statement.create("SELECT 1 FROM sharing_affinities"))
-            assertEquals(2, kept.getOrThrow().size, "Org A's sessions are untouched")
+            val kept = database.inOrg(Sharing.orgA) { SharingAffinities.selectAll().toList().size }
+            assertEquals(2, kept, "Org A's sessions are untouched")
         }
     }
 
@@ -174,22 +181,25 @@ class SharingSlotsPostgresTest : SharingPostgresHarness() {
                     val result = pool.lease(Sharing.orgA, member, AccountProvider.CLAUDE, session)
                     assertIs<LeaseResult.Leased>(result).lease.release()
                 }
-                suspend fun remembered(session: String): Boolean = driver.fetchInOrg(
-                    Sharing.orgA,
-                    Statement.create("SELECT 1 FROM sharing_affinities WHERE session_hash = :hash")
-                        .bind("hash", sessionHash(session)),
-                ).getOrThrow().size > 0
+                suspend fun remembered(session: String): Boolean = koin.get<JdbcDatabase>().inOrg(Sharing.orgA) {
+                    SharingAffinities.selectAll().where { SharingAffinities.sessionHash eq sessionHash(session) }
+                        .toList().isNotEmpty()
+                }
                 // Live sessions written as the module writes them, `count` of them for [member].
                 suspend fun fill(member: Uuid, count: Int) {
-                    driver.executeInOrg(
-                        Sharing.orgA,
-                        Statement.create(
+                    koin.get<JdbcDatabase>().inOrg(Sharing.orgA) {
+                        exec(
                             "INSERT INTO sharing_affinities (org_id, member_id, session_hash, account_id, " +
-                                "expires_at) SELECT org_id, CAST('$member' AS uuid), md5('$member' || i), id, " +
-                                "now() + INTERVAL '1 hour' FROM sharing_accounts, generate_series(1, $count) AS i " +
-                                "WHERE id = CAST('$account' AS uuid)",
-                        ),
-                    ).getOrThrow()
+                                "expires_at) SELECT org_id, ?, md5(? || i), id, now() + INTERVAL '1 hour' " +
+                                "FROM sharing_accounts, generate_series(1, ?) AS i WHERE id = ?",
+                            listOf(
+                                UuidColumnType() to member,
+                                TextColumnType() to member.toString(),
+                                IntegerColumnType() to count,
+                                UuidColumnType() to Uuid.parse(account),
+                            ),
+                        )
+                    }
                 }
 
                 lease("known")
@@ -200,7 +210,7 @@ class SharingSlotsPostgresTest : SharingPostgresHarness() {
                 lease("known")
                 assertTrue(remembered("known"), "A session already remembered is kept")
 
-                driver.executeInOrg(Sharing.orgA, Statement.create("DELETE FROM sharing_affinities")).getOrThrow()
+                koin.get<JdbcDatabase>().inOrg(Sharing.orgA) { SharingAffinities.deleteAll() }
                 fill(Sharing.otherA.memberId, AccountSlotRepository.MAX_ORG_AFFINITIES)
                 lease("past-the-organization")
                 assertFalse(remembered("past-the-organization"), "Nor a member of an organization at its bound")

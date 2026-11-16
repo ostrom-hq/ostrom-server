@@ -16,8 +16,11 @@ import run.ostrom.server.mcprelay.infrastructure.takeSlot
 import run.ostrom.server.secrets.SecretsModule
 import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
+import org.jetbrains.exposed.v1.core.IntegerColumnType
+import org.jetbrains.exposed.v1.core.UuidColumnType
 import org.jetbrains.exposed.v1.core.statements.Statement
 import org.jetbrains.exposed.v1.core.statements.StatementBuilder
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.uuid.Uuid
@@ -30,35 +33,44 @@ import kotlin.uuid.Uuid
 class McpRelaySlotsQueryPlansTest : RelayPostgresHarness() {
     private val serverA = Uuid.parse("00000000-0000-4000-8000-0000000000c7")
 
-    private fun servers(org: Uuid, count: Int): String =
+    private fun servers(transport: String = "HTTP") =
         "INSERT INTO mcp_relay_servers (id, org_id, name, transport, url, credential_secret_id, credential_header, " +
-            "stdio, sharing, version, created_at) SELECT gen_random_uuid(), CAST('$org' AS uuid), 'seed-' || i, " +
-            "'HTTP', 'https://seed.example.com', NULL, NULL, NULL, 'PERSONAL', 1, now() " +
-            "FROM generate_series(1, $count) AS i"
+            "stdio, sharing, version, created_at) SELECT gen_random_uuid(), ?, 'seed-' || i, " +
+            "'$transport', 'https://seed.example.com', NULL, NULL, NULL, 'PERSONAL', 1, now() " +
+            "FROM generate_series(1, ?) AS i"
+
+    private fun JdbcTransaction.seedServers(org: Uuid, count: Int, transport: String = "HTTP") = exec(
+        servers(transport),
+        listOf(UuidColumnType() to org, IntegerColumnType() to count),
+    )
 
     @Test
     fun theQueriesOfAnAdmissionScanNoTable() = serverTest(listOf(SecretsModule, McpRelayModule), overrides) { server ->
         // Fixtures only: rows of two organizations at once and the statistics, which no request writes.
-        val fixtures = server.database.superuser
-        fixtures.execute(servers(Relay.orgB, 5_000)).getOrThrow()
-        fixtures.execute(
-            "INSERT INTO mcp_relay_servers (id, org_id, name, transport, url, credential_secret_id, " +
-                "credential_header, stdio, sharing, version, created_at) VALUES (CAST('$serverA' AS uuid), " +
-                "CAST('${Relay.orgA}' AS uuid), 'grafana', 'HTTP', 'https://seed.example.com', NULL, NULL, NULL, " +
-                "'PERSONAL', 1, now())",
-        ).getOrThrow()
-        fixtures.execute(
-            "INSERT INTO mcp_relay_slots (id, org_id, server_id, member_id, expires_at) " +
-                "SELECT gen_random_uuid(), s.org_id, s.id, gen_random_uuid(), now() + INTERVAL '10 minutes' " +
-                "FROM mcp_relay_servers s, generate_series(1, 4) AS i",
-        ).getOrThrow()
-        fixtures.execute(
-            "INSERT INTO mcp_relay_minutes (org_id, server_id, minute, member_id, calls) " +
-                "SELECT s.org_id, s.id, i, gen_random_uuid(), 1 FROM mcp_relay_servers s, generate_series(1, 4) AS i",
-        ).getOrThrow()
-        listOf("mcp_relay_servers", "mcp_relay_slots", "mcp_relay_minutes").forEach {
-            fixtures.execute("VACUUM ANALYZE $it").getOrThrow()
+        server.database.superuserJdbc.query {
+            seedServers(Relay.orgB, 5_000)
+            exec(
+                "INSERT INTO mcp_relay_servers (id, org_id, name, transport, url, credential_secret_id, " +
+                    "credential_header, stdio, sharing, version, created_at) VALUES (?, ?, 'grafana', 'HTTP', " +
+                    "'https://seed.example.com', NULL, NULL, NULL, 'PERSONAL', 1, now())",
+                listOf(UuidColumnType() to serverA, UuidColumnType() to Relay.orgA),
+            )
+            exec(
+                "INSERT INTO mcp_relay_slots (id, org_id, server_id, member_id, expires_at) " +
+                    "SELECT gen_random_uuid(), s.org_id, s.id, gen_random_uuid(), now() + INTERVAL '10 minutes' " +
+                    "FROM mcp_relay_servers s, generate_series(1, 4) AS i",
+            )
+            exec(
+                "INSERT INTO mcp_relay_minutes (org_id, server_id, minute, member_id, calls) " +
+                    "SELECT s.org_id, s.id, i, gen_random_uuid(), 1 FROM mcp_relay_servers s, " +
+                    "generate_series(1, 4) AS i",
+            )
         }
+        server.database.superuserOutsideTransaction(
+            "VACUUM ANALYZE mcp_relay_servers",
+            "VACUUM ANALYZE mcp_relay_slots",
+            "VACUUM ANALYZE mcp_relay_minutes",
+        )
 
         val member = Relay.memberA.memberId
         val statements: Map<String, StatementBuilder.() -> Statement<*>> = mapOf(
@@ -79,25 +91,29 @@ class McpRelaySlotsQueryPlansTest : RelayPostgresHarness() {
     @Test
     fun theHostedReadsOfAListingAndOfTheAdministrationScanNoTable() =
         serverTest(listOf(SecretsModule, McpRelayModule), overrides) { server ->
-            val fixtures = server.database.superuser
-            fixtures.execute(servers(Relay.orgB, 5_000).replace("'HTTP'", "'STDIO'")).getOrThrow()
-            fixtures.execute(
-                "INSERT INTO mcp_relay_servers (id, org_id, name, transport, url, credential_secret_id, " +
-                    "credential_header, stdio, sharing, version, created_at) VALUES (CAST('$serverA' AS uuid), " +
-                    "CAST('${Relay.orgA}' AS uuid), 'fs', 'STDIO', NULL, NULL, NULL, NULL, 'SHARED', 1, now())",
-            ).getOrThrow()
-            fixtures.execute(
-                "INSERT INTO mcp_relay_assignments (org_id, server_id, member_id, tools, credential_secret_id, " +
-                    "assigned_at) SELECT s.org_id, s.id, NULL, NULL, NULL, now() FROM mcp_relay_servers s",
-            ).getOrThrow()
-            fixtures.execute(
-                "INSERT INTO mcp_relay_stdio_states (org_id, server_id, member_id, process_key, state, failure, " +
-                    "changed_at) SELECT s.org_id, s.id, gen_random_uuid(), 'k', 'ready', NULL, now() " +
-                    "FROM mcp_relay_servers s, generate_series(1, 4) AS i",
-            ).getOrThrow()
-            listOf("mcp_relay_servers", "mcp_relay_assignments", "mcp_relay_stdio_states").forEach {
-                fixtures.execute("VACUUM ANALYZE $it").getOrThrow()
+            server.database.superuserJdbc.query {
+                seedServers(Relay.orgB, 5_000, "STDIO")
+                exec(
+                    "INSERT INTO mcp_relay_servers (id, org_id, name, transport, url, credential_secret_id, " +
+                        "credential_header, stdio, sharing, version, created_at) VALUES (?, ?, 'fs', 'STDIO', " +
+                        "NULL, NULL, NULL, NULL, 'SHARED', 1, now())",
+                    listOf(UuidColumnType() to serverA, UuidColumnType() to Relay.orgA),
+                )
+                exec(
+                    "INSERT INTO mcp_relay_assignments (org_id, server_id, member_id, tools, credential_secret_id, " +
+                        "assigned_at) SELECT s.org_id, s.id, NULL, NULL, NULL, now() FROM mcp_relay_servers s",
+                )
+                exec(
+                    "INSERT INTO mcp_relay_stdio_states (org_id, server_id, member_id, process_key, state, " +
+                        "failure, changed_at) SELECT s.org_id, s.id, gen_random_uuid(), 'k', 'ready', NULL, now() " +
+                        "FROM mcp_relay_servers s, generate_series(1, 4) AS i",
+                )
             }
+            server.database.superuserOutsideTransaction(
+                "VACUUM ANALYZE mcp_relay_servers",
+                "VACUUM ANALYZE mcp_relay_assignments",
+                "VACUUM ANALYZE mcp_relay_stdio_states",
+            )
             val statements: Map<String, StatementBuilder.() -> Statement<*>> = mapOf(
                 "a member's states" to { memberStatesQuery(Relay.orgA, listOf(serverA), Relay.memberA.memberId) },
                 "the org's hosted assignments" to { orgHostedAssignmentsQuery(Relay.orgA, 10_001) },

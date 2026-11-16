@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.sharing
 
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.kernel.database.databaseNow
+import run.ostrom.server.sharing.infrastructure.SharingAccounts
+import org.jetbrains.exposed.v1.jdbc.update
 import run.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import run.ostrom.server.kernel.auth.GovernanceAudit
-import run.ostrom.server.secrets.infrastructure.executeInOrg
 import run.ostrom.server.sharing.domain.AccountProvider
 import run.ostrom.server.sharing.domain.LeaseResult
 import run.ostrom.server.sharing.domain.RefreshOwnership
@@ -17,7 +20,6 @@ import run.ostrom.server.sharing.presentation.SharedAccountResponse
 import run.ostrom.server.sharing.presentation.SharedAccountsResponse
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
-import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
@@ -115,10 +117,12 @@ class SharingHandoverPostgresTest : SharingPostgresHarness() {
             assertEquals(HttpStatusCode.OK, postAs("admin-a", "$base/$id/handover").status)
 
             // A refresh in flight (or left uncertain by a failure): only new tokens clear it.
-            driver.executeInOrg(
-                Sharing.orgA,
-                Statement.create("UPDATE sharing_accounts SET refresh_pending = TRUE, refresh_started_at = now()"),
-            ).getOrThrow()
+            koin.get<JdbcDatabase>().inOrg(Sharing.orgA) {
+                SharingAccounts.update {
+                    it[refreshPending] = true
+                    it[refreshStartedAt] = databaseNow()
+                }
+            }
             val refreshing = postAs("admin-a", "$base/$id/access-only")
             assertEquals(HttpStatusCode.Conflict, refreshing.status)
             assertEquals("account_refreshing", refreshing.errorType())

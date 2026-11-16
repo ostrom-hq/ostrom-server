@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.usage
 
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.usage.infrastructure.UsageHolds
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.selectAll
 import run.ostrom.server.secrets.SecretsModule
 import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
-import run.ostrom.server.secrets.infrastructure.fetchInOrg
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
 import run.ostrom.server.usage.domain.Admission
@@ -17,8 +21,6 @@ import run.ostrom.server.usage.domain.SpendReader
 import run.ostrom.server.usage.domain.SpendScope
 import run.ostrom.server.usage.domain.UsageRecorder
 import run.ostrom.server.usage.domain.UsageRepository
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -61,7 +63,7 @@ class SpendHoldsPostgresTest {
     )
 
     private suspend fun TestServer.holdRows(): Long =
-        database.superuser.fetchAll("SELECT COUNT(*) AS n FROM usage_holds").getOrThrow().first().get("n").asLong()
+        database.superuserJdbc.query { UsageHolds.selectAll().count() }
 
     @Test
     fun aCallThatWaitsInTheAdmissionQueueHoldsNothingUntilItAsksAgain() = serverTest(modules, overrides) { server ->
@@ -152,11 +154,11 @@ class SpendHoldsPostgresTest {
         clock.advance(HoldWindow.RETENTION)
         assertEquals(Admission.Admitted, server.admit(hold(9_000)))
         assertEquals(2, server.holdRows(), "Org A's retired hold is dropped; org B's waits for org B")
-        val seen = server.driver.fetchInOrg(TestCallers.orgA, Statement.create("SELECT org_id FROM usage_holds"))
-            .getOrThrow().map { it.get("org_id").asString() }
-        assertEquals(listOf(TestCallers.orgA.toString()), seen, "Under row-level security, org A sees its holds only")
-        val none = server.driver.fetchAll("SELECT COUNT(*) AS n FROM usage_holds").getOrThrow().first().get("n")
-        assertEquals(0, none.asLong(), "Without an organization, no hold is visible")
+        val database = server.koin.get<JdbcDatabase>()
+        val seen = database.inOrg(TestCallers.orgA) { UsageHolds.select(UsageHolds.orgId).map { it[UsageHolds.orgId] } }
+        assertEquals(listOf(TestCallers.orgA), seen, "Under row-level security, org A sees its holds only")
+        val none = database.query { UsageHolds.selectAll().count() }
+        assertEquals(0, none, "Without an organization, no hold is visible")
 
         // A member's limit counts the member's spend and holds only.
         val limits = SpendLimits(orgMicros = null, memberMicros = 2_000)
@@ -238,10 +240,10 @@ class SpendHoldsPostgresTest {
             server.admit(hold(900, orgId = TestCallers.orgB).copy(workflowId = "nightly"), limits),
             "Org B's workflows are apart",
         )
-        val read = Statement.create("SELECT workflow_id FROM usage_holds WHERE call_id = :call_id")
-            .bind("call_id", first.callId)
-        val stored = server.driver.fetchInOrg(TestCallers.orgA, read).getOrThrow().first()
-            .get("workflow_id").asStringOrNull()
+        val stored = server.koin.get<JdbcDatabase>().inOrg(TestCallers.orgA) {
+            UsageHolds.select(UsageHolds.workflowId).where { UsageHolds.callId eq first.callId }
+                .first()[UsageHolds.workflowId]
+        }
         assertEquals("review", stored, "The hold names its workflow")
 
         val today = TestCallers.epoch - 1.hours

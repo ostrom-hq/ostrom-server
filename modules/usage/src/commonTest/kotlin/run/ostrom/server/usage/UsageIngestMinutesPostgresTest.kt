@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.usage
 
+import run.ostrom.server.usage.infrastructure.UsageEvents
+import run.ostrom.server.usage.infrastructure.UsageIngestMinutes
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.selectAll
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.secrets.SecretsModule
 import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
-import run.ostrom.server.secrets.infrastructure.executeInOrg
-import run.ostrom.server.secrets.infrastructure.fetchInOrg
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
 import run.ostrom.server.usage.infrastructure.UsageRepositoryImpl
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -38,8 +38,9 @@ class UsageIngestMinutesPostgresTest {
 
     /** Starts away from a minute's end, so that every batch of a test falls in the same minute of the database. */
     private suspend fun TestServer.awayFromTheMinutesEnd() {
-        val second = driver.fetchAll(Statement.create("SELECT CAST(EXTRACT(SECOND FROM now()) AS BIGINT) AS s"))
-            .getOrThrow().first().get("s").asLong()
+        val second = koin.get<JdbcDatabase>().query {
+            exec("SELECT CAST(EXTRACT(SECOND FROM now()) AS BIGINT) AS s") { rs -> rs.next(); rs.getLong("s") }
+        }!!
         if (second >= LATE_SECOND) delay((SECONDS_A_MINUTE - second + 1).seconds)
     }
 
@@ -51,9 +52,8 @@ class UsageIngestMinutesPostgresTest {
         server.awayFromTheMinutesEnd()
         val one = UsageRepositoryImpl(server.koin.get<JdbcDatabase>())
         val other = UsageRepositoryImpl(server.koin.get<JdbcDatabase>())
-        val count = Statement.create("SELECT COUNT(*) AS n FROM usage_events")
         suspend fun recorded(org: Uuid = TestCallers.orgA) =
-            server.driver.fetchInOrg(org, count).getOrThrow().first().get("n").asLong()
+            server.koin.get<JdbcDatabase>().inOrg(org) { UsageEvents.selectAll().count() }
 
         assertTrue(one.insertWithinMinute(TestCallers.orgA, member, events(5), perMinute = 8))
         assertFalse(other.insertWithinMinute(TestCallers.orgA, member, events(4), 8), "The other replica sees the 5")
@@ -93,14 +93,20 @@ class UsageIngestMinutesPostgresTest {
     @Test
     fun aBatchDropsTheMembersPastMinutes() = serverTest(listOf(SecretsModule, UsageModule), overrides) { server ->
         val repository = UsageRepositoryImpl(server.koin.get<JdbcDatabase>())
-        val past = Statement.create(
-            "INSERT INTO usage_ingest_minutes (org_id, member_id, minute, events) VALUES (:org_id, :member_id, 5, 9)",
-        ).bind("org_id", TestCallers.orgA).bind("member_id", member)
-        server.driver.executeInOrg(TestCallers.orgA, past).getOrThrow()
+        val database = server.koin.get<JdbcDatabase>()
+        database.inOrg(TestCallers.orgA) {
+            UsageIngestMinutes.insert {
+                it[orgId] = TestCallers.orgA
+                it[memberId] = member
+                it[minute] = 5L
+                it[events] = 9
+            }
+        }
         assertTrue(repository.insertWithinMinute(TestCallers.orgA, member, events(1), perMinute = 2))
-        val rows = Statement.create("SELECT COUNT(*) AS n, MAX(events) AS e FROM usage_ingest_minutes")
-        val row = server.driver.fetchInOrg(TestCallers.orgA, rows).getOrThrow().first()
-        assertEquals(1L to 1L, row.get("n").asLong() to row.get("e").asLong(), "Only the minute of now is left")
+        val rows = database.inOrg(TestCallers.orgA) {
+            UsageIngestMinutes.selectAll().map { it[UsageIngestMinutes.events] }
+        }
+        assertEquals(1 to 1, rows.size to rows.max(), "Only the minute of now is left")
     }
 }
 

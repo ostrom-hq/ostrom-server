@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.usage
 
+import run.ostrom.server.kernel.database.databaseNowPlus
+import run.ostrom.server.usage.infrastructure.UsageHolds
+import run.ostrom.server.usage.infrastructure.UsageReconciliations
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.selectAll
+import kotlin.time.Duration.Companion.hours
 import run.ostrom.server.kernel.audit.OrgAuditRecord
 import run.ostrom.server.kernel.audit.OrgAuditTrail
 import run.ostrom.server.kernel.auth.MemberLogins
@@ -20,7 +26,6 @@ import run.ostrom.server.usage.presentation.ReconcileUsageRequest
 import run.ostrom.server.usage.presentation.UsageReconciliationDto
 import run.ostrom.server.usage.presentation.UsageReconciliationsPage
 import run.ostrom.server.usage.presentation.UsageReviewDto
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
@@ -87,25 +92,40 @@ class UsageReconciliationPostgresTest {
         active: Boolean = false,
     ): Uuid {
         val id = Uuid.random()
-        val expires = if (active) "now() + INTERVAL '5 minutes'" else "now() - INTERVAL '${heldHoursAgo - 1} hours'"
-        database.superuser.execute(
-            "INSERT INTO usage_holds (call_id, org_id, member_id, workflow_id, launch_id, micros, expires_at, " +
-                "held_at) VALUES (CAST('$id' AS uuid), CAST('$orgId' AS uuid), CAST('$memberId' AS uuid), " +
-                "'review', 'lch_1', $micros, $expires, now() - INTERVAL '$heldHoursAgo hours')",
-        ).getOrThrow()
+        val expires = if (active) databaseNowPlus(5.minutes) else databaseNowPlus((-(heldHoursAgo - 1)).hours)
+        database.superuserJdbc.query {
+            UsageHolds.insert {
+                it[callId] = id
+                it[this.orgId] = orgId
+                it[this.memberId] = memberId
+                it[workflowId] = "review"
+                it[launchId] = "lch_1"
+                it[this.micros] = micros
+                it[expiresAt] = expires
+                it[heldAt] = databaseNowPlus((-heldHoursAgo).hours)
+            }
+        }
         return id
     }
 
     /** Writes a correction directly, [reconciledMinutesAgo] minutes ago, of a hold held [heldDaysAgo] days ago. */
     private suspend fun TestServer.reconciliation(heldDaysAgo: Int = 1, reconciledMinutesAgo: Int = 1): Uuid {
         val id = Uuid.random()
-        database.superuser.execute(
-            "INSERT INTO usage_reconciliations (call_id, org_id, member_id, held_at, previous_micros, micros, " +
-                "source, reference, reason, reconciled_by, reconciled_at) VALUES (CAST('$id' AS uuid), " +
-                "CAST('${TestCallers.orgA}' AS uuid), CAST('$member' AS uuid), " +
-                "now() - INTERVAL '$heldDaysAgo days', 10, 5, 'PROVIDER_RECORD', 'ref', 'why', " +
-                "CAST('$admin' AS uuid), now() - INTERVAL '$reconciledMinutesAgo minutes')",
-        ).getOrThrow()
+        database.superuserJdbc.query {
+            UsageReconciliations.insert {
+                it[callId] = id
+                it[orgId] = TestCallers.orgA
+                it[memberId] = member
+                it[heldAt] = databaseNowPlus((-heldDaysAgo).days)
+                it[previousMicros] = 10L
+                it[micros] = 5L
+                it[evidence] = "PROVIDER_RECORD"
+                it[reference] = "ref"
+                it[reason] = "why"
+                it[reconciledBy] = admin
+                it[reconciledAt] = databaseNowPlus((-reconciledMinutesAgo).minutes)
+            }
+        }
         return id
     }
 
@@ -306,7 +326,7 @@ class UsageReconciliationPostgresTest {
         val review = server.read("/api/v1/usage/reservations/$kept").body<UsageReviewDto>()
         assertIs<UsageReconciliationDto>(review.reconciliation)
         assertEquals(HttpStatusCode.OK, server.reconcile(server.hold(5_000)).status)
-        val rows = server.database.superuser.fetchAll("SELECT COUNT(*) AS n FROM usage_reconciliations").getOrThrow()
-        assertEquals(2L, rows.first().get("n").asLong(), "A correction drops those past the retention")
+        val rows = server.database.superuserJdbc.query { UsageReconciliations.selectAll().count() }
+        assertEquals(2L, rows, "A correction drops those past the retention")
     }
 }

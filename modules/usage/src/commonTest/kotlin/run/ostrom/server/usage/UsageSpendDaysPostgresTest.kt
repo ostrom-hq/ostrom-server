@@ -1,22 +1,34 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.usage
 
+import org.jetbrains.exposed.v1.core.plus
+import run.ostrom.server.kernel.database.JdbcDatabase
+import run.ostrom.server.usage.infrastructure.UsageEvents
+import kotlin.test.assertFailsWith
+import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.jdbc.deleteWhere
+import org.jetbrains.exposed.v1.jdbc.update
+import run.ostrom.server.usage.infrastructure.UsageSpendDays
+import org.jetbrains.exposed.v1.core.Op
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.greaterEq
+import org.jetbrains.exposed.v1.core.rem
+import org.jetbrains.exposed.v1.core.sum
+import org.jetbrains.exposed.v1.jdbc.deleteAll
+import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.selectAll
 import run.ostrom.server.secrets.SecretsModule
 import run.ostrom.server.secrets.domain.SecretCipher
 import run.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
-import run.ostrom.server.secrets.infrastructure.executeInOrg
-import run.ostrom.server.secrets.infrastructure.fetchInOrg
 import run.ostrom.server.testing.TestServer
 import run.ostrom.server.testing.serverTest
 import run.ostrom.server.usage.domain.UsageRepository
 import run.ostrom.server.usage.infrastructure.SPEND_DAYS_OF_THE_LEDGER
-import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import org.koin.core.module.Module
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFails
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
@@ -37,13 +49,15 @@ class UsageSpendDaysPostgresTest {
         single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 7 }) }
     }
 
-    // One line per day's spend, nulls written `-`. No `::` cast and no colon at all: the driver reads `:x` as one.
+    // One line per day's spend, nulls written `-`.
     private fun lines(source: String) =
         "SELECT CAST(org_id AS TEXT) || '|' || CAST(day AS TEXT) || '|' || COALESCE(CAST(member_id AS TEXT), '-') " +
             "|| '|' || COALESCE(workflow_id, '-') || '|' || CAST(cost AS TEXT) AS line FROM ($source) t ORDER BY 1"
 
     private suspend fun TestServer.read(sql: String): List<String> =
-        database.superuser.fetchAll(Statement.create(sql)).getOrThrow().map { it.get("line").asString() }
+        database.superuserJdbc.query {
+            exec(sql) { rs -> buildList { while (rs.next()) add(rs.getString("line")) } }.orEmpty()
+        }
 
     private suspend fun TestServer.assertDaysAreTheLedgers(step: String) {
         val ledger = read(
@@ -79,59 +93,64 @@ class UsageSpendDaysPostgresTest {
         repository.insert(TestCallers.orgB, listOf(modelEvent(5, memberId = null, orgId = TestCallers.orgB)))
         server.assertDaysAreTheLedgers("a settled call, another organization")
 
-        val delete = Statement.create("DELETE FROM usage_events WHERE workflow_id = 'w-1'")
-        assertTrue(server.driver.executeInOrg(TestCallers.orgA, delete).getOrThrow() > 0)
+        val deleted = server.koin.get<JdbcDatabase>().inOrg(TestCallers.orgA) {
+            UsageEvents.deleteWhere { workflowId eq "w-1" }
+        }
+        assertTrue(deleted > 0)
         server.assertDaysAreTheLedgers("a delete under the organization's policy")
 
         assertTrue(repository.purge(TestCallers.epoch - 1.days, 1_000) > 0)
         server.assertDaysAreTheLedgers("the retention purge, run by the router")
-        val zero = server.database.superuser.fetchAll(
-            Statement.create("SELECT COUNT(*) AS n FROM usage_spend_days WHERE cost_micros = 0"),
-        ).getOrThrow().first().get("n").asLong()
+        val zero = server.database.superuserJdbc.query {
+            UsageSpendDays.selectAll().where { UsageSpendDays.costMicros eq 0L }.count()
+        }
         assertEquals(0L, zero, "A day's spend that reaches zero is dropped")
 
-        val owner = server.database.superuser
-        owner.execute("UPDATE usage_events SET cost_micros = cost_micros + 3, workflow_id = 'moved' " +
-            "WHERE cost_micros % 2 = 1").getOrThrow()
+        val owner = server.database.superuserJdbc
+        owner.query {
+            UsageEvents.update({ UsageEvents.costMicros % 2L eq 1L }) {
+                it[costMicros] = costMicros + 3L
+                it[workflowId] = "moved"
+            }
+        }
         server.assertDaysAreTheLedgers("an update by another role than the organization's")
 
-        owner.execute("UPDATE usage_events SET cost_micros = 0 WHERE workflow_id = 'moved' " +
-            "AND org_id = CAST('${TestCallers.orgA}' AS uuid)").getOrThrow()
+        owner.query {
+            UsageEvents.update({ (UsageEvents.workflowId eq "moved") and (UsageEvents.orgId eq TestCallers.orgA) }) {
+                it[costMicros] = 0L
+            }
+        }
         server.assertDaysAreTheLedgers("an update that brings calls to zero")
 
         // The backfill as version 10 runs it: by the router, under the ledger's forced policies.
-        owner.execute("DELETE FROM usage_spend_days").getOrThrow()
-        server.database.owner.transaction {
-            execute("SET LOCAL ROLE ostrom_router").getOrThrow()
-            execute(SPEND_DAYS_OF_THE_LEDGER).getOrThrow()
+        owner.query { UsageSpendDays.deleteAll() }
+        server.database.ownerJdbc.query {
+            exec("SET LOCAL ROLE ostrom_router")
+            exec(SPEND_DAYS_OF_THE_LEDGER)
         }
         server.assertDaysAreTheLedgers("the days version 10 writes from the ledger")
 
-        assertFails("An organization never writes its days") {
-            server.driver.executeInOrg(
-                TestCallers.orgA,
-                Statement.create("UPDATE usage_spend_days SET cost_micros = 1"),
-            ).getOrThrow()
+        assertFailsWith<ExposedSQLException>("An organization never writes its days") {
+            server.koin.get<JdbcDatabase>().inOrg(TestCallers.orgA) {
+                UsageSpendDays.update { it[costMicros] = 1L }
+            }
         }
-        val seenByB = server.driver.fetchInOrg(
-            TestCallers.orgB,
-            Statement.create("SELECT COUNT(*) AS n FROM usage_spend_days"),
-        ).getOrThrow().first().get("n").asLong()
+        val seenByB = server.koin.get<JdbcDatabase>().inOrg(TestCallers.orgB) { UsageSpendDays.selectAll().count() }
         assertEquals(1L, seenByB, "An organization reads only its own days")
 
-        owner.execute("TRUNCATE usage_events").getOrThrow()
-        val left = owner.fetchAll(Statement.create("SELECT COUNT(*) AS n FROM usage_spend_days")).getOrThrow()
-        assertEquals(0L, left.first().get("n").asLong(), "A truncated ledger has no days")
+        owner.query { exec("TRUNCATE usage_events") }
+        val left = owner.query { UsageSpendDays.selectAll().count() }
+        assertEquals(0L, left, "A truncated ledger has no days")
     }
 
     /** What the calls of org A recorded since [since] cost, added up from the ledger itself; [filter] on them. */
-    private suspend fun TestServer.ledgerSince(since: Instant, filter: String = ""): Long =
-        database.superuser.fetchAll(
-            Statement.create(
-                "SELECT CAST(COALESCE(SUM(cost_micros), 0) AS BIGINT) AS spent FROM usage_events " +
-                    "WHERE org_id = CAST('${TestCallers.orgA}' AS uuid) AND at >= :since$filter",
-            ).bind("since", since),
-        ).getOrThrow().first().get("spent").asLong()
+    private suspend fun TestServer.ledgerSince(since: Instant, filter: Op<Boolean> = Op.TRUE): Long =
+        database.superuserJdbc.query {
+            val spent = UsageEvents.costMicros.sum()
+            UsageEvents.select(spent)
+                .where { (UsageEvents.orgId eq TestCallers.orgA) and (UsageEvents.at greaterEq since) and filter }
+                .single()[spent] ?: 0L
+        }
 
     @Test
     fun theSpendReadsGiveWhatTheCallsAddUpToFromAMidnightOrAnyInstant() = serverTest(modules, overrides) { server ->
@@ -145,12 +164,12 @@ class UsageSpendDaysPostgresTest {
         for (since in listOf(midnight, midnight - 1.days, midday, midnight + 1.days)) {
             assertEquals(server.ledgerSince(since), repository.spentMicros(TestCallers.orgA, null, since), "$since")
             assertEquals(
-                server.ledgerSince(since, " AND member_id = CAST('$member' AS uuid)"),
+                server.ledgerSince(since, UsageEvents.memberId eq member),
                 repository.spentMicros(TestCallers.orgA, member, since),
                 "$since, a member",
             )
             assertEquals(
-                server.ledgerSince(since, " AND workflow_id = 'w-0'"),
+                server.ledgerSince(since, UsageEvents.workflowId eq "w-0"),
                 repository.workflowSpentMicros(TestCallers.orgA, "w-0", since),
                 "$since, a workflow",
             )

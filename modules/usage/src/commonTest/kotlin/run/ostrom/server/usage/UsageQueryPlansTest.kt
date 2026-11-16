@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.usage
 
+import org.jetbrains.exposed.v1.core.UuidColumnType
+import org.jetbrains.exposed.v1.core.IntegerColumnType
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.secrets.SecretsModule
 import run.ostrom.server.secrets.domain.SecretCipher
@@ -55,52 +58,66 @@ class UsageQueryPlansTest {
     private val account = Uuid.parse("000000ac-0000-0000-0000-000000000001")
 
     /** [count] model events of [org] over the last 60 days, across 30 members, a third of them on [account]. */
-    private fun seed(org: Uuid, count: Int): String {
+    private fun JdbcTransaction.seed(org: Uuid, count: Int) {
         val member = TestCallers.memberA.memberId
-        // No `::` cast and no colon at all: the driver would read `:x` as a named parameter.
-        return "INSERT INTO usage_events (id, org_id, member_id, kind, name, provider, account_id, session_id, " +
+        exec(
+            "INSERT INTO usage_events (id, org_id, member_id, kind, name, provider, account_id, session_id, " +
             "input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_micros, duration_ms, outcome, " +
             "at, workflow_id) " +
-            "SELECT gen_random_uuid(), CAST('$org' AS uuid), CASE WHEN i % 30 = 0 THEN CAST('$member' AS uuid) " +
+            "SELECT gen_random_uuid(), ?, CASE WHEN i % 30 = 0 THEN ? " +
             "ELSE CAST(md5('m' || (i % 30)) AS uuid) END, 'MODEL', 'claude', 'anthropic', " +
-            "CASE WHEN i % 3 = 0 THEN CAST('$account' AS uuid) END, NULL, 10, 10, 0, 0, i % 1000, 5, 'ok', " +
+            "CASE WHEN i % 3 = 0 THEN CAST(? AS uuid) END, NULL, 10, 10, 0, 0, i % 1000, 5, 'ok', " +
             "to_timestamp(${TestCallers.epoch.epochSeconds}) - (i % 1440) * INTERVAL '1 hour', " +
             "CASE WHEN i % 7 = 0 THEN 'review' WHEN i % 7 = 1 THEN 'w' || (i % 50) END " +
-            "FROM generate_series(1, $count) AS i"
+            "FROM generate_series(1, ?) AS i",
+            listOf(
+                UuidColumnType() to org,
+                UuidColumnType() to member,
+                UuidColumnType() to account,
+                IntegerColumnType() to count,
+            ),
+        )
     }
 
     /** [count] holds of [org] over the last 90 days, most of them expired: calls their lost replicas never recorded. */
-    private fun holds(org: Uuid, count: Int): String =
+    private fun JdbcTransaction.holds(org: Uuid, count: Int) = exec(
         "INSERT INTO usage_holds (call_id, org_id, member_id, workflow_id, micros, expires_at, held_at) " +
-            "SELECT gen_random_uuid(), CAST('$org' AS uuid), CAST(md5('m' || (i % 30)) AS uuid), " +
+            "SELECT gen_random_uuid(), ?, CAST(md5('m' || (i % 30)) AS uuid), " +
             "CASE WHEN i % 7 = 0 THEN 'review' END, i % 1000, " +
             "to_timestamp(${TestCallers.epoch.epochSeconds}) - (i % 2160) * INTERVAL '1 hour' + INTERVAL '1 hour', " +
             "to_timestamp(${TestCallers.epoch.epochSeconds}) - (i % 2160) * INTERVAL '1 hour' " +
-            "FROM generate_series(1, $count) AS i"
+            "FROM generate_series(1, ?) AS i",
+        listOf(UuidColumnType() to org, IntegerColumnType() to count),
+    )
 
     /** [count] corrections of [org] over the last 90 days (the usage review). */
-    private fun reconciliations(org: Uuid, count: Int): String =
+    private fun JdbcTransaction.reconciliations(org: Uuid, count: Int) = exec(
         "INSERT INTO usage_reconciliations (call_id, org_id, member_id, held_at, previous_micros, micros, source, " +
             "reference, reason, reconciled_by, reconciled_at) " +
-            "SELECT gen_random_uuid(), CAST('$org' AS uuid), CAST(md5('m' || (i % 30)) AS uuid), " +
+            "SELECT gen_random_uuid(), ?, CAST(md5('m' || (i % 30)) AS uuid), " +
             "to_timestamp(${TestCallers.epoch.epochSeconds}) - (i % 2160) * INTERVAL '1 hour', 10, 5, " +
             "'PROVIDER_RECORD', 'ref', 'why', CAST(md5('a') AS uuid), " +
             "to_timestamp(${TestCallers.epoch.epochSeconds}) - (i % 2000) * INTERVAL '1 hour' " +
-            "FROM generate_series(1, $count) AS i"
+            "FROM generate_series(1, ?) AS i",
+        listOf(UuidColumnType() to org, IntegerColumnType() to count),
+    )
 
     /** Fixtures only: the rows of two organizations at once and the statistics, which no request writes. */
     private suspend fun TestServer.fill() {
-        val fixtures = database.superuser
-        fixtures.execute(seed(TestCallers.orgB, 20_000)).getOrThrow()
-        fixtures.execute(seed(TestCallers.orgA, 2_000)).getOrThrow()
-        fixtures.execute(holds(TestCallers.orgB, 20_000)).getOrThrow()
-        fixtures.execute(holds(TestCallers.orgA, 200)).getOrThrow()
-        fixtures.execute(reconciliations(TestCallers.orgB, 10_000)).getOrThrow()
-        fixtures.execute(reconciliations(TestCallers.orgA, 100)).getOrThrow()
-        fixtures.execute("VACUUM ANALYZE usage_reconciliations").getOrThrow()
-        fixtures.execute("VACUUM ANALYZE usage_events").getOrThrow()
-        fixtures.execute("VACUUM ANALYZE usage_holds").getOrThrow()
-        fixtures.execute("VACUUM ANALYZE usage_spend_days").getOrThrow()
+        database.superuserJdbc.query {
+            seed(TestCallers.orgB, 20_000)
+            seed(TestCallers.orgA, 2_000)
+            holds(TestCallers.orgB, 20_000)
+            holds(TestCallers.orgA, 200)
+            reconciliations(TestCallers.orgB, 10_000)
+            reconciliations(TestCallers.orgA, 100)
+        }
+        database.superuserOutsideTransaction(
+            "VACUUM ANALYZE usage_reconciliations",
+            "VACUUM ANALYZE usage_events",
+            "VACUUM ANALYZE usage_holds",
+            "VACUUM ANALYZE usage_spend_days",
+        )
     }
 
     /** The automatic pool size's reads (budgets job and route): a shared account's hours, the org's days. */
