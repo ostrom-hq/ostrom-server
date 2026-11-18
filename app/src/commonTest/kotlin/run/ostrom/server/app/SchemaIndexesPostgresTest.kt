@@ -10,7 +10,8 @@ import kotlin.test.assertEquals
  * Every foreign key leads an index, read from PostgreSQL's catalog once every module has migrated (the database audit
  * of 18/11). TeamCode's MySQL creates that index with each foreign key; PostgreSQL does not, so a delete of the
  * referenced row (its `ON DELETE CASCADE` or `SET NULL`) would read the whole referencing table. The known exceptions
- * are listed with their reason: a new foreign key without an index fails, and so does a fixed one still listed.
+ * are listed with their reason: a new foreign key without an index fails, and so does a fixed one still listed. Each
+ * reason is that no code deletes the parent: the change that first deletes one adds the index and removes the entry.
  */
 class SchemaIndexesPostgresTest {
     @Test
