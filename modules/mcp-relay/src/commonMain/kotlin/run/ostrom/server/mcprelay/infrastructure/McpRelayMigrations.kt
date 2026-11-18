@@ -237,4 +237,15 @@ val McpRelayMigrations: List<SchemaMigration> = listOf(
             ALTER TABLE mcp_relay_settings ADD COLUMN member_hosted_mcp BOOLEAN NOT NULL DEFAULT false
         """.trimIndent(),
     ),
+    // The calls page of one member or one server (`mcpCallsPage`) read in order and stopped at the page's size, where
+    // the organization's index walked every call of the others first (TeamCode's `mcp_call_member` and
+    // `mcp_call_server`).
+    SchemaMigration(
+        version = 10,
+        name = "mcp_relay_calls_pages",
+        sql = """
+            CREATE INDEX mcp_relay_calls_member ON mcp_relay_calls (org_id, member_id, started_at DESC, id DESC);
+            CREATE INDEX mcp_relay_calls_server ON mcp_relay_calls (org_id, server_name, started_at DESC, id DESC)
+        """.trimIndent(),
+    ),
 )

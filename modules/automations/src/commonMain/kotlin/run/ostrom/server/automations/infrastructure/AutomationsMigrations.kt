@@ -321,4 +321,15 @@ val AutomationsMigrations: List<SchemaMigration> = listOf(
         name = "wait_secrets",
         sql = WAIT_SECRETS_SQL,
     ),
+    // The organization's waits page (`waitsPage`) filtered on the organization alone or with its status: in order and
+    // stopped at the page's size, where a sort of every wait of the organization read them all (TeamCode's
+    // `wait_team_all` and `wait_team`).
+    SchemaMigration(
+        version = 10,
+        name = "waits_organization_pages",
+        sql = """
+            CREATE INDEX automations_waits_org ON automations_waits (org_id, created_at DESC, id DESC);
+            CREATE INDEX automations_waits_org_status ON automations_waits (org_id, status, created_at DESC, id DESC);
+        """.trimIndent(),
+    ),
 )

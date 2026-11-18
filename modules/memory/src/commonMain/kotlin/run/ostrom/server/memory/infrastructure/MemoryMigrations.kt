@@ -177,4 +177,13 @@ val MemoryMigrations: List<SchemaMigration> = listOf(
         name = "memory_curation",
         sql = CURATION_SQL,
     ),
+    // The expired entries a curation run deletes (`expiredEntries`), read in their expiry's order and stopped at the
+    // run's batch, where every entry of the organization was scanned (the database audit of 18/11).
+    SchemaMigration(
+        version = 4,
+        name = "memory_expiry_index",
+        sql = """
+            CREATE INDEX memory_entries_expiry ON memory_entries (org_id, expires_at) WHERE expires_at IS NOT NULL
+        """.trimIndent(),
+    ),
 )
