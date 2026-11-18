@@ -188,7 +188,7 @@ internal class MemoryCurationRunsImpl(private val database: JdbcDatabase) : Memo
 /**
  * The entries of an organization expired before [before] that a run deletes, oldest expiry first, [limit] at most (a
  * proposal waits for its review): the read of [MemoryCurationRunsImpl.retain], an `internal` query so that its plan is
- * tested (`MemoryRetentionQueryPlansTest`). It reads `memory_entries_expiry` in order and stops at [limit].
+ * tested (`MemoryRetentionQueryPlansTest`). It reads only the expired entries, through `memory_entries_expiry`.
  *
  * @param orgId The organization.
  * @param before The expiry the entries are past.

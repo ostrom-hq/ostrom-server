@@ -8,6 +8,7 @@ import run.ostrom.server.testing.plan
 import run.ostrom.server.testing.serverTest
 import kotlin.test.Test
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import kotlin.uuid.Uuid
 
 /**
@@ -37,14 +38,15 @@ class McpCallsQueryPlansTest : RelayPostgresHarness() {
                 "VACUUM ANALYZE mcp_relay_calls",
             )
             val database = server.koin.get<JdbcDatabase>()
-            val pages = listOf(
-                mcpCallsPage(Relay.orgA, null, 50, server = null, memberId = member),
-                mcpCallsPage(Relay.orgA, null, 50, server = "grafana", memberId = null),
+            val pages = mapOf(
+                "mcp_relay_calls_member" to mcpCallsPage(Relay.orgA, null, 50, server = null, memberId = member),
+                "mcp_relay_calls_server" to mcpCallsPage(Relay.orgA, null, 50, server = "grafana", memberId = null),
             )
-            for (page in pages) {
+            for ((index, page) in pages) {
                 val plan = database.inOrg(Relay.orgA) { plan { page } }
                 assertFalse("Seq Scan on mcp_relay_calls" in plan, "A scan of the table:\n$plan")
-                assertFalse("Rows Removed by Filter" in plan, "The organization's calls filtered one by one:\n$plan")
+                // The organization's index would filter the others' calls out one by one.
+                assertTrue(index in plan, "Not $index:\n$plan")
             }
         }
 }

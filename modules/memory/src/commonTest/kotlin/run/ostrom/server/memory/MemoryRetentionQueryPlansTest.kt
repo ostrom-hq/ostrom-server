@@ -16,14 +16,14 @@ import run.ostrom.server.testing.serverTest
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
 
 /**
  * The read of the expired entries a curation run deletes under `EXPLAIN ANALYZE`, in `inOrg` (the tenant role, row
- * level security applies), over 25 000 entries of two organizations, one in ten with an expiry: it reads the
- * organization's expiries in order and stops at the run's batch, never a scan of every entry (the database audit of
- * 18/11).
+ * level security applies), over 25 000 entries of two organizations, one in ten with an expiry: it reads only the
+ * organization's expired entries, through their index, never a scan of every entry (the database audit of 18/11).
  */
 class MemoryRetentionQueryPlansTest {
     private val overrides = module {
@@ -51,5 +51,7 @@ class MemoryRetentionQueryPlansTest {
         val before = Clock.System.now() - 30.days
         val plan = database.inOrg(ORG_A) { plan { expiredEntries(ORG_A, before, 1_000) } }
         assertFalse("Seq Scan on memory_entries" in plan, "A scan of every entry:\n$plan")
+        // The organization's other indexes would read every entry of a status to keep the expired ones.
+        assertTrue("memory_entries_expiry" in plan, "Not the expiries' index:\n$plan")
     }
 }
