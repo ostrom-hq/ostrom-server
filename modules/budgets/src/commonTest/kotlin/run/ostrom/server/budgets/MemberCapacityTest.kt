@@ -49,7 +49,7 @@ class MemberCapacityTest {
 
         override suspend fun budgetOf(orgId: Uuid, poolId: String): Long? = budgets[poolId]
 
-        override suspend fun totalWeight(orgId: Uuid, poolId: String?): Long? {
+        override suspend fun totalWeight(orgId: Uuid, poolId: String?, memberId: Uuid): Long? {
             totalReads += poolId
             return totals[poolId]
         }

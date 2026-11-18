@@ -28,7 +28,7 @@ private const val WEIGHT = "`weight` (0 to 1000, 1 by default) is the member's p
     "organization's daily limit that stops for the members in no pool and the named pool's budget " +
     "(`PUT /api/v1/pools/budgets`) for its members. That share is their daily limit that stops, lowered to their own " +
     "daily limit when it is less; a temporary budget override replaces it. 0 gives them nothing. Without a budget " +
-    "for their pool, no share applies."
+    "for their pool, or in an organization of more than 5,000 members, no share applies."
 
 private const val MEMBER_NOT_FOUND = "No member of the organization has this login (`not_found`)."
 

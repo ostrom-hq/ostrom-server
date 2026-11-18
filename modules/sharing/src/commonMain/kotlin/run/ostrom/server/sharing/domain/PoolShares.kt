@@ -22,10 +22,12 @@ interface PoolShares {
     suspend fun budgetOf(orgId: Uuid, poolId: String): Long?
 
     /**
-     * The weights of the members of [poolId] (null: the members in no pool) in [orgId], summed; null when the
-     * organization's members cannot be listed (more than [MAX_MEMBERS], or no directory of them).
+     * The weights of the members of [poolId] (null: the members in no pool) in [orgId], summed, [memberId] counted
+     * among them even when the directory does not list them (a share is never taken out of a total without its own
+     * weight); null when the organization's members cannot be listed (more than [MAX_MEMBERS], or no directory of
+     * them).
      */
-    suspend fun totalWeight(orgId: Uuid, poolId: String?): Long?
+    suspend fun totalWeight(orgId: Uuid, poolId: String?, memberId: Uuid): Long?
 
     /** The bounds and the split. */
     companion object {
@@ -58,8 +60,9 @@ class PoolSharesImpl(
     override suspend fun budgetOf(orgId: Uuid, poolId: String): Long? =
         budgets.list(orgId).firstOrNull { it.poolId == poolId && !it.sharedOverflow }?.dailyMicros
 
-    override suspend fun totalWeight(orgId: Uuid, poolId: String?): Long? {
-        val ids = members?.memberIds(orgId, PoolShares.MAX_MEMBERS)?.mapNotNull(Uuid::parseOrNull) ?: return null
+    override suspend fun totalWeight(orgId: Uuid, poolId: String?, memberId: Uuid): Long? {
+        val listed = members?.memberIds(orgId, PoolShares.MAX_MEMBERS)?.mapNotNull(Uuid::parseOrNull) ?: return null
+        val ids = (listed + memberId).distinct()
         val policies = pools.policiesOf(orgId, ids)
         return ids.sumOf { id ->
             val policy = policies[id] ?: PoolPolicy.NONE

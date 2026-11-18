@@ -83,9 +83,12 @@ class MemberWeightsTest {
         // A member who left keeps their policy row: it weighs nothing.
         pools.pools[Sharing.orgA to Uuid.random()] = PoolPolicy("eu", false, 100)
 
-        assertEquals(4, shares.totalWeight(Sharing.orgA, null), "Ada weighs 1 without a policy, Ana 3")
-        assertEquals(5, shares.totalWeight(Sharing.orgA, "eu"))
-        assertEquals(0, shares.totalWeight(Sharing.orgA, "asia"))
+        assertEquals(4, shares.totalWeight(Sharing.orgA, null, ada), "Ada weighs 1 without a policy, Ana 3")
+        assertEquals(5, shares.totalWeight(Sharing.orgA, "eu", mia))
+        assertEquals(0, shares.totalWeight(Sharing.orgA, "asia", leo))
+        val unlisted = Uuid.random()
+        pools.pools[Sharing.orgA to unlisted] = PoolPolicy("asia", false, 2)
+        assertEquals(2, shares.totalWeight(Sharing.orgA, "asia", unlisted), "The member asking always counts")
         assertEquals(PoolShares.MAX_MEMBERS, limits.first())
         assertEquals(PoolPolicy("eu", false, 5), shares.policyOf(Sharing.orgA, mia))
     }
@@ -93,8 +96,8 @@ class MemberWeightsTest {
     @Test
     fun noTotalIsKnownPastTheBoundOrWithoutTheDirectory() = runTest {
         members = null
-        assertNull(shares.totalWeight(Sharing.orgA, null))
-        assertNull(PoolSharesImpl(pools, budgets, null).totalWeight(Sharing.orgA, null))
+        assertNull(shares.totalWeight(Sharing.orgA, null, Uuid.random()))
+        assertNull(PoolSharesImpl(pools, budgets, null).totalWeight(Sharing.orgA, null, Uuid.random()))
     }
 
     @Test

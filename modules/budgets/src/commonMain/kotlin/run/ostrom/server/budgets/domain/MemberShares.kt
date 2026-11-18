@@ -48,7 +48,7 @@ class MemberShares(private val shares: PoolShares) {
         val policy = shares.policyOf(orgId, memberId)
         val pool = policy.poolId
         val budget = if (pool == null) org.firstOrNull { it.stopsDaily }?.micros else shares.budgetOf(orgId, pool)
-        val total = if (budget != null || always) shares.totalWeight(orgId, pool) else null
+        val total = if (budget != null || always) shares.totalWeight(orgId, pool, memberId) else null
         return MemberShare(pool, policy.weight, total, budget)
     }
 }

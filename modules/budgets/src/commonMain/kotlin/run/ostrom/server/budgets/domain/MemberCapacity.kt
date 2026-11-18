@@ -70,10 +70,10 @@ class GetMemberCapacityUseCaseImpl(
         val limits = repository.limits(caller.orgId, memberId)
         return MemberCapacity(
             login = login,
-            share = shares?.of(caller.orgId, memberId, limits.org, always = true) ?: MemberShare.UNKNOWN,
+            share = if (shares == null) MemberShare.UNKNOWN else shares.of(caller.orgId, memberId, limits.org, true),
             dailyLimitMicros = limits.member.firstOrNull { it.stopsDaily }?.micros,
             spentTodayMicros = spend.spentMicros(caller.orgId, memberId, day.start),
-            requests = queue?.memberRequests(caller.orgId, memberId) ?: MemberRequests(0, 0),
+            requests = if (queue == null) MemberRequests(0, 0) else queue.memberRequests(caller.orgId, memberId),
             resetsAt = day.end,
         )
     }
