@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Checks the Ostrom conventions that detekt cannot (docs/CONVENTIONS.md sections 1.1, 4.1 and 10).
+"""Checks the Ostrom conventions that detekt cannot (docs/CONVENTIONS.md sections 1.1, 4.1 and 10, and raw SQL in module code).
 
 Copy to scripts/check-conventions.py of a Kotlin repository, fill MODULE_GRAPH, run in CI before Gradle:
 
@@ -31,6 +31,10 @@ TOKEN = re.compile(r"\{|\}|\bcatch\s*\([^)]*\)|\btry\b")
 RUN_CATCHING = re.compile(r"\brunCatching\b")
 NOT_COROUTINE_REACHABLE = "not coroutine-reachable:"
 JVM_ONLY_IMPORT = re.compile(r"^\s*import\s+(io\.mockk|org\.slf4j|ch\.qos\.logback|org\.jetbrains\.exposed|java\.|javax\.)")
+# Module code runs typed Exposed statements, never SQL strings nor raw JDBC (TeamCode's check-module-graph.py, the
+# database audit of 18/11): the kernel and the testing module own the connection, the roles and the fixtures.
+RAW_SQL = re.compile(r"\b(?:exec|execInBatch)\s*\(|\b(?:prepareStatement|prepareCall|createStatement)\s*\(")
+RAW_SQL_SCOPE = re.compile(r"^/(?:modules|ee|app)/")
 FORBIDDEN = [
     (re.compile(r"\bGlobalScope\b"), "GlobalScope: launch in a scope the application owns (section 4.3)"),
     (re.compile(r"\binstall\(Koin\)|org\.koin\.ktor"), "no koin-ktor plugin: its per-call scope outlives cancelled calls"
@@ -133,6 +137,9 @@ def check_kotlin(path: str, text: str, jvm_only: bool = False) -> list:
         for pattern, reason in FORBIDDEN:
             if pattern.search(line):
                 errors.append(f"{path}:{number}: {reason}")
+        if RAW_SQL_SCOPE.search(path) and RAW_SQL.search(line):
+            errors.append(f"{path}:{number}: raw SQL or JDBC; run a typed Exposed statement (a CustomFunction for a "
+                          f"database function)")
         if native_or_common and JVM_ONLY_IMPORT.search(line):
             errors.append(f"{path}:{number}: JVM-only import in common or native code (section 10)")
     return sorted(errors, key=lambda error: int(error.split(":")[1]))
@@ -278,6 +285,12 @@ def self_test() -> None:
     assert check_kotlin("/x/src/commonMain/kotlin/A.kt", "import java.io.File\n") != []
     assert check_kotlin("/x/src/commonMain/kotlin/A.kt", "import java.io.File\n", jvm_only=True) == []
     assert check_kotlin("/x/src/linuxX64Main/kotlin/A.kt", "import java.io.File\n", jvm_only=True) != []
+    raw = 'fun a() = exec("SELECT 1")\nfun b() = connection.prepareStatement(sql)\nfun c() = c.createStatement()\n' + \
+        'fun d() = execInBatch(listOf(sql))\n'
+    found = check_kotlin("/modules/x/src/commonMain/kotlin/A.kt", raw, jvm_only=True)
+    assert len(found) == 4 and all("raw SQL" in e for e in found), found
+    assert check_kotlin("/kernel/src/commonMain/kotlin/A.kt", raw, jvm_only=True) == []
+    assert check_kotlin("/modules/x/src/commonMain/kotlin/A.kt", "fun a() = execute(x)\n", jvm_only=True) == []
     print("check-conventions self-test passed")
 
 

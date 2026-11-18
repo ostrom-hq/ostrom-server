@@ -70,4 +70,14 @@ val SecretsMigrations: List<SchemaMigration> = listOf(
         """.trimIndent() + "\n" + tenantTableSql("environment_variants") + "\n" +
             tenantTableSql("environment_assignments") + "\n" + tenantTableSql("environment_exclusions"),
     ),
+    // A variant's delete cascades to its assignments by `variant_id` alone: the index led by the organization could
+    // not serve it (SchemaIndexesPostgresTest). A variant's id is its organization's, so reads need no `org_id` first.
+    SchemaMigration(
+        version = 4,
+        name = "environment_assignments_by_variant",
+        sql = """
+            DROP INDEX environment_assignments_variant;
+            CREATE INDEX environment_assignments_variant ON environment_assignments (variant_id)
+        """.trimIndent(),
+    ),
 )
