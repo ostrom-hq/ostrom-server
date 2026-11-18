@@ -23,7 +23,6 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import org.flywaydb.core.api.FlywayException
-import org.jetbrains.exposed.v1.core.LongColumnType
 import org.jetbrains.exposed.v1.core.TextColumnType
 import org.jetbrains.exposed.v1.core.statements.StatementType
 import org.koin.core.module.Module
@@ -60,23 +59,6 @@ class FlywayMigrationRunnerTest {
 
     private suspend fun TestDatabase.count(table: String): Long = ownerJdbc.long("SELECT count(*) FROM $table")
 
-    // What the first migrator left: the migrations' tables, and one row per version, its checksum the hash of the SQL.
-    private suspend fun TestDatabase.legacyHistory(vararg applied: SchemaMigration) {
-        ownerJdbc.query {
-            exec("CREATE TABLE _migrations_probe (version BIGINT, checksum TEXT)")
-            applied.forEach {
-                exec(it.sql)
-                exec(
-                    "INSERT INTO _migrations_probe (version, checksum) VALUES (?, ?)",
-                    listOf(
-                        LongColumnType() to it.version,
-                        TextColumnType() to FlywayMigrationRunner.legacyChecksum(it),
-                    ),
-                )
-            }
-        }
-    }
-
     private fun applied(): Int = synchronized(lines) { lines.count { "\"msg\":\"migration applied\"" in it } }
 
     private fun waits(): Int = synchronized(lines) { lines.count { "waited too long for a lock" in it } }
@@ -89,6 +71,8 @@ class FlywayMigrationRunnerTest {
             migrateModules(database.ownerConfig, logger, modules)
             assertEquals(3, applied(), "Applied once, checked twice")
             assertEquals(2, database.count("flyway_probe WHERE success"))
+            // The second module finds the first one's tables: its history starts at an empty baseline, not refused.
+            assertEquals(1, database.count("flyway_other_probe WHERE type = 'BASELINE' AND version = '0'"))
             JdbcDatabase(database.servingConfig, JdbcDatabase.MIN_POOL_SIZE).use { pool ->
                 val serving = pool.migrationRunner(logger)
                 modules.forEach { serving.verify(it.name, it.migrations) }
@@ -106,7 +90,7 @@ class FlywayMigrationRunnerTest {
         }
     }
 
-    // AUDIT-RLS R8: the serving role reads Flyway's history and the first migrator's, and never writes them.
+    // AUDIT-RLS R8: the serving role reads Flyway's history and never writes it.
     @Test
     fun onlyTheOwnerWritesTheHistory() {
         databaseTest { database ->
@@ -117,59 +101,6 @@ class FlywayMigrationRunnerTest {
             runner.migrate("probe", first)
             assertFalse(database.canWrite(database.servingRole, "flyway_probe"), "Write not revoked again")
             assertTrue(database.canWrite(database.servingRole, "probe_items"), "Module tables keep their grants")
-            database.legacyHistory()
-            database.superuserJdbc.query { exec("GRANT ALL ON _migrations_probe TO ${database.servingRole}") }
-            runner.migrate("probe", first)
-            assertFalse(database.canWrite(database.servingRole, "_migrations_probe"), "The older history is writable")
-        }
-    }
-
-    // The first migrator wrote the SQL's Java hash as decimal; changing the formula would orphan every such history.
-    @Test
-    fun theLegacyChecksumIsTheJavaHashOfTheSql() {
-        assertEquals("1070588878", FlywayMigrationRunner.legacyChecksum(SchemaMigration(1, "x", "SELECT 1;")))
-    }
-
-    @Test
-    fun adoptsWhatTheFirstMigratorAppliedWithoutRunningItAgain() {
-        databaseTest { database ->
-            database.legacyHistory(*second.toTypedArray())
-            val before = applied()
-            val runner = database.runner()
-            runner.migrate("probe", third)
-            assertEquals(1, applied() - before, "Only version 3 runs")
-            assertEquals(1, database.count("flyway_probe WHERE type = 'BASELINE' AND version = '2'"))
-            runner.verify("probe", third)
-            // The old history stays, for a replica of the previous version during a rolling update.
-            assertEquals(2, database.count("_migrations_probe"))
-            // Adopted once: the next pass reads Flyway's history only.
-            runner.migrate("probe", third)
-            assertEquals(1, applied() - before)
-        }
-    }
-
-    @Test
-    fun refusesToAdoptAHistoryTheCodeNoLongerMatches() {
-        databaseTest { database ->
-            database.legacyHistory(*second.toTypedArray())
-            val edited = listOf(first.single().copy(sql = "CREATE TABLE probe_items (id TEXT PRIMARY KEY);")) +
-                second.drop(1)
-            val runner = database.runner()
-            val refused = assertFailsWith<MigrationsNotAppliedException> { runner.migrate("probe", edited) }
-            assertTrue("[1]" in refused.message.orEmpty())
-            // A history with a gap (a version missing below the last one) is refused too.
-            database.ownerJdbc.query { exec("DELETE FROM _migrations_probe WHERE version = 1") }
-            assertFailsWith<MigrationsNotAppliedException> { runner.migrate("probe", second) }
-        }
-    }
-
-    @Test
-    fun adoptsAnEmptyFirstMigratorHistoryAtTheStart() {
-        databaseTest { database ->
-            database.legacyHistory()
-            database.runner().migrate("probe", first)
-            assertEquals(1, database.count("flyway_probe WHERE type = 'BASELINE' AND version = '0'"))
-            assertEquals(1, database.count("flyway_probe WHERE version = '1' AND success"))
         }
     }
 

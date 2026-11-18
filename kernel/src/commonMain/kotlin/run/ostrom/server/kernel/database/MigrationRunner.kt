@@ -102,5 +102,5 @@ internal fun ownerOnlySql(table: String): String = """
     $$
 """.trimIndent()
 
-// No `_`: `a-b` and `a_b` would share the table `_migrations_a_b`.
+// No `_`: `a-b` and `a_b` would share the table `flyway_a_b`.
 private val MODULE_NAME = Regex("[a-z][a-z0-9-]{0,40}")

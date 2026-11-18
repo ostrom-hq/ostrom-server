@@ -94,9 +94,8 @@ val OrgsMigrations = listOf(
 ```
 
 - Each module has its **own** version sequence (1, 2, 3… without gaps) in its own Flyway history table
-  `flyway_<name>`: two modules never compete for a number, and a version used twice is refused. A database migrated
-  before by the server's first migrator (`_migrations_<name>`) is adopted: Flyway's history starts with a baseline at its last version,
-  once every version it applied is checked against the code.
+  `flyway_<name>`: two modules never compete for a number, and a version used twice is refused. The modules share
+  one schema, so a module's history starts with an empty baseline (version 0) and every one of its versions runs.
 - **Every table starts with the module name** (`orgs_…`, `instance_…`).
 - Migrations are applied by **`ostrom-server migrate`**, with the owner's credentials
   (`OSTROM_DATABASE_MIGRATION_URL`), under a PostgreSQL advisory lock: init containers or replicas that migrate at
@@ -864,8 +863,8 @@ behind a configuration, updates its `features` and this table.
 The database roles of a deployment (the Helm chart creates them): an **owner**, which owns the schema and runs
 `migrate`, and a **serving role** that owns nothing, `NOSUPERUSER NOBYPASSRLS`, granted `USAGE` on the schema and,
 through `ALTER DEFAULT PRIVILEGES FOR ROLE <owner>`, `SELECT, INSERT, UPDATE, DELETE` on its tables and `USAGE, SELECT`
-on its sequences. CI's smoke test sets them up the same way. The migrations' history tables (`flyway_<name>`, and
-the older `_migrations_<name>`) are the exception: after each pass, `migrate` revokes every privilege but `SELECT` on them from every role but the
+on its sequences. CI's smoke test sets them up the same way. The migrations' history tables (`flyway_<name>`) are
+the exception: after each pass, `migrate` revokes every privilege but `SELECT` on them from every role but the
 owner, so the serving role reads the history (the start-up check) and never rewrites it.
 
 ## Known limits of the foundation
