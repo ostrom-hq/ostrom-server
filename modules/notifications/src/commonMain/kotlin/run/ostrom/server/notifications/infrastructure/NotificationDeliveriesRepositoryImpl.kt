@@ -27,6 +27,7 @@ import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.less
 import org.jetbrains.exposed.v1.core.lessEq
 import org.jetbrains.exposed.v1.core.vendors.ForUpdateOption
+import org.jetbrains.exposed.v1.jdbc.Query
 import org.jetbrains.exposed.v1.jdbc.batchInsert
 import org.jetbrains.exposed.v1.jdbc.deleteWhere
 import org.jetbrains.exposed.v1.jdbc.select
@@ -104,15 +105,8 @@ class NotificationDeliveriesRepositoryImpl(
 
     override suspend fun pendingRequests(orgId: Uuid, approvalIds: Set<Uuid>): Set<Pair<Uuid, String>> =
         database.inOrg(orgId) {
-            val approvalId = NotificationDeliveries.approvalId
-            val told = NotificationDeliveries.select(approvalId, NotificationDeliveries.channel)
-                .where {
-                    (NotificationDeliveries.orgId eq orgId) and
-                        (NotificationDeliveries.kind eq ApprovalRules.KIND) and
-                        (NotificationDeliveries.state eq DeliveryState.PENDING.wire) and
-                        (approvalId inList approvalIds)
-                }
-                .groupBy({ it[approvalId] }, { it[NotificationDeliveries.channel] })
+            val told = pendingApprovalRequests(orgId, approvalIds)
+                .groupBy({ it[NotificationDeliveries.approvalId] }, { it[NotificationDeliveries.channel] })
             approvalIds.flatMapTo(mutableSetOf()) { id -> told[id].orEmpty().map { id to it } }
         }
 
@@ -158,3 +152,21 @@ class NotificationDeliveriesRepositoryImpl(
         const val MAX_ERROR = 40
     }
 }
+
+/**
+ * The requests for a yes still waiting to be sent for [approvalIds], with their channel: the read of
+ * [NotificationDeliveriesRepositoryImpl.pendingRequests], an `internal` query so that its plan is tested
+ * (`DeliveriesQueryPlansTest`). It reads the requests' own rows through `notifications_deliveries_approval`.
+ *
+ * @param orgId The organization.
+ * @param approvalIds The requests.
+ * @return The query.
+ */
+internal fun pendingApprovalRequests(orgId: Uuid, approvalIds: Set<Uuid>): Query =
+    NotificationDeliveries.select(NotificationDeliveries.approvalId, NotificationDeliveries.channel)
+        .where {
+            (NotificationDeliveries.orgId eq orgId) and
+                (NotificationDeliveries.kind eq ApprovalRules.KIND) and
+                (NotificationDeliveries.state eq DeliveryState.PENDING.wire) and
+                (NotificationDeliveries.approvalId inList approvalIds)
+        }

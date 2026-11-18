@@ -207,4 +207,14 @@ val NotificationsMigrations: List<SchemaMigration> = listOf(
         ALTER TABLE notifications_deliveries ADD COLUMN approver TEXT
         """.trimIndent(),
     ),
+    // The requests for a yes of a decided gate (`pendingApprovalRequests`), read by their own rows where the
+    // organization's whole queue was scanned (the database audit of 18/11).
+    SchemaMigration(
+        8,
+        "deliveries_approval_index",
+        """
+        CREATE INDEX notifications_deliveries_approval ON notifications_deliveries (org_id, approval_id)
+            WHERE approval_id IS NOT NULL
+        """.trimIndent(),
+    ),
 )

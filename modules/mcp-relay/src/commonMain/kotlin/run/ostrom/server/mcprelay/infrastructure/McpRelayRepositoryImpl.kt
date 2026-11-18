@@ -388,30 +388,7 @@ class McpRelayRepositoryImpl(
         server: String?,
         memberId: Uuid?,
     ): List<McpCall> = database.inOrg(orgId) {
-        val c = McpRelayCalls
-        val after = when {
-            before == null -> null
-            before.id == null -> c.startedAt less before.startedAt
-            else -> rowLess(
-                listOf(c.startedAt, c.id),
-                listOf(
-                    QueryParameter(before.startedAt, InstantColumnType()),
-                    QueryParameter(before.id, UuidColumnType()),
-                ),
-            )
-        }
-        c.select(c.columns)
-            .where {
-                listOfNotNull(
-                    c.orgId eq orgId,
-                    after,
-                    server?.let { c.serverName eq it },
-                    memberId?.let { c.memberId eq it },
-                ).compoundAnd()
-            }
-            .orderBy(c.startedAt to SortOrder.DESC, c.id to SortOrder.DESC)
-            .limit(limit)
-            .map { it.toCall() }
+        mcpCallsPage(orgId, before, limit, server, memberId).map { it.toCall() }
     }
 
     private fun ResultRow.toCall(): McpCall {
@@ -707,4 +684,43 @@ internal fun memberStatesQuery(orgId: Uuid, serverIds: List<Uuid>, memberId: Uui
             (t.orgId eq orgId) and (t.serverId eq anyFrom(serverIds, UuidColumnType())) and
                 ((t.memberId eq memberId) or t.memberId.isNull())
         }
+}
+
+/**
+ * One page of the organization's MCP calls, newest first, of one server or one member when asked: the read of
+ * [McpRelayRepositoryImpl.listCalls], an `internal` query so that its plan is tested (`McpCallsQueryPlansTest`). Each
+ * filter has its index ending on `(started_at DESC, id DESC)` (`mcp_relay_calls_org`, `_member`, `_server`, TeamCode's
+ * `mcp_call_team`, `mcp_call_member` and `mcp_call_server`), so that a page is read in order and stops at [limit].
+ *
+ * @param orgId The organization.
+ * @param before The last call of the previous page, null for the first.
+ * @param limit The calls a page holds at most.
+ * @param server The server's name, null for every server.
+ * @param memberId The member, null for every member.
+ * @return The query.
+ */
+internal fun mcpCallsPage(orgId: Uuid, before: McpCallCursor?, limit: Int, server: String?, memberId: Uuid?): Query {
+    val c = McpRelayCalls
+    val after = when {
+        before == null -> null
+        before.id == null -> c.startedAt less before.startedAt
+        else -> rowLess(
+            listOf(c.startedAt, c.id),
+            listOf(
+                QueryParameter(before.startedAt, InstantColumnType()),
+                QueryParameter(before.id, UuidColumnType()),
+            ),
+        )
+    }
+    return c.select(c.columns)
+        .where {
+            listOfNotNull(
+                c.orgId eq orgId,
+                after,
+                server?.let { c.serverName eq it },
+                memberId?.let { c.memberId eq it },
+            ).compoundAnd()
+        }
+        .orderBy(c.startedAt to SortOrder.DESC, c.id to SortOrder.DESC)
+        .limit(limit)
 }

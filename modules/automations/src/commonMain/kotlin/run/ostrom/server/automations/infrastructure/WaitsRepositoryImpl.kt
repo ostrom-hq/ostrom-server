@@ -33,6 +33,7 @@ import org.jetbrains.exposed.v1.core.isNull
 import org.jetbrains.exposed.v1.core.or
 import org.jetbrains.exposed.v1.core.vendors.ForUpdateOption
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
+import org.jetbrains.exposed.v1.jdbc.Query
 import org.jetbrains.exposed.v1.jdbc.deleteWhere
 import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.update
@@ -132,34 +133,7 @@ internal class WaitsRepositoryImpl(
     }
 
     override suspend fun list(filter: WaitFilter, before: Uuid?, limit: Int): List<Wait> =
-        database.inOrg(filter.orgId) {
-            val w = AutomationsWaits
-            w.select(WAIT_COLUMNS)
-                .where {
-                    listOfNotNull(
-                        w.orgId eq filter.orgId,
-                        w.assignee isSet filter.assignee,
-                        filter.involving?.let { (w.assignee eq it) or (w.createdBy eq it) },
-                        w.createdBy isSet filter.createdBy,
-                        w.status isSet filter.status?.wire,
-                        w.sessionId isSet filter.sessionId,
-                        // A session id never holds a comma (`SESSION_ID` of the sessions module, `REFERENCE` of the
-                        // waits).
-                        filter.sessionIds?.let { w.sessionId inList it },
-                        w.runId isSet filter.runId,
-                        w.resolver isSet filter.resolver?.wire,
-                        before?.let {
-                            rowBefore(
-                                listOf(w.createdAt, w.id),
-                                w.select(w.createdAt, w.id).where { (w.id eq it) and (w.orgId eq filter.orgId) },
-                            )
-                        },
-                    ).compoundAnd()
-                }
-                .orderBy(w.createdAt to SortOrder.DESC, w.id to SortOrder.DESC)
-                .limit(limit)
-                .map { it.toWait() }
-        }
+        database.inOrg(filter.orgId) { waitsPage(filter, before, limit).map { it.toWait() } }
 
     override suspend fun resolve(orgId: Uuid, id: Uuid, answer: WaitAnswer, secrets: List<WaitSecret>): Wait? {
         if (secrets.isNotEmpty() && cipher == null) throw SecretsUnavailableException()
@@ -339,3 +313,42 @@ private infix fun <T> Column<T>.isSet(value: T?): Op<Boolean>? = value?.let { th
 
 /** What a secret is sealed with: its organization, session and variable, so that a copied value does not open. */
 private fun secretContext(orgId: Uuid, sessionId: String?, envName: String) = "wait-secret:$orgId:$sessionId:$envName"
+
+/**
+ * One page of an organization's waits, newest first, narrowed by [filter]: the read of [WaitsRepositoryImpl.list], an
+ * `internal` query so that its plan is tested (`WaitsQueryPlansTest`). Every filter narrows an index that ends on
+ * `(created_at DESC, id DESC)`, so that the page is read in order and stops at [limit]: the assignee's, the creator's,
+ * the session's, and for a filter on the organization alone or with its status, `automations_waits_org` and
+ * `automations_waits_org_status` (TeamCode's `wait_team_all` and `wait_team`).
+ *
+ * @param filter What the page holds.
+ * @param before The id of the last wait of the previous page, null for the first.
+ * @param limit The waits a page holds at most.
+ * @return The query.
+ */
+internal fun waitsPage(filter: WaitFilter, before: Uuid?, limit: Int): Query {
+    val w = AutomationsWaits
+    return w.select(WAIT_COLUMNS)
+        .where {
+            listOfNotNull(
+                w.orgId eq filter.orgId,
+                w.assignee isSet filter.assignee,
+                filter.involving?.let { (w.assignee eq it) or (w.createdBy eq it) },
+                w.createdBy isSet filter.createdBy,
+                w.status isSet filter.status?.wire,
+                w.sessionId isSet filter.sessionId,
+                // A session id never holds a comma (`SESSION_ID` of the sessions module, `REFERENCE` of the waits).
+                filter.sessionIds?.let { w.sessionId inList it },
+                w.runId isSet filter.runId,
+                w.resolver isSet filter.resolver?.wire,
+                before?.let {
+                    rowBefore(
+                        listOf(w.createdAt, w.id),
+                        w.select(w.createdAt, w.id).where { (w.id eq it) and (w.orgId eq filter.orgId) },
+                    )
+                },
+            ).compoundAnd()
+        }
+        .orderBy(w.createdAt to SortOrder.DESC, w.id to SortOrder.DESC)
+        .limit(limit)
+}

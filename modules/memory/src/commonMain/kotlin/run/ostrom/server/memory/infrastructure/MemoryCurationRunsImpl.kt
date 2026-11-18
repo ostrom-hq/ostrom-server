@@ -26,6 +26,7 @@ import org.jetbrains.exposed.v1.core.max
 import org.jetbrains.exposed.v1.core.exists
 import org.jetbrains.exposed.v1.core.intLiteral
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
+import org.jetbrains.exposed.v1.jdbc.Query
 import org.jetbrains.exposed.v1.jdbc.deleteReturning
 import org.jetbrains.exposed.v1.jdbc.deleteWhere
 import org.jetbrains.exposed.v1.jdbc.insert
@@ -162,12 +163,7 @@ internal class MemoryCurationRunsImpl(private val database: JdbcDatabase) : Memo
 
     override suspend fun retain(orgId: Uuid, now: Instant): List<Uuid> = database.inOrg(orgId) {
         val e = MemoryEntries
-        val expiredIds = e.select(e.id)
-            .where {
-                (e.orgId eq orgId) and (e.status neq STATUS_PROPOSED) and
-                    (e.expiresAt less now - MemoryRules.EXPIRED_DAYS.days)
-            }
-            .orderBy(e.expiresAt).limit(RETAIN_LIMIT)
+        val expiredIds = expiredEntries(orgId, now - MemoryRules.EXPIRED_DAYS.days, RETAIN_LIMIT)
         val expired = e.deleteReturning(listOf(e.id), where = { (e.orgId eq orgId) and (e.id inSubQuery expiredIds) })
             .map { it[e.id] }
         e.deleteWhere {
@@ -187,4 +183,21 @@ internal class MemoryCurationRunsImpl(private val database: JdbcDatabase) : Memo
         const val OPEN = "open"
         const val EXTERNAL = "external"
     }
+}
+
+/**
+ * The entries of an organization expired before [before] that a run deletes, oldest expiry first, [limit] at most (a
+ * proposal waits for its review): the read of [MemoryCurationRunsImpl.retain], an `internal` query so that its plan is
+ * tested (`MemoryRetentionQueryPlansTest`). It reads `memory_entries_expiry` in order and stops at [limit].
+ *
+ * @param orgId The organization.
+ * @param before The expiry the entries are past.
+ * @param limit The entries one run deletes at most.
+ * @return The query.
+ */
+internal fun expiredEntries(orgId: Uuid, before: Instant, limit: Int): Query {
+    val e = MemoryEntries
+    return e.select(e.id)
+        .where { (e.orgId eq orgId) and (e.status neq STATUS_PROPOSED) and (e.expiresAt less before) }
+        .orderBy(e.expiresAt).limit(limit)
 }
