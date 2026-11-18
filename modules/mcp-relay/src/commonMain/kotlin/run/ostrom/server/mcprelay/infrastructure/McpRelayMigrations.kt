@@ -248,4 +248,14 @@ val McpRelayMigrations: List<SchemaMigration> = listOf(
             CREATE INDEX mcp_relay_calls_server ON mcp_relay_calls (org_id, server_name, started_at DESC, id DESC)
         """.trimIndent(),
     ),
+    // A server's delete cascades to its policies by `server_id` alone: the index led by the organization could not
+    // serve it (SchemaIndexesPostgresTest). A server's id is its organization's, so the page needs no `org_id` first.
+    SchemaMigration(
+        version = 11,
+        name = "mcp_relay_policies_by_server",
+        sql = """
+            DROP INDEX mcp_relay_policies_server;
+            CREATE INDEX mcp_relay_policies_server ON mcp_relay_policies (server_id, created_at, id)
+        """.trimIndent(),
+    ),
 )
