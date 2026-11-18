@@ -23,10 +23,8 @@ import org.flywaydb.core.api.migration.JavaMigration
  * [MigrationRunner] on Flyway (docs/decisions/0001, step 2; CRL-05), as TeamCode's `Database.migrate`, one history
  * table per module (`flyway_<module>`) so that two modules never compete for a version number.
  *
- * A database migrated before by the server's first migrator (`_migrations_<module>`, [legacyChecksum]) is adopted:
- * when a module has that history and no Flyway one, every version it applied must still match the code's, and
- * Flyway's history starts with a baseline at the last of them, so nothing applied is run again. The old history is
- * left as it is, so that a replica of the previous version still starts during a rolling update.
+ * The modules share one schema, so a module's first pass finds the other modules' tables: its history starts with an
+ * empty baseline (version 0) instead of Flyway refusing a non-empty schema, and every version of the module runs.
  *
  * A migration waits at most 3 s for a lock (`lock_timeout`, set on the connection by [migrationUrl]); a pass that
  * gave up on one (SQLSTATE 55P03) is run again after a pause, up to [attempts] times. Each migration is its own
@@ -47,21 +45,18 @@ class FlywayMigrationRunner(
         val table = historyTable(module)
         requireVersions(module, migrations)
         if (migrations.isEmpty()) return
-        val baseline = withContext(Dispatchers.IO) { source.connection.use { adopt(it, module, table, migrations) } }
         var attempt = 1
         while (true) {
             val applied = try {
-                withContext(Dispatchers.IO) { pass(table, baseline, migrations) }
+                withContext(Dispatchers.IO) { pass(table, migrations) }
             } catch (error: FlywayException) {
                 if (attempt == attempts || !error.isLockTimeout()) throw error
                 null
             } finally {
                 // Even after a failed or cancelled pass: the history may have been created, and must not stay writable
-                // meanwhile. The first migrator's older history too, which nothing else writes now (AUDIT-RLS R8).
+                // meanwhile (AUDIT-RLS R8).
                 withContext(NonCancellable + Dispatchers.IO) {
-                    source.connection.use { connection ->
-                        listOf(table, legacyTable(module)).forEach { connection.run(ownerOnlySql(it)) }
-                    }
+                    source.connection.use { it.run(ownerOnlySql(table)) }
                 }
             }
             if (applied != null) {
@@ -88,41 +83,22 @@ class FlywayMigrationRunner(
         requireVersions(module, migrations)
         if (migrations.isEmpty()) return
         val applied = withContext(Dispatchers.IO) { source.connection.use { history(it, table) } }
-        val baseline = applied.filter { it.baseline }.fold(0L) { last, row -> maxOf(last, row.version) }
-        val done = applied.filter { it.success && !it.baseline }.associate { it.version to it.checksum }
-        val missing = migrations.filter { it.version > baseline && done[it.version] != checksum(it) }.map { it.version }
+        val done = applied.filter { it.success }.associate { it.version to it.checksum }
+        val missing = migrations.filter { done[it.version] != checksum(it) }.map { it.version }
         if (missing.isNotEmpty()) throw MigrationsNotAppliedException(module, missing)
-    }
-
-    /** The last version the first migrator applied, its history checked against the code; 0 without one to adopt. */
-    private fun adopt(connection: Connection, module: String, table: String, migrations: List<SchemaMigration>): Long {
-        val legacy = legacyTable(module)
-        val applied = if (connection.exists(table) || !connection.exists(legacy)) {
-            emptyMap()
-        } else {
-            connection.createStatement().use { statement ->
-                statement.executeQuery("SELECT version, checksum FROM $legacy").use { rows ->
-                    buildMap { while (rows.next()) put(rows.getLong("version"), rows.getString("checksum")) }
-                }
-            }
-        }
-        val code = migrations.associate { it.version to legacyChecksum(it) }
-        val last = applied.keys.maxOrNull() ?: 0L
-        val differing = (1..last).filter { applied[it] != code[it] }
-        if (differing.isNotEmpty()) throw MigrationsNotAppliedException(module, differing)
-        return last
     }
 
     /** Runs Flyway once: the versions applied, with how long each took in milliseconds. */
     @Suppress("SpreadOperator") // Flyway takes its migrations as varargs: one copy of a module's few, per pass.
-    private fun pass(table: String, baseline: Long, migrations: List<SchemaMigration>): List<Pair<String, Int>> {
+    private fun pass(table: String, migrations: List<SchemaMigration>): List<Pair<String, Int>> {
         val flyway = Flyway.configure()
             .dataSource(source)
             .table(table)
             .javaMigrations(*migrations.map(::ModuleMigration).toTypedArray())
             .baselineOnMigrate(true)
-            .baselineVersion(MigrationVersion.fromVersion(baseline.toString()))
-            .baselineDescription("the history before Flyway")
+            .baselineVersion(MigrationVersion.fromVersion("0"))
+            // No quote in the description: Flyway writes it into its insert as it is.
+            .baselineDescription("before the first migration")
             .load()
         return flyway.migrate().migrations.map { it.version to it.executionTime }
     }
@@ -132,7 +108,7 @@ class FlywayMigrationRunner(
             emptyList()
         } else {
             connection.createStatement().use { statement ->
-                statement.executeQuery("SELECT version, checksum, success, type FROM $table WHERE version IS NOT NULL")
+                statement.executeQuery("SELECT version, checksum, success FROM $table WHERE version IS NOT NULL")
                     .use { rows ->
                         buildList {
                             while (rows.next()) {
@@ -141,7 +117,6 @@ class FlywayMigrationRunner(
                                         version = rows.getString("version").toLong(),
                                         checksum = rows.getInt("checksum"),
                                         success = rows.getBoolean("success"),
-                                        baseline = rows.getString("type") == "BASELINE",
                                     ),
                                 )
                             }
@@ -150,7 +125,7 @@ class FlywayMigrationRunner(
             }
         }
 
-    private class Applied(val version: Long, val checksum: Int, val success: Boolean, val baseline: Boolean)
+    private class Applied(val version: Long, val checksum: Int, val success: Boolean)
 
     /** One [SchemaMigration] as Flyway sees it: its version, its name, the CRC32 of its SQL. */
     private class ModuleMigration(private val migration: SchemaMigration) : JavaMigration {
@@ -183,12 +158,6 @@ class FlywayMigrationRunner(
         fun migrationUrl(config: DatabaseConfig): String =
             JdbcDatabase.jdbcUrl(config, listOf("lock_timeout=3s"), socketTimeoutSeconds = 0)
 
-        /**
-         * The checksum the first migrator wrote in `_migrations_<module>`: the decimal text of the JVM
-         * `String.hashCode` of the migration's SQL.
-         */
-        internal fun legacyChecksum(migration: SchemaMigration): String = migration.sql.hashCode().toString()
-
         private fun checksum(migration: SchemaMigration): Int =
             CRC32().apply { update(migration.sql.toByteArray(Charsets.UTF_8)) }.value.toInt()
 
@@ -210,7 +179,5 @@ class FlywayMigrationRunner(
             }
 
         private fun historyTable(module: String): String = "flyway_" + moduleKey(module)
-
-        private fun legacyTable(module: String): String = "_migrations_" + moduleKey(module)
     }
 }
