@@ -43,12 +43,13 @@ class MemberPoolRepositoryImpl(private val database: JdbcDatabase) : MemberPoolR
         memberId: Uuid,
         poolId: String?,
         allowSharedOverflow: Boolean?,
+        weight: Int?,
     ): PoolPolicy? = database.inOrg(orgId) {
         lockPools(orgId)
         if (poolId != null && sharedPool(orgId, poolId).any()) return@inOrg null
-        val allow = allowSharedOverflow
-            ?: (memberPoolOf(orgId, memberId).singleOrNull()?.get(SharingMemberPools.allowSharedOverflow) == true)
-        val policy = PoolPolicy(poolId, allow)
+        // What is not given is kept.
+        val kept = Read(memberPoolOf(orgId, memberId)) { it.toPolicy() }.singleOrNull() ?: PoolPolicy.NONE
+        val policy = PoolPolicy(poolId, allowSharedOverflow ?: kept.allowSharedOverflow, weight ?: kept.weight)
         if (policy == PoolPolicy.NONE) {
             write { memberPoolClear(orgId, memberId) }
         } else {
@@ -58,8 +59,11 @@ class MemberPoolRepositoryImpl(private val database: JdbcDatabase) : MemberPoolR
     }
 }
 
-private fun ResultRow.toPolicy() =
-    PoolPolicy(this[SharingMemberPools.poolId], this[SharingMemberPools.allowSharedOverflow])
+private fun ResultRow.toPolicy() = PoolPolicy(
+    this[SharingMemberPools.poolId],
+    this[SharingMemberPools.allowSharedOverflow],
+    this[SharingMemberPools.weight],
+)
 
 /** Takes the organization's pools lock until the transaction ends: member policies and pool budgets take turns. */
 internal fun JdbcTransaction.lockPools(orgId: Uuid) =
@@ -68,13 +72,13 @@ internal fun JdbcTransaction.lockPools(orgId: Uuid) =
 /** The policy of one member (the request path of a lease: one read on the key). */
 internal fun memberPoolOf(orgId: Uuid, memberId: Uuid): Query {
     val p = SharingMemberPools
-    return p.select(p.poolId, p.allowSharedOverflow).where { (p.orgId eq orgId) and (p.memberId eq memberId) }
+    return p.select(p.poolId, p.allowSharedOverflow, p.weight).where { (p.orgId eq orgId) and (p.memberId eq memberId) }
 }
 
 /** The policies of some members (the capacity controller's pass over the members with a recent session). */
 internal fun memberPoolsOf(orgId: Uuid, memberIds: Collection<Uuid>): Query {
     val p = SharingMemberPools
-    return p.select(p.memberId, p.poolId, p.allowSharedOverflow)
+    return p.select(p.memberId, p.poolId, p.allowSharedOverflow, p.weight)
         .where { (p.orgId eq orgId) and (p.memberId inList memberIds) }
 }
 
@@ -92,8 +96,9 @@ internal fun StatementBuilder.memberPoolPut(orgId: Uuid, memberId: Uuid, policy:
         it[this.memberId] = memberId
         it[this.poolId] = policy.poolId
         it[this.allowSharedOverflow] = policy.allowSharedOverflow
+        it[this.weight] = policy.weight
     }
 
-/** A member back to no policy: in no pool, no overflow. */
+/** A member back to no policy: in no pool, no overflow, weight 1. */
 internal fun StatementBuilder.memberPoolClear(orgId: Uuid, memberId: Uuid): DeleteStatement =
     SharingMemberPools.deleteWhere { (SharingMemberPools.orgId eq orgId) and (SharingMemberPools.memberId eq memberId) }

@@ -4,6 +4,7 @@ package run.ostrom.server.gateway.infrastructure
 import run.ostrom.server.gateway.domain.AdmissionEntry
 import run.ostrom.server.gateway.domain.AdmissionQueueRepository
 import run.ostrom.server.gateway.domain.AdmissionRequest
+import run.ostrom.server.gateway.domain.MemberRequests
 import run.ostrom.server.gateway.domain.QueueCandidate
 import run.ostrom.server.gateway.domain.QueueCounts
 import run.ostrom.server.gateway.domain.QueueRefusedException
@@ -114,6 +115,10 @@ class AdmissionQueueRepositoryImpl(private val database: JdbcDatabase) : Admissi
 
     override suspend fun counts(orgId: Uuid, memberId: Uuid): QueueCounts = database.inOrg(orgId) {
         admissionCounts(orgId, memberId).single()
+    }
+
+    override suspend fun memberRequests(orgId: Uuid, memberId: Uuid): MemberRequests = database.inOrg(orgId) {
+        admissionMemberRequests(orgId, memberId).single()
     }
 }
 

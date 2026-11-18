@@ -290,4 +290,12 @@ val SharingMigrations: List<SchemaMigration> = listOf(
     // covers what that pool lent today. A member allowed overflow may be in no pool, so their row's pool becomes
     // optional. The indexes serve a lease's reads: the reserves no member calls home, and their accounts.
     SchemaMigration(version = 15, name = "sharing_shared_overflow", sql = SHARED_OVERFLOW_SQL),
+    // TeamCode's member policy `weight` (0 to 1000, 1 by default): a member's part of their pool's daily budget is the
+    // budget times their weight over the weights of the pool's members. 0 gives them nothing.
+    SchemaMigration(
+        version = 16,
+        name = "sharing_member_weights",
+        sql = "ALTER TABLE sharing_member_pools ADD COLUMN weight INTEGER NOT NULL DEFAULT 1 " +
+            "CONSTRAINT sharing_member_pools_weight CHECK (weight BETWEEN 0 AND 1000)",
+    ),
 )

@@ -56,10 +56,11 @@ class InMemoryMemberPools : MemberPoolRepository {
         memberId: Uuid,
         poolId: String?,
         allowSharedOverflow: Boolean?,
+        weight: Int?,
     ): PoolPolicy? {
         if (poolId in reserves) return null
-        val allow = allowSharedOverflow ?: (pools[orgId to memberId]?.allowSharedOverflow == true)
-        val policy = PoolPolicy(poolId, allow)
+        val kept = pools[orgId to memberId] ?: PoolPolicy.NONE
+        val policy = PoolPolicy(poolId, allowSharedOverflow ?: kept.allowSharedOverflow, weight ?: kept.weight)
         if (policy == PoolPolicy.NONE) pools -= orgId to memberId else pools[orgId to memberId] = policy
         return policy
     }

@@ -31,7 +31,13 @@ fun Route.memberPolicyRoutes(dependencies: MemberPolicyRoutesDependencies) = wit
         patch<MemberPolicyApi> { params ->
             val caller = call.requireCaller(callers, RelayScopes.ACCOUNTS_WRITE)
             val request = call.receive<UpdateMemberPolicyRequest>()
-            val policy = policies.setPolicy(caller, params.login, request.poolId, request.allowSharedOverflow)
+            val policy = policies.setPolicy(
+                caller,
+                params.login,
+                request.poolId,
+                request.allowSharedOverflow,
+                request.weight,
+            )
             audit.record(
                 OrgAuditRecord(
                     caller.orgId,
@@ -42,6 +48,7 @@ fun Route.memberPolicyRoutes(dependencies: MemberPolicyRoutesDependencies) = wit
                     auditDetails(
                         "pool_id" to policy.poolId,
                         "allow_shared_overflow" to policy.allowSharedOverflow,
+                        "weight" to policy.weight,
                     ),
                 ),
             )
@@ -50,4 +57,4 @@ fun Route.memberPolicyRoutes(dependencies: MemberPolicyRoutesDependencies) = wit
     }
 }
 
-private fun MemberPolicy.toResponse() = MemberPolicyResponse(login, poolId, allowSharedOverflow)
+private fun MemberPolicy.toResponse() = MemberPolicyResponse(login, poolId, allowSharedOverflow, weight)

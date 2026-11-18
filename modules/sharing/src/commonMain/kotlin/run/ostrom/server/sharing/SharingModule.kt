@@ -2,6 +2,7 @@
 package run.ostrom.server.sharing
 
 import run.ostrom.core.api.models.ServerFeatures
+import run.ostrom.server.kernel.auth.MemberDirectory
 import run.ostrom.server.kernel.auth.MemberLogins
 import run.ostrom.server.kernel.database.ScheduledJob
 import run.ostrom.server.kernel.database.SchemaMigration
@@ -57,6 +58,8 @@ import run.ostrom.server.sharing.domain.OverflowPoolsImpl
 import run.ostrom.server.sharing.domain.PoolBudgetRepository
 import run.ostrom.server.sharing.domain.PoolBudgetsUseCase
 import run.ostrom.server.sharing.domain.PoolBudgetsUseCaseImpl
+import run.ostrom.server.sharing.domain.PoolShares
+import run.ostrom.server.sharing.domain.PoolSharesImpl
 import run.ostrom.server.sharing.domain.SharedAccountPool
 import run.ostrom.server.sharing.domain.SharedAccountRepository
 import run.ostrom.server.sharing.domain.SharingOrgs
@@ -145,6 +148,8 @@ object SharingModule : ServerModule {
         single<MemberPoolRepository> { MemberPoolRepositoryImpl(get()) }
         single<PoolBudgetRepository> { PoolBudgetRepositoryImpl(get()) }
         single<MemberPoolScope> { MemberPoolScopeImpl(get(), get()) }
+        // The weighted split of the pools' budgets, which the budgets module applies and the capacity route shows.
+        single<PoolShares> { PoolSharesImpl(get(), get(), getOrNull<MemberDirectory>()) }
         // Without the usage ledger, nothing says what a reserve lent today: none lends (fail closed).
         single<OverflowPools> {
             val spend = getOrNull<PoolSpend>()

@@ -5,6 +5,7 @@ import run.ostrom.server.kernel.http.docs.ApiCatalog
 import run.ostrom.server.kernel.http.docs.badRequest
 import run.ostrom.server.kernel.http.docs.body
 import run.ostrom.server.kernel.http.docs.conflict
+import run.ostrom.server.kernel.http.docs.error
 import run.ostrom.server.kernel.http.docs.notFound
 import run.ostrom.server.kernel.http.docs.ok
 import run.ostrom.server.kernel.http.docs.organizationHeader
@@ -35,6 +36,7 @@ internal fun ApiCatalog.budgetsOperations() {
     tag(TAG, "The spending limits of the organization, of its members and of its workflows.")
     budgetOperations()
     myBudgetOperations()
+    memberCapacityOperations()
     budgetOverrideOperations()
     budgetRevocationOperations()
     conditionally { poolSizeOperations() }
@@ -100,6 +102,35 @@ private fun ApiCatalog.myBudgetOperations() {
         }
         responses {
             ok<MyBudgetResponse>("The caller's limit, spend and what is left, with the override in force.")
+        }
+    }
+}
+
+/** A member's capacity today. */
+private fun ApiCatalog.memberCapacityOperations() {
+    get("/api/v1/members/{login}/capacity") {
+        operationId = "getMemberCapacity"
+        tag(TAG)
+        summary = "A member's capacity today: their share of their pool, their spend and their calls."
+        description = "TeamCode's `GET /api/v1/members/{id}/capacity`, in USD millionths. An owner or an admin reads " +
+            "any member's, a member their own (`budgets:read`, or a key's `team:read`; another login is 403 for a " +
+            "member who is no admin, whether it names a member or not). `weight` and `poolTotalWeight` split " +
+            "`poolDailyMicros`, the budget of the member's pool (the organization's daily limit that stops for a " +
+            "member in no pool, the named pool's budget, `PUT /api/v1/pools/budgets`, otherwise), into " +
+            "`shareMicros`. `dailyLimitMicros` is the daily limit that stops their calls now: the share, lowered to " +
+            "their own daily limit (or every member's) when it is less, or a temporary budget override. " +
+            "`spentTodayMicros` is what their settled calls cost since 00:00 UTC (`resetsAt` is the next); calls " +
+            "in flight are not in it. `activeRequests` and `waitingRequests` are their calls running and waiting in " +
+            "the admission queue now. Never cached."
+        parameters {
+            organizationHeader()
+            pathId("login", LOGIN)
+        }
+        responses {
+            ok<MemberCapacityResponse>("The member's share, daily limit, spend today and calls.")
+            error(HttpStatusCode.Forbidden, "A member asks for another member's capacity, or a credential that may " +
+                "not read the budgets (`forbidden`).")
+            notFound("No member of the organization has this login, asked by an owner or an admin (`not_found`).")
         }
     }
 }

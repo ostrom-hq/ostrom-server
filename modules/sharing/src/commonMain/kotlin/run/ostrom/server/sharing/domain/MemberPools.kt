@@ -9,16 +9,22 @@ import run.ostrom.server.secrets.domain.Caller
 import kotlin.uuid.Uuid
 
 /**
- * A member's pools (TeamCode's `MemberPolicy.poolId` and `allowSharedOverflow`).
+ * A member's pools (TeamCode's `MemberPolicy.poolId`, `allowSharedOverflow` and `weight`).
  *
  * @property poolId Their home pool, or null for none.
  * @property allowSharedOverflow Whether they may borrow the accounts of the shared overflow pools once their own are
  *   unavailable, while each pool's daily budget lasts.
+ * @property weight Their part of their pool's daily budget, against the weights of its other members
+ *   ([SharingRules.MAX_WEIGHT] at most); 0 gives them nothing of it.
  */
-data class PoolPolicy(val poolId: String?, val allowSharedOverflow: Boolean) {
+data class PoolPolicy(
+    val poolId: String?,
+    val allowSharedOverflow: Boolean,
+    val weight: Int = SharingRules.DEFAULT_WEIGHT,
+) {
     /** The defaults. */
     companion object {
-        /** A member without a policy: in no pool, no overflow. */
+        /** A member without a policy: in no pool, no overflow, weight 1. */
         val NONE: PoolPolicy = PoolPolicy(null, false)
     }
 }
@@ -37,12 +43,18 @@ interface MemberPoolRepository {
     suspend fun policiesOf(orgId: Uuid, memberIds: Collection<Uuid>): Map<Uuid, PoolPolicy>
 
     /**
-     * Puts [memberId] in [poolId] (none for null), and allows their overflow when [allowSharedOverflow] says so (kept
-     * as it is for null), under the lock the pool budgets take ([PoolBudgetRepository.save]).
+     * Puts [memberId] in [poolId] (none for null), allows their overflow when [allowSharedOverflow] says so and gives
+     * them [weight] (each kept as it is for null), under the lock the pool budgets take ([PoolBudgetRepository.save]).
      *
      * @return The policy written, or null, with nothing written, when [poolId] is a shared overflow pool.
      */
-    suspend fun setPolicy(orgId: Uuid, memberId: Uuid, poolId: String?, allowSharedOverflow: Boolean?): PoolPolicy?
+    suspend fun setPolicy(
+        orgId: Uuid,
+        memberId: Uuid,
+        poolId: String?,
+        allowSharedOverflow: Boolean?,
+        weight: Int? = null,
+    ): PoolPolicy?
 }
 
 /** Every member in no pool: what the pool sees when no [MemberPoolRepository] is given (tests of other features). */
@@ -51,8 +63,13 @@ object NoMemberPools : MemberPoolRepository {
 
     override suspend fun policiesOf(orgId: Uuid, memberIds: Collection<Uuid>): Map<Uuid, PoolPolicy> = emptyMap()
 
-    override suspend fun setPolicy(orgId: Uuid, memberId: Uuid, poolId: String?, allowSharedOverflow: Boolean?) =
-        PoolPolicy(poolId, allowSharedOverflow == true)
+    override suspend fun setPolicy(
+        orgId: Uuid,
+        memberId: Uuid,
+        poolId: String?,
+        allowSharedOverflow: Boolean?,
+        weight: Int?,
+    ) = PoolPolicy(poolId, allowSharedOverflow == true, weight ?: SharingRules.DEFAULT_WEIGHT)
 }
 
 /** Whether [account] serves a member whose home pool is [home]: the same pool, or both in none (TeamCode's). */
@@ -105,14 +122,21 @@ class MemberPoolScopeImpl(
 }
 
 /**
- * A member's routing policy as the API names it (TeamCode's `MemberPolicy`, its pools only).
+ * A member's routing policy as the API names it (TeamCode's `MemberPolicy`, its pools and weight).
  *
  * @property login The member's login.
  * @property memberId The member.
  * @property poolId Their home pool, or null for none.
  * @property allowSharedOverflow Whether they may borrow the shared overflow pools.
+ * @property weight Their weight in their pool's split of its daily budget.
  */
-data class MemberPolicy(val login: String, val memberId: Uuid, val poolId: String?, val allowSharedOverflow: Boolean)
+data class MemberPolicy(
+    val login: String,
+    val memberId: Uuid,
+    val poolId: String?,
+    val allowSharedOverflow: Boolean,
+    val weight: Int = SharingRules.DEFAULT_WEIGHT,
+)
 
 /** The members' policies: read by an admin or the member themself, changed by an admin. */
 interface MemberPoliciesUseCase {
@@ -126,14 +150,22 @@ interface MemberPoliciesUseCase {
 
     /**
      * Puts the member [login] names in [poolId]; an empty string takes them out of their pool. [allowSharedOverflow]
-     * lets them borrow the shared overflow pools, or not; null keeps what it was.
+     * lets them borrow the shared overflow pools, or not, and [weight] is their weight in their pool's split of its
+     * daily budget (0 to [SharingRules.MAX_WEIGHT]); null keeps what each was.
      *
      * @throws AdminRequiredException When the caller is not an owner or an admin.
-     * @throws InvalidPolicyException When [poolId] is not a pool identifier.
+     * @throws InvalidPolicyException When the pool is not a pool identifier, or the weight is out of 0 to
+     *   [SharingRules.MAX_WEIGHT].
      * @throws OrgMemberNotFoundException When no member of the organization has this login.
-     * @throws OverflowPrimaryPoolException When [poolId] is a shared overflow pool.
+     * @throws OverflowPrimaryPoolException When the pool is a shared overflow pool.
      */
-    suspend fun setPolicy(caller: Caller, login: String, poolId: String, allowSharedOverflow: Boolean?): MemberPolicy
+    suspend fun setPolicy(
+        caller: Caller,
+        login: String,
+        poolId: String,
+        allowSharedOverflow: Boolean?,
+        weight: Int? = null,
+    ): MemberPolicy
 }
 
 /**
@@ -157,12 +189,16 @@ class MemberPoliciesUseCaseImpl(private val pools: MemberPoolRepository, private
         login: String,
         poolId: String,
         allowSharedOverflow: Boolean?,
+        weight: Int?,
     ): MemberPolicy {
         caller.requireAdmin()
         val pool = poolId.ifEmpty { null }
         if (pool != null && !SharingRules.isPool(pool)) throw InvalidPolicyException()
+        if (weight != null && weight !in 0..SharingRules.MAX_WEIGHT) {
+            throw InvalidPolicyException("Use a weight from 0 to ${SharingRules.MAX_WEIGHT}.")
+        }
         val memberId = memberOf(caller, login)
-        val written = pools.setPolicy(caller.orgId, memberId, pool, allowSharedOverflow)
+        val written = pools.setPolicy(caller.orgId, memberId, pool, allowSharedOverflow, weight)
             ?: throw OverflowPrimaryPoolException("A shared overflow reserve cannot be a member's primary pool.")
         return written.named(login, memberId)
     }
@@ -172,12 +208,9 @@ class MemberPoliciesUseCaseImpl(private val pools: MemberPoolRepository, private
 }
 
 private fun PoolPolicy.named(login: String, memberId: Uuid) =
-    MemberPolicy(login, memberId, poolId, allowSharedOverflow)
+    MemberPolicy(login, memberId, poolId, allowSharedOverflow, weight)
 
 /** A policy out of its form: a 400 `invalid_policy` (TeamCode's). */
-class InvalidPolicyException :
-    OstromException(
-        ErrorKind.INVALID_REQUEST,
-        "Use a pool identifier containing letters, digits, underscores or hyphens (up to 36 characters).",
-        "invalid_policy",
-    )
+class InvalidPolicyException(
+    message: String = "Use a pool identifier containing letters, digits, underscores or hyphens (up to 36 characters).",
+) : OstromException(ErrorKind.INVALID_REQUEST, message, "invalid_policy")

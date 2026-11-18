@@ -13,12 +13,15 @@ import run.ostrom.server.budgets.domain.BudgetsRepository
 import run.ostrom.server.budgets.domain.GetBudgetsUseCase
 import run.ostrom.server.budgets.domain.GetBudgetsUseCaseImpl
 import run.ostrom.server.budgets.domain.GetMyBudgetUseCase
+import run.ostrom.server.budgets.domain.GetMemberCapacityUseCase
+import run.ostrom.server.budgets.domain.GetMemberCapacityUseCaseImpl
 import run.ostrom.server.budgets.domain.GetMyBudgetUseCaseImpl
 import run.ostrom.server.budgets.domain.GrantBudgetOverrideUseCase
 import run.ostrom.server.budgets.domain.GrantBudgetOverrideUseCaseImpl
 import run.ostrom.server.budgets.domain.LedgerSpendGuard
 import run.ostrom.server.budgets.domain.ListBudgetOverridesUseCase
 import run.ostrom.server.budgets.domain.ListBudgetOverridesUseCaseImpl
+import run.ostrom.server.budgets.domain.MemberShares
 import run.ostrom.server.budgets.domain.NoBudgetAlerts
 import run.ostrom.server.budgets.domain.OverriddenBudgetsRepository
 import run.ostrom.server.budgets.domain.PoolSizeRepository
@@ -29,16 +32,20 @@ import run.ostrom.server.budgets.domain.RevokeBudgetOverrideUseCase
 import run.ostrom.server.budgets.domain.RevokeBudgetOverrideUseCaseImpl
 import run.ostrom.server.budgets.domain.SetBudgetUseCase
 import run.ostrom.server.budgets.domain.SetBudgetUseCaseImpl
+import run.ostrom.server.budgets.domain.WeightedShareBudgetsRepository
 import run.ostrom.server.budgets.domain.WorkflowBudgetsRemoval
 import run.ostrom.server.budgets.infrastructure.BudgetOverridesRepositoryImpl
 import run.ostrom.server.budgets.infrastructure.BudgetsMigrations
 import run.ostrom.server.budgets.infrastructure.BudgetsRepositoryImpl
 import run.ostrom.server.budgets.infrastructure.PoolSizeRepositoryImpl
 import run.ostrom.server.budgets.presentation.BudgetsRoutesDependencies
+import run.ostrom.server.budgets.presentation.MemberCapacityRoutesDependencies
 import run.ostrom.server.budgets.presentation.PoolSizeRoutesDependencies
 import run.ostrom.server.budgets.presentation.budgetsOperations
 import run.ostrom.server.budgets.presentation.budgetsRoutes
+import run.ostrom.server.budgets.presentation.memberCapacityRoutes
 import run.ostrom.server.budgets.presentation.poolSizeRoutes
+import run.ostrom.server.gateway.domain.AdmissionQueueRepository
 import run.ostrom.server.gateway.domain.PacingSettingsRepository
 import run.ostrom.server.gateway.domain.SpendGuard
 import run.ostrom.server.kernel.audit.OrgAuditTrail
@@ -54,6 +61,7 @@ import run.ostrom.server.kernel.module.ServerModule
 import run.ostrom.server.kernel.workflows.WorkflowRemovals
 import run.ostrom.server.secrets.domain.CallerResolver
 import run.ostrom.server.secrets.domain.OrgPrincipalCallerResolver
+import run.ostrom.server.sharing.domain.PoolShares
 import run.ostrom.server.sharing.domain.SharingOrgs
 import io.ktor.server.routing.Route
 import org.koin.core.Koin
@@ -80,12 +88,15 @@ object BudgetsModule : ServerModule {
     override val koinModule: Module = module {
         single<BudgetOverridesRepository> { BudgetOverridesRepositoryImpl(get<JdbcDatabase>()) }
         single<PoolSizeRepository> { PoolSizeRepositoryImpl(get<JdbcDatabase>()) }
-        // Every reader of a call's limits sees the member's temporary daily budget in force, and the automatic pool
-        // size when the gateway's settings turn it on (a server without the gateway keeps the typed budgets).
+        // Every reader of a call's limits sees the automatic pool size when the gateway's settings turn it on (a
+        // server without the gateway keeps the typed budgets), then the member's weighted share of their pool's daily
+        // budget (with the sharing module), then the member's temporary daily budget in force, which replaces it.
         single<BudgetsRepository> {
-            val overridden = OverriddenBudgetsRepository(BudgetsRepositoryImpl(get()), get())
-            getOrNull<PacingSettingsRepository>()?.let { AutomaticPoolBudgetsRepository(overridden, get(), it, get()) }
-                ?: overridden
+            val typed = BudgetsRepositoryImpl(get())
+            val automatic = getOrNull<PacingSettingsRepository>()
+                ?.let { AutomaticPoolBudgetsRepository(typed, get(), it, get()) } ?: typed
+            val shared = memberShares()?.let { WeightedShareBudgetsRepository(automatic, it) } ?: automatic
+            OverriddenBudgetsRepository(shared, get())
         }
         single<PoolSizingService> {
             val sources = PoolSizingSources(get(), get(), get(), get(), get())
@@ -100,6 +111,11 @@ object BudgetsModule : ServerModule {
         single<SpendGuard> { LedgerSpendGuard(get(), get(), get(), get()) }
         single<GetBudgetsUseCase> { GetBudgetsUseCaseImpl(get(), get(), get()) }
         single<GetMyBudgetUseCase> { GetMyBudgetUseCaseImpl(get(), get(), get(), get()) }
+        single<GetMemberCapacityUseCase> {
+            val queue = getOrNull<AdmissionQueueRepository>()
+            GetMemberCapacityUseCaseImpl(get(), memberShares(), get(), queue, logins(), get())
+        }
+        single { MemberCapacityRoutesDependencies(callerResolver(), get()) }
         single<SetBudgetUseCase> { SetBudgetUseCaseImpl(get(), get(), get(), workflows = getOrNull()) }
         single<WorkflowRemovals> { WorkflowBudgetsRemoval(get()) }
         single<ListBudgetOverridesUseCase> { ListBudgetOverridesUseCaseImpl(get(), logins()) }
@@ -112,6 +128,7 @@ object BudgetsModule : ServerModule {
 
     override fun routes(route: Route, koin: Koin) {
         route.budgetsRoutes(koin.get())
+        route.memberCapacityRoutes(koin.get())
         if (koin.sizesPools()) route.poolSizeRoutes(koin.get())
     }
 
@@ -150,6 +167,9 @@ internal fun Koin.sizesPools(): Boolean =
  * until the identity and orgs modules bind theirs).
  */
 internal fun Scope.callerResolver(): CallerResolver = getOrNull<CallerResolver>() ?: OrgPrincipalCallerResolver(get())
+
+/** The members' weighted shares on the sharing module's [PoolShares], or null without it. */
+internal fun Scope.memberShares(): MemberShares? = getOrNull<PoolShares>()?.let(::MemberShares)
 
 /** The orgs module's [MemberLogins], or none known (every login is then an unknown member) without it. */
 internal fun Scope.logins(): MemberLogins = getOrNull<MemberLogins>() ?: NoLogins

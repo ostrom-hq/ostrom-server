@@ -144,6 +144,14 @@ object QueueTurns {
 data class QueueCounts(val waiting: Int, val waitingMine: Int)
 
 /**
+ * One member's calls in the admission queue (TeamCode's `activeRequests` and `queuedRequests` of a member's capacity).
+ *
+ * @property running The calls they run now, whose lease has not expired.
+ * @property waiting Their calls waiting now, whose place has not expired.
+ */
+data class MemberRequests(val running: Int, val waiting: Int)
+
+/**
  * The admission queue, shared by every replica (TeamCode's `admission_waiters` and `admission_turns`). Only metadata:
  * bodies stay with their HTTP request. Times are the database's clock.
  */
@@ -173,6 +181,9 @@ interface AdmissionQueueRepository {
 
     /** The calls waiting now, the org's and [memberId]'s. */
     suspend fun counts(orgId: Uuid, memberId: Uuid): QueueCounts
+
+    /** The calls [memberId] runs and has waiting now, for whoever reads that member's capacity. */
+    suspend fun memberRequests(orgId: Uuid, memberId: Uuid): MemberRequests
 
     /** The bounds and leases (TeamCode's). */
     companion object {
