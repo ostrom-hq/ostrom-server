@@ -16,7 +16,8 @@ private const val OVERFLOW = "A shared overflow pool (`sharedOverflow`) lends it
     "pools allowed overflow (`PATCH /api/v1/members/{login}/policy`) while its `dailyMicros`, minus what its " +
     "accounts served since 00:00 UTC, covers what a call may cost; their home pool's accounts come first. A shared " +
     "pool is never a member's home pool, and an organization shares at most 16. The home pool's daily budget is " +
-    "the organization's (`PUT /api/v1/budgets`)."
+    "the organization's (`PUT /api/v1/budgets`). A pool that is not shared splits its `dailyMicros` among its " +
+    "members by weight: each one's daily limit that stops is their share (`GET /api/v1/members/{login}/capacity`)."
 
 /** The named pools' daily budgets and the shared overflow pools (TeamCode's pool budgets). */
 internal fun ApiCatalog.poolBudgetOperations() {

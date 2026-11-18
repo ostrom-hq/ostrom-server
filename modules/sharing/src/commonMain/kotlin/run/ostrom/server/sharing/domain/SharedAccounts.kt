@@ -202,6 +202,12 @@ object SharingRules {
     /** The lowest utilization ceiling: below it, an account would never serve. */
     const val MIN_CEILING: Double = 0.05
 
+    /** A member's weight in their pool without one set (TeamCode's). */
+    const val DEFAULT_WEIGHT: Int = 1
+
+    /** The highest weight of a member (TeamCode's). */
+    const val MAX_WEIGHT: Int = 1000
+
     private val label = Regex("[^\\p{Cntrl}]{1,120}")
     private val pool = Regex("[a-zA-Z0-9_-]{1,36}")
     private val token = Regex("[\\x21-\\x7e]{8,4096}")

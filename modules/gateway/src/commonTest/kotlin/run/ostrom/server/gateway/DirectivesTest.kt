@@ -140,8 +140,13 @@ class DirectivesTest {
             return homes.filterKeys { it in memberIds }
         }
 
-        override suspend fun setPolicy(orgId: Uuid, memberId: Uuid, poolId: String?, allowSharedOverflow: Boolean?) =
-            null
+        override suspend fun setPolicy(
+            orgId: Uuid,
+            memberId: Uuid,
+            poolId: String?,
+            allowSharedOverflow: Boolean?,
+            weight: Int?,
+        ) = null
     }
 
     /** The shared overflow pools with budget left, and what each read of them asked. */

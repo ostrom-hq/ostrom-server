@@ -23,6 +23,13 @@ private const val POOL_ROUTING = "A member is served only by the shared accounts
     "(`PUT /api/v1/pools/budgets`) while each pool's daily budget, minus what its accounts served today (UTC), " +
     "covers what the call may cost; their own pool's accounts come first."
 
+private const val WEIGHT = "`weight` (0 to 1000, 1 by default) is the member's part of their pool's daily budget " +
+    "(TeamCode's weighted share): the budget times their weight over the weights of the pool's members, the " +
+    "organization's daily limit that stops for the members in no pool and the named pool's budget " +
+    "(`PUT /api/v1/pools/budgets`) for its members. That share is their daily limit that stops, lowered to their own " +
+    "daily limit when it is less; a temporary budget override replaces it. 0 gives them nothing. Without a budget " +
+    "for their pool, or in an organization of more than 5,000 members, no share applies."
+
 private const val MEMBER_NOT_FOUND = "No member of the organization has this login (`not_found`)."
 
 /** A member's routing policy, their home pool (TeamCode's member policy, its pool only). */
@@ -33,7 +40,7 @@ internal fun ApiCatalog.memberPolicyOperations() {
         summary = "A member's home pool."
         description = "An owner or an admin reads any member's policy, a member their own (`accounts:read`, or a " +
             "key's `team:read`; another login is 403 for a member who is no admin, whether it names a member or " +
-            "not). $POOL_ROUTING"
+            "not). $POOL_ROUTING $WEIGHT"
         parameters {
             organizationHeader()
             pathId("login", POLICY_LOGIN)
@@ -48,21 +55,25 @@ internal fun ApiCatalog.memberPolicyOperations() {
     patch("/api/v1/members/{login}/policy") {
         operationId = "updateMemberPolicy"
         tag(TAG)
-        summary = "Set a member's home pool (admins)."
-        description = "TeamCode's `PATCH /api/v1/members/{id}/policy`, its pool only. An owner or an admin " +
+        summary = "Set a member's home pool and weight (admins)."
+        description = "TeamCode's `PATCH /api/v1/members/{id}/policy`, its pool and weight. An owner or an admin " +
             "(`accounts:write`, browser session) puts the member in `poolId`, 1 to 36 letters, digits, " +
             "underscores or hyphens (else 400 `invalid_policy`); an empty string takes them out of their pool. " +
-            "`allowSharedOverflow` lets them borrow the shared overflow pools (absent, it is kept). A shared " +
+            "`allowSharedOverflow` lets them borrow the shared overflow pools, and `weight` sets their weight " +
+            "(each kept when absent; a weight out of 0 to 1000 is 400 `invalid_policy`). A shared " +
             "overflow pool is never a member's home pool (409 `overflow_primary_pool`). Written to the audit log " +
-            "as `policy.updated`. $POOL_ROUTING"
+            "as `policy.updated`. $POOL_ROUTING $WEIGHT"
         parameters {
             organizationHeader()
             pathId("login", POLICY_LOGIN)
         }
-        body<UpdateMemberPolicyRequest>("The member's home pool, or an empty string for none, and their overflow.")
+        body<UpdateMemberPolicyRequest>(
+            "The member's home pool, or an empty string for none, their overflow and their weight.",
+        )
         responses {
             ok<MemberPolicyResponse>("The member's policy after the change.")
-            badRequest("A pool identifier out of its form (`invalid_policy`), or no `poolId` (`invalid_request`).")
+            badRequest("A pool identifier out of its form or a weight out of 0 to 1000 (`invalid_policy`), or no " +
+                "`poolId` (`invalid_request`).")
             error(HttpStatusCode.Forbidden, "Not an owner or an admin of the organization, or a credential that " +
                 "may not write (`forbidden`).")
             notFound(MEMBER_NOT_FOUND)

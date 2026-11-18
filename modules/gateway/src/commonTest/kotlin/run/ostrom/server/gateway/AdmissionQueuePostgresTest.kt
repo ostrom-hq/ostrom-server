@@ -4,6 +4,7 @@ package run.ostrom.server.gateway
 import run.ostrom.server.gateway.domain.AdmissionEntry
 import run.ostrom.server.gateway.domain.AdmissionQueueRepository
 import run.ostrom.server.gateway.domain.AdmissionRequest
+import run.ostrom.server.gateway.domain.MemberRequests
 import run.ostrom.server.gateway.domain.QueueCounts
 import run.ostrom.server.gateway.domain.QueueRefusedException
 import run.ostrom.server.gateway.domain.RefusalKind
@@ -14,6 +15,7 @@ import run.ostrom.server.gateway.infrastructure.admissionCandidates
 import run.ostrom.server.gateway.infrastructure.admissionCounts
 import run.ostrom.server.gateway.infrastructure.admissionGiveBack
 import run.ostrom.server.gateway.infrastructure.admissionLockKey
+import run.ostrom.server.gateway.infrastructure.admissionMemberRequests
 import run.ostrom.server.gateway.infrastructure.admissionPoll
 import run.ostrom.server.gateway.infrastructure.admissionPurge
 import run.ostrom.server.gateway.infrastructure.admissionRelease
@@ -101,8 +103,12 @@ class AdmissionQueuePostgresTest {
         assertEquals(QueueCounts(1, 1), one.counts(Gw.orgA, bob))
         assertEquals(QueueCounts(1, 0), two.counts(Gw.orgA, ada))
         assertEquals(QueueCounts(0, 0), two.counts(Gw.orgB, ada), "Another org sees nothing")
+        assertEquals(MemberRequests(running = 1, waiting = 1), two.memberRequests(Gw.orgA, bob))
+        assertEquals(MemberRequests(running = 1, waiting = 0), one.memberRequests(Gw.orgA, ada))
+        assertEquals(MemberRequests(0, 0), one.memberRequests(Gw.orgB, bob), "Another org sees none of Bob's")
         listOf(adaBackground, bobInteractive, bobBackground).forEach { one.release(Gw.orgA, it.id) }
         assertEquals(QueueCounts(0, 0), one.counts(Gw.orgA, bob))
+        assertEquals(MemberRequests(0, 0), one.memberRequests(Gw.orgA, bob))
     }
 
     @Test
@@ -284,6 +290,7 @@ class AdmissionQueuePostgresTest {
             "a lease renewed" to { admissionRenew(Gw.orgA, id) },
             "a call released" to { admissionRelease(Gw.orgA, id) },
             "the counts" to { admissionCounts(Gw.orgA, ada).query },
+            "a member's calls" to { admissionMemberRequests(Gw.orgA, ada).query },
         )
         statements.forEach { (what, statement) ->
             val plan = server.koin.get<JdbcDatabase>().inOrg(Gw.orgA) { plan(statement).also { rollback() } }

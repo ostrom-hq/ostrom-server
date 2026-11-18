@@ -11,6 +11,7 @@ import run.ostrom.server.gateway.domain.GetInferenceQueueUseCaseImpl
 import run.ostrom.server.gateway.domain.InferencePlan
 import run.ostrom.server.gateway.domain.InferenceProvider
 import run.ostrom.server.gateway.domain.InferenceRefusal
+import run.ostrom.server.gateway.domain.MemberRequests
 import run.ostrom.server.gateway.domain.QueueCandidate
 import run.ostrom.server.gateway.domain.QueueCounts
 import run.ostrom.server.gateway.domain.QueueRefusedException
@@ -65,6 +66,8 @@ class ScriptedQueue(vararg entries: AdmissionEntry) : AdmissionQueueRepository {
     }
 
     override suspend fun counts(orgId: Uuid, memberId: Uuid) = QueueCounts(3, 1)
+
+    override suspend fun memberRequests(orgId: Uuid, memberId: Uuid) = MemberRequests(2, 1)
 }
 
 /** The admission queue's order and its waits, on a scripted queue. */

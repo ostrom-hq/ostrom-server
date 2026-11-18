@@ -2,6 +2,7 @@
 package run.ostrom.server.gateway.infrastructure
 
 import run.ostrom.server.gateway.domain.AdmissionQueueRepository
+import run.ostrom.server.gateway.domain.MemberRequests
 import run.ostrom.server.gateway.domain.QueueCandidate
 import run.ostrom.server.gateway.domain.QueueCounts
 import run.ostrom.server.gateway.domain.Workload
@@ -107,6 +108,16 @@ internal fun admissionWaiting(orgId: Uuid, memberId: Uuid): Read<Waiting> {
     val member = countWhere(a.memberId eq memberId)
     val query = a.select(org, member).where { (a.orgId eq orgId) and (a.running eq false) }
     return Read(query) { Waiting(it[org], it[member]) }
+}
+
+/** The calls a member runs and has waiting now, their lease or place not expired (the member index's prefix). */
+internal fun admissionMemberRequests(orgId: Uuid, memberId: Uuid): Read<MemberRequests> {
+    val a = GatewayAdmissions
+    val running = countWhere(a.running eq true)
+    val waiting = countWhere(a.running eq false)
+    val query = a.select(running, waiting)
+        .where { (a.orgId eq orgId) and (a.memberId eq memberId) and (a.expiresAt greater databaseNow()) }
+    return Read(query) { MemberRequests(it[running].toInt(), it[waiting].toInt()) }
 }
 
 /** The calls waiting now, the org's and the member's. */

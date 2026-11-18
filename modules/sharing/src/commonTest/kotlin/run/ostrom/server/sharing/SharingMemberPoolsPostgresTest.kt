@@ -214,6 +214,7 @@ class SharingMemberPoolsPostgresTest {
                 buildJsonObject {
                     put("member", "liam")
                     put("allowSharedOverflow", false)
+                    put("weight", 1)
                 },
                 none.json(),
                 "No pool: poolId is absent",
@@ -227,7 +228,7 @@ class SharingMemberPoolsPostgresTest {
             val record = audited.single()
             assertEquals("policy.updated", record.event)
             assertEquals("member" to "liam", record.subjectType to record.subjectId)
-            assertEquals(mapOf("pool_id" to "eu", "allow_shared_overflow" to "false"), record.details)
+            assertEquals(mapOf("pool_id" to "eu", "allow_shared_overflow" to "false", "weight" to "1"), record.details)
 
             val moved = send("PATCH", "kira", policy("liam"), pool("us")).json()
             assertEquals("us", moved.getValue("poolId").jsonPrimitive.content, "An owner moves them")
@@ -235,7 +236,28 @@ class SharingMemberPoolsPostgresTest {
             assertStatus(HttpStatusCode.OK, cleared, cleared.bodyAsText())
             assertNull(cleared.json()["poolId"], "An empty string clears the pool")
             assertNull(send("GET", "liam", policy("liam")).json()["poolId"])
-            assertEquals(mapOf("allow_shared_overflow" to "false"), audited.last().details, "A revoke is written too")
+            assertEquals(
+                mapOf("allow_shared_overflow" to "false", "weight" to "1"),
+                audited.last().details,
+                "A revoke is written too",
+            )
+
+            val weighted = send("PATCH", "ana", policy("liam"), buildJsonObject {
+                put("poolId", "eu")
+                put("weight", 5)
+            })
+            assertStatus(HttpStatusCode.OK, weighted, weighted.bodyAsText())
+            assertEquals(5, weighted.json().getValue("weight").jsonPrimitive.content.toInt())
+            assertEquals("5", audited.last().details["weight"])
+            val kept = send("PATCH", "ana", policy("liam"), pool("us")).json()
+            assertEquals(5, kept.getValue("weight").jsonPrimitive.content.toInt(), "Absent, the weight is kept")
+            val tooHeavy = send("PATCH", "ana", policy("liam"), buildJsonObject {
+                put("poolId", "us")
+                put("weight", 1001)
+            })
+            assertStatus(HttpStatusCode.BadRequest, tooHeavy, tooHeavy.bodyAsText())
+            val refusal = tooHeavy.json().getValue("error").jsonObject
+            assertEquals("invalid_policy", refusal.getValue("type").jsonPrimitive.content)
         }
     }
 

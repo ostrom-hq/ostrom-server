@@ -363,7 +363,13 @@ class InferencePlannerTest {
 
             override suspend fun policiesOf(orgId: Uuid, memberIds: Collection<Uuid>) = emptyMap<Uuid, PoolPolicy>()
 
-            override suspend fun setPolicy(orgId: Uuid, memberId: Uuid, poolId: String?, allow: Boolean?) = null
+            override suspend fun setPolicy(
+                orgId: Uuid,
+                memberId: Uuid,
+                poolId: String?,
+                allow: Boolean?,
+                weight: Int?,
+            ) = null
         }
         val shared = SharedAccountPool(
             accounts, accounts,

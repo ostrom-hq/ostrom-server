@@ -134,6 +134,9 @@ internal object SharingMemberPools : Table("sharing_member_pools") {
     // Version 15.
     val allowSharedOverflow = bool("allow_shared_overflow")
 
+    // Version 16: the member's weight in their pool's split of its daily budget, 1 by default.
+    val weight = integer("weight")
+
     override val primaryKey = PrimaryKey(orgId, memberId)
 }
 

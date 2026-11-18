@@ -280,10 +280,14 @@ class SharingOverflowPostgresTest {
                         put("member", "liam")
                         put("poolId", "eu")
                         put("allowSharedOverflow", true)
+                        put("weight", 1)
                     },
                     allowed.json(),
                 )
-                assertEquals(mapOf("pool_id" to "eu", "allow_shared_overflow" to "true"), audited.last().details)
+                assertEquals(
+                    mapOf("pool_id" to "eu", "allow_shared_overflow" to "true", "weight" to "1"),
+                    audited.last().details,
+                )
                 send("PATCH", "kira", policy("ana"), member("eu"))
 
                 repeat(3) { assertEquals("home", leased(team.org, team.liam), "Both open: home first") }
