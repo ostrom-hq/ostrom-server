@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package run.ostrom.server.identity
 
+import run.ostrom.server.identity.domain.SignInLeftovers
 import run.ostrom.server.identity.infrastructure.IdentityDeviceAuthorizations
 import run.ostrom.server.identity.infrastructure.IdentityDeviceDaemonListings
 import run.ostrom.server.identity.infrastructure.IdentityDevices
@@ -54,7 +55,8 @@ class SignInLeftoversPostgresTest {
             account()
             listOf(longAgo, lastWeek, live).forEach { at -> leftovers(at) }
         }
-        val purge = SignInLeftoversImpl(server.koin.get<JdbcDatabase>())
+        // The module's own binding, as its hourly purge reads it.
+        val purge = server.koin.get<SignInLeftovers>()
 
         // Before last week: one row of each table, a batch of one at a time, the oldest first.
         assertEquals(7L, purge.purgeExpired(now - 8.days, limit = 1))
