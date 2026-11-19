@@ -53,6 +53,7 @@ import io.ktor.server.plugins.PayloadTooLargeException
 import io.ktor.server.plugins.origin
 import io.ktor.server.request.receive
 import io.ktor.server.request.receiveText
+import io.ktor.server.response.header
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
@@ -145,6 +146,14 @@ class HttpTest {
                 throw SQLException("pool", null, SQLException("Key (email)=(alice@example.com) exists", "23505"))
             }
             route.get("/probe/origin") { call.respondText(call.request.origin.remoteAddress) }
+            route.get("/probe/stream") {
+                call.response.header(HttpHeaders.CacheControl, "no-cache")
+                call.respondText("data: 1")
+            }
+            route.get("/probe/cached") {
+                call.response.header(HttpHeaders.CacheControl, "private, max-age=30, no-transform")
+                call.respondText("page")
+            }
             route.get("/probe/cancelled") { throw CancellationException("client gone") }
             route.get("/probe/unprotected-me") { call.respondText(call.requirePrincipal().subjectId) }
             route.post("/probe/echo") { call.respondText(call.receive<ProbeBody>().name) }
@@ -227,6 +236,22 @@ class HttpTest {
         assertEquals(HttpStatusCode.OK, response.status)
         val health = OstromJson.decodeFromString<HealthResponse>(response.bodyAsText())
         assertEquals(HealthResponse("ok", SERVER_VERSION, emptyMap()), health)
+    }
+
+    @Test
+    fun everyAnswerForbidsProxiesToRewriteIt() = probeServer {
+        // TeamCode 6039ed5b: an answer that says nothing is never stored nor rewritten, errors and probes included.
+        for (path in listOf("/health", "/probe/missing", "/probe/crash", "/probe/me", "/probe/origin")) {
+            val cacheControl = client.get(path).headers.getAll(HttpHeaders.CacheControl)
+            assertEquals(listOf("no-store, no-transform"), cacheControl, path)
+        }
+        // An answer's own caching is kept, with no-transform added once.
+        val stream = client.get("/probe/stream").headers.getAll(HttpHeaders.CacheControl)
+        assertEquals(listOf("no-cache", "no-transform"), stream)
+        assertEquals(
+            listOf("private, max-age=30, no-transform"),
+            client.get("/probe/cached").headers.getAll(HttpHeaders.CacheControl),
+        )
     }
 
     @Test

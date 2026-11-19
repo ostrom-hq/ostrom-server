@@ -18,6 +18,7 @@ import run.ostrom.server.kernel.logging.Logger
 import run.ostrom.server.kernel.module.kernelModule
 import run.ostrom.server.kernel.module.serverKoin
 import run.ostrom.server.kernel.observability.OstromMetrics
+import run.ostrom.server.kernel.observability.PoolMetrics
 import run.ostrom.server.kernel.observability.ProcessMetrics
 import run.ostrom.server.kernel.observability.TelemetryLogger
 import run.ostrom.server.kernel.signing.Ed25519InstanceSigner
@@ -93,6 +94,7 @@ private fun serve() {
     try {
         // The one pool of OSTROM_DATABASE_MAX_CONNECTIONS: the modules query it, `/ready` reads its state.
         val pool = JdbcDatabase(config.database, config.database.maxConnections).also { jdbc = it }
+        PoolMetrics.register(telemetry.meter, pool::state)
         runBlocking { pool.requireRowLevelSecurity() }
         val signer = runBlocking { Ed25519InstanceSigner.loadOrCreate(config.signingKeyFile) }
         val kernel = kernelModule(logger, pool, signer, source, telemetry = telemetry, metrics = metrics)

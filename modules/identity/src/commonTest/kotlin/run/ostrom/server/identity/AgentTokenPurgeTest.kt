@@ -3,6 +3,7 @@ package run.ostrom.server.identity
 
 import run.ostrom.server.identity.domain.ApiTokensRepository
 import run.ostrom.server.identity.domain.RateLimitWindows
+import run.ostrom.server.identity.domain.SignInLeftovers
 import run.ostrom.server.identity.domain.SignUpPolicy
 import run.ostrom.server.identity.fakes.openSignUp
 import run.ostrom.server.identity.fakes.InMemoryApiTokensRepository
@@ -46,6 +47,14 @@ class AgentTokenPurgeTest {
                 return 0
             }
         }
+        val leftovers = mutableListOf<Pair<Instant, Int>>()
+        val signIns = object : SignInLeftovers {
+            override suspend fun purgeExpired(before: Instant, limit: Int): Long {
+                leftovers += before to limit
+                if (leftovers.size == 1) error("database down")
+                return 0
+            }
+        }
         val warnings = mutableListOf<String>()
         val logger = object : Logger {
             override fun log(level: LogLevel, message: String, fields: Map<String, Any?>, error: Throwable?) {
@@ -62,6 +71,7 @@ class AgentTokenPurgeTest {
                 module {
                     single<ApiTokensRepository> { tokens }
                     single<RateLimitWindows> { windows }
+                    single<SignInLeftovers> { signIns }
                     single<Clock> { clock }
                     single<Logger> { logger }
                     single<SignUpPolicy> { openSignUp() }
@@ -73,7 +83,8 @@ class AgentTokenPurgeTest {
         advanceTimeBy(1.hours + 1.milliseconds)
         assertEquals(2, purged.size, "Tried again an hour after a failure")
         assertEquals(2, windowPurges, "The windows are purged even after a failed token purge")
-        assertEquals(listOf("agent token purge failed", "rate limit purge failed"), warnings)
+        assertEquals(listOf("agent token purge failed", "sign-in purge failed", "rate limit purge failed"), warnings)
+        assertEquals(listOf(now - 7.days to 10_000, now - 7.days to 10_000), leftovers, "Every hour, failure or not")
         assertEquals(now - 7.days, purged.first())
         assertEquals(IdentityModule.AGENT_TOKEN_RETENTION, 7.days)
         app.close()

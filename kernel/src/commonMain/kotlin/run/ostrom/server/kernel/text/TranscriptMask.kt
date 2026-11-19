@@ -30,9 +30,9 @@ object TranscriptMask {
 
     /**
      * Credential shapes masked in every stored string: provider API keys, GitHub tokens, Ostrom credentials,
-     * cloud keys, JWTs and private keys.
+     * cloud keys, JWTs and private keys. [SecretMasks] masks the same shapes.
      */
-    private val secrets = listOf(
+    internal val secrets: List<Regex> = listOf(
         // Prefixed shapes start at a word boundary and contain a digit, so `task-management-…` stays readable.
         // Lookaheads are bounded, so a crafted string (`sk-sk-sk-…`) never makes a scan backtrack quadratically.
         Regex("(?<![A-Za-z0-9_-])sk-(?:ant-)?(?=[A-Za-z0-9_-]{0,256}[0-9])[A-Za-z0-9_-]{16,}"),

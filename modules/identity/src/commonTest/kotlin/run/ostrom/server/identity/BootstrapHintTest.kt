@@ -6,6 +6,7 @@ import run.ostrom.server.identity.domain.SignUpMode
 import run.ostrom.server.identity.domain.User
 import run.ostrom.server.identity.domain.SetupLinksRepository
 import run.ostrom.server.identity.domain.RateLimitWindows
+import run.ostrom.server.identity.domain.SignInLeftovers
 import run.ostrom.server.identity.fakes.InMemoryApiTokensRepository
 import run.ostrom.server.identity.fakes.InMemorySetupLinks
 import run.ostrom.server.identity.fakes.InMemoryUsersRepository
@@ -24,6 +25,7 @@ import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.time.Clock
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /** The start tells the operator of an invite-only instance without an account to run `ostrom-server bootstrap`. */
@@ -44,6 +46,7 @@ class BootstrapHintTest {
                     single<ApiTokensRepository> { InMemoryApiTokensRepository() }
                     single<SetupLinksRepository> { links }
                     single<RateLimitWindows> { NO_WINDOWS }
+                    single<SignInLeftovers> { NO_LEFTOVERS }
                     single<Clock> { SettableClock() }
                     single<Logger> { recorder }
                     single<SignUpPolicy> { SignUpPolicyImpl({ mode }, links, null, FakeHasher(), SettableClock()) }
@@ -58,6 +61,9 @@ class BootstrapHintTest {
     private companion object {
         val NO_WINDOWS = object : RateLimitWindows {
             override suspend fun purgeExpired(): Long = 0
+        }
+        val NO_LEFTOVERS = object : SignInLeftovers {
+            override suspend fun purgeExpired(before: Instant, limit: Int): Long = 0
         }
     }
 

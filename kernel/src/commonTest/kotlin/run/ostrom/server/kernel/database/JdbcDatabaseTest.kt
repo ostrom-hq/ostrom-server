@@ -56,7 +56,10 @@ class JdbcDatabaseTest {
                 }
                 assertEquals(listOf("10s", "5s", "15s"), settings)
                 assertEquals("read committed", database.query { show("transaction_isolation") })
-                assertEquals(PoolState(open = true, waiting = 0), database.state())
+                // The connection went back to the pool: none lent, at least the one that ran the queries kept idle.
+                val state = database.state()
+                assertEquals(PoolState(open = true, waiting = 0, used = 0, idle = state.idle, max = 2), state)
+                assertTrue(state.idle in 1..2, "$state")
             } finally {
                 database.close()
             }

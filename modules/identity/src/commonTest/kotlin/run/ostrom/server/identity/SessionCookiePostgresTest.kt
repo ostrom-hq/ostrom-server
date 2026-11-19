@@ -210,7 +210,7 @@ class SessionCookiePostgresTest {
         }
 
     @Test
-    fun identityAnswersAreNeverCachedAndOtherRoutesAreLeftAlone() = serverTest(listOf(IdentityModule)) { server ->
+    fun identityAnswersAreNeverCachedAndOtherRoutesGetTheDefault() = serverTest(listOf(IdentityModule)) { server ->
         val (_, started) = server.signIn()
 
         val me = server.client.get("/api/v1/auth/me") { browserSession(started.secret, null) }
@@ -218,6 +218,6 @@ class SessionCookiePostgresTest {
         val tokens = server.client.get("/api/v1/tokens") { browserSession(started.secret, null) }
         assertEquals("no-store", tokens.headers[HttpHeaders.CacheControl])
         assertEquals("no-store", server.client.get("/api/v1/auth/me").headers[HttpHeaders.CacheControl], "Errors too")
-        assertNull(server.client.get("/health").headers[HttpHeaders.CacheControl])
+        assertEquals("no-store, no-transform", server.client.get("/health").headers[HttpHeaders.CacheControl])
     }
 }

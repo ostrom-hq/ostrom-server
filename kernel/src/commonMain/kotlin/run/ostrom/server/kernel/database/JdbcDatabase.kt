@@ -69,11 +69,20 @@ class JdbcDatabase(private val config: DatabaseConfig, poolSize: Int) : AutoClos
         block()
     }
 
-    /** The pool's state for `/ready` ([PoolHealthCheck]), read without opening a connection. */
-    fun state(): PoolState = PoolState(
-        open = source.isRunning,
-        waiting = source.hikariPoolMXBean.threadsAwaitingConnection,
-    )
+    /**
+     * The pool's state for `/ready` ([PoolHealthCheck]) and its metrics
+     * ([PoolMetrics][run.ostrom.server.kernel.observability.PoolMetrics]), read without opening a connection.
+     */
+    fun state(): PoolState {
+        val pool = source.hikariPoolMXBean
+        return PoolState(
+            open = source.isRunning,
+            waiting = pool.threadsAwaitingConnection,
+            used = pool.activeConnections,
+            idle = pool.idleConnections,
+            max = source.maximumPoolSize,
+        )
+    }
 
     /**
      * Reads the modules' migration histories through this pool, to check at start that every migration is applied.
