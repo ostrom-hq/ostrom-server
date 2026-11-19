@@ -23,7 +23,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
-import java.sql.SQLException
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -72,8 +71,8 @@ class SignInLeftoversPostgresTest {
     @Test
     fun aFailingTableDoesNotStopTheOthersAndTheFirstFailureIsThrownAfterThem() = runTest {
         val database = closedDatabase() ?: return@runTest
-        // A closed pool fails every table: each is tried, and the first failure comes out.
-        assertFailsWith<SQLException> { SignInLeftoversImpl(database).purgeExpired(now, limit = 10) }
+        // A closed pool fails every table (Exposed: no transaction manager): each is tried, the first failure out.
+        assertFailsWith<IllegalStateException> { SignInLeftoversImpl(database).purgeExpired(now, limit = 10) }
     }
 
     @Test
