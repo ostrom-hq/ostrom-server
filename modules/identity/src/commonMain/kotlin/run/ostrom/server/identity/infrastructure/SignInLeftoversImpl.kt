@@ -43,24 +43,23 @@ class SignInLeftoversImpl(private val database: JdbcDatabase) : SignInLeftovers 
         failure?.let { throw it }
         return deleted
     }
-
-    private companion object {
-        val EXPIRING: List<Triple<Table, Column<Uuid>, Column<Instant>>> = listOf(
-            Triple(IdentityOAuthAttempts, IdentityOAuthAttempts.id, IdentityOAuthAttempts.expiresAt),
-            Triple(IdentityMagicLinks, IdentityMagicLinks.id, IdentityMagicLinks.expiresAt),
-            Triple(IdentitySignInLinks, IdentitySignInLinks.id, IdentitySignInLinks.expiresAt),
-            Triple(IdentityMobileCodes, IdentityMobileCodes.id, IdentityMobileCodes.expiresAt),
-            Triple(
-                IdentityDeviceAuthorizations,
-                IdentityDeviceAuthorizations.id,
-                IdentityDeviceAuthorizations.expiresAt,
-            ),
-            Triple(IdentityWebSessions, IdentityWebSessions.id, IdentityWebSessions.expiresAt),
-            Triple(
-                IdentityDeviceDaemonListings,
-                IdentityDeviceDaemonListings.id,
-                IdentityDeviceDaemonListings.expiresAt,
-            ),
-        )
-    }
 }
+
+/** The tables [SignInLeftoversImpl] purges, each with its key and expiry. */
+private val EXPIRING: List<Triple<Table, Column<Uuid>, Column<Instant>>> = listOf(
+    Triple(IdentityOAuthAttempts, IdentityOAuthAttempts.id, IdentityOAuthAttempts.expiresAt),
+    Triple(IdentityMagicLinks, IdentityMagicLinks.id, IdentityMagicLinks.expiresAt),
+    Triple(IdentitySignInLinks, IdentitySignInLinks.id, IdentitySignInLinks.expiresAt),
+    Triple(IdentityMobileCodes, IdentityMobileCodes.id, IdentityMobileCodes.expiresAt),
+    Triple(
+        IdentityDeviceAuthorizations,
+        IdentityDeviceAuthorizations.id,
+        IdentityDeviceAuthorizations.expiresAt,
+    ),
+    Triple(IdentityWebSessions, IdentityWebSessions.id, IdentityWebSessions.expiresAt),
+    Triple(
+        IdentityDeviceDaemonListings,
+        IdentityDeviceDaemonListings.id,
+        IdentityDeviceDaemonListings.expiresAt,
+    ),
+)
