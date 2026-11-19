@@ -105,6 +105,9 @@ class JdbcDatabase(private val config: DatabaseConfig, poolSize: Int) : AutoClos
 
     /** The bounds and the settings of the pool. */
     companion object {
+        /** The pool's name, in HikariCP's logs and the pool metrics. */
+        const val POOL_NAME = "ostrom-server"
+
         /** The fewest connections a pool may have. */
         const val MIN_POOL_SIZE = 2
 
@@ -164,7 +167,7 @@ class JdbcDatabase(private val config: DatabaseConfig, poolSize: Int) : AutoClos
                 jdbcUrl = jdbcUrl(config)
                 username = config.username
                 password = config.password
-                poolName = "ostrom-server"
+                poolName = POOL_NAME
                 maximumPoolSize = poolSize
                 minimumIdle = 1
                 connectionTimeout = CONNECTION_TIMEOUT_MILLIS

@@ -9,23 +9,40 @@ import org.jetbrains.exposed.v1.core.inSubQuery
 import org.jetbrains.exposed.v1.core.less
 import org.jetbrains.exposed.v1.jdbc.deleteWhere
 import org.jetbrains.exposed.v1.jdbc.select
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * [SignInLeftovers] on the identity tables: none belongs to an organization, so the serving role deletes them in a
- * plain transaction, one table at a time, each through its `expires_at` index and bounded by its oldest [limit] rows.
+ * [SignInLeftovers] on the identity tables: none belongs to an organization, so the serving role deletes them in
+ * plain transactions, table by table, each through its `expires_at` index, [limit] rows of the oldest per transaction
+ * until a batch comes back short, so a backlog drains in one pass. A table that fails does not stop the others: the
+ * first failure is thrown once every table was tried.
  *
  * @param database The database.
  */
 class SignInLeftoversImpl(private val database: JdbcDatabase) : SignInLeftovers {
-    override suspend fun purgeExpired(before: Instant, limit: Int): Long =
-        EXPIRING.sumOf { (table, id, expiresAt) ->
-            database.query {
-                val oldest = table.select(id).where { expiresAt less before }.orderBy(expiresAt).limit(limit)
-                table.deleteWhere { id inSubQuery oldest }.toLong()
+    override suspend fun purgeExpired(before: Instant, limit: Int): Long {
+        var deleted = 0L
+        var failure: Exception? = null
+        for ((table, id, expiresAt) in EXPIRING) {
+            try {
+                do {
+                    val batch = database.query {
+                        val oldest = table.select(id).where { expiresAt less before }.orderBy(expiresAt).limit(limit)
+                        table.deleteWhere { id inSubQuery oldest }
+                    }
+                    deleted += batch
+                } while (batch == limit)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                failure = failure ?: error
             }
         }
+        failure?.let { throw it }
+        return deleted
+    }
 
     private companion object {
         val EXPIRING: List<Triple<Table, Column<Uuid>, Column<Instant>>> = listOf(

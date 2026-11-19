@@ -4,6 +4,7 @@ package run.ostrom.server.kernel.observability
 import run.ostrom.core.telemetry.Attributes
 import run.ostrom.core.telemetry.metrics.GaugeReading
 import run.ostrom.core.telemetry.metrics.Meter
+import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.kernel.database.PoolState
 
 /**
@@ -15,9 +16,6 @@ import run.ostrom.server.kernel.database.PoolState
  * without opening a connection.
  */
 object PoolMetrics {
-    /** The pool's name, as HikariCP's `poolName`. */
-    const val POOL_NAME: String = "ostrom-server"
-
     private const val POOL = "db.client.connection.pool.name"
     private const val STATE = "db.client.connection.state"
 
@@ -49,9 +47,9 @@ object PoolMetrics {
         } else {
             values(this).map { (value, connections) ->
                 val attributes = if (connections == null) {
-                    Attributes.of(POOL to POOL_NAME)
+                    Attributes.of(POOL to JdbcDatabase.POOL_NAME)
                 } else {
-                    Attributes.of(POOL to POOL_NAME, STATE to connections)
+                    Attributes.of(POOL to JdbcDatabase.POOL_NAME, STATE to connections)
                 }
                 GaugeReading(value.toDouble(), attributes)
             }

@@ -74,7 +74,7 @@ interface RateLimiter {
  */
 interface SignInLeftovers {
     /**
-     * Deletes the rows that expired before [before], at most [limit] of each table in one pass.
+     * Deletes the rows that expired before [before], [limit] rows of a table at a time, until none is left.
      *
      * @return How many were deleted.
      */

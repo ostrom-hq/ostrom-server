@@ -11,6 +11,7 @@ import run.ostrom.server.identity.infrastructure.IdentitySignInLinks
 import run.ostrom.server.identity.infrastructure.IdentityUsers
 import run.ostrom.server.identity.infrastructure.IdentityWebSessions
 import run.ostrom.server.identity.infrastructure.SignInLeftoversImpl
+import run.ostrom.server.kernel.config.DatabaseConfig
 import run.ostrom.server.kernel.database.JdbcDatabase
 import run.ostrom.server.testing.serverTest
 import org.jetbrains.exposed.v1.core.Column
@@ -18,8 +19,16 @@ import org.jetbrains.exposed.v1.core.Table
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.select
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
+import java.sql.SQLException
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.fail
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
@@ -48,14 +57,44 @@ class SignInLeftoversPostgresTest {
         }
         val purge = SignInLeftoversImpl(server.koin.get<JdbcDatabase>())
 
-        // One per table and pass: the oldest goes first.
-        assertEquals(7L, purge.purgeExpired(now - 7.days, limit = 1))
+        // Before last week: one row of each table, a batch of one at a time, the oldest first.
+        assertEquals(7L, purge.purgeExpired(now - 8.days, limit = 1))
         assertEquals(listOf(lastWeek, live), server.database.superuserJdbc.query { expiries() }.values.distinct())
-        assertEquals(7L, purge.purgeExpired(now - 7.days, limit = 10))
+        // A backlog drains in one pass, batch after batch, until a batch comes back short.
+        server.database.superuserJdbc.query { leftovers(now - 10.days) }
+        assertEquals(14L, purge.purgeExpired(now - 7.days, limit = 1))
         assertEquals(0L, purge.purgeExpired(now - 7.days, limit = 10), "Nothing left before the date")
         val kept = server.database.superuserJdbc.query { expiries() }
         assertEquals(TABLES.map { it.first.tableName }.toSet(), kept.keys.map { it.first }.toSet())
         assertEquals(listOf(live), kept.values.distinct(), "Live rows are kept")
+    }
+
+    @Test
+    fun aFailingTableDoesNotStopTheOthersAndTheFirstFailureIsThrownAfterThem() = runTest {
+        val database = closedDatabase() ?: return@runTest
+        // A closed pool fails every table: each is tried, and the first failure comes out.
+        assertFailsWith<SQLException> { SignInLeftoversImpl(database).purgeExpired(now, limit = 10) }
+    }
+
+    @Test
+    fun aCancelledPurgeStopsAtOnce() = runTest {
+        val database = closedDatabase() ?: return@runTest
+        assertFailsWith<CancellationException> {
+            withContext(Dispatchers.Default) {
+                cancel()
+                SignInLeftoversImpl(database).purgeExpired(now, limit = 10)
+            }
+        }
+    }
+
+    /** A pool of the test database, already closed; null when there is no test database. */
+    private fun closedDatabase(): JdbcDatabase? {
+        val url = System.getenv("OSTROM_TEST_DATABASE_URL")
+        if (url == null) {
+            if (System.getenv("OSTROM_TEST_DATABASE_REQUIRED") == "true") fail("OSTROM_TEST_DATABASE_URL is required")
+            return null
+        }
+        return JdbcDatabase(DatabaseConfig.of(url, null, null, 2), 2).apply { close() }
     }
 
     private fun JdbcTransaction.account() {
