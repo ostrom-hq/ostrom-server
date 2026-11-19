@@ -69,11 +69,20 @@ class JdbcDatabase(private val config: DatabaseConfig, poolSize: Int) : AutoClos
         block()
     }
 
-    /** The pool's state for `/ready` ([PoolHealthCheck]), read without opening a connection. */
-    fun state(): PoolState = PoolState(
-        open = source.isRunning,
-        waiting = source.hikariPoolMXBean.threadsAwaitingConnection,
-    )
+    /**
+     * The pool's state for `/ready` ([PoolHealthCheck]) and its metrics
+     * ([PoolMetrics][run.ostrom.server.kernel.observability.PoolMetrics]), read without opening a connection.
+     */
+    fun state(): PoolState {
+        val pool = source.hikariPoolMXBean
+        return PoolState(
+            open = source.isRunning,
+            waiting = pool.threadsAwaitingConnection,
+            used = pool.activeConnections,
+            idle = pool.idleConnections,
+            max = source.maximumPoolSize,
+        )
+    }
 
     /**
      * Reads the modules' migration histories through this pool, to check at start that every migration is applied.
@@ -96,6 +105,9 @@ class JdbcDatabase(private val config: DatabaseConfig, poolSize: Int) : AutoClos
 
     /** The bounds and the settings of the pool. */
     companion object {
+        /** The pool's name, in HikariCP's logs and the pool metrics. */
+        const val POOL_NAME = "ostrom-server"
+
         /** The fewest connections a pool may have. */
         const val MIN_POOL_SIZE = 2
 
@@ -155,7 +167,7 @@ class JdbcDatabase(private val config: DatabaseConfig, poolSize: Int) : AutoClos
                 jdbcUrl = jdbcUrl(config)
                 username = config.username
                 password = config.password
-                poolName = "ostrom-server"
+                poolName = POOL_NAME
                 maximumPoolSize = poolSize
                 minimumIdle = 1
                 connectionTimeout = CONNECTION_TIMEOUT_MILLIS

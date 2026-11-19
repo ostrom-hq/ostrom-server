@@ -2,6 +2,7 @@
 package run.ostrom.server.identity.domain
 
 import kotlin.time.Duration
+import kotlin.time.Instant
 
 /** Makes the secrets of sessions, tokens and device codes. */
 interface SecretGenerator {
@@ -64,6 +65,20 @@ interface RateLimiter {
      * @return True when this attempt is within the limit.
      */
     suspend fun tryAcquire(key: String, limit: Int, window: Duration): Boolean
+}
+
+/**
+ * What a sign-in leaves behind once it has expired (audit SD-07): OAuth attempts, e-mailed and one-time links, mobile
+ * codes, device authorizations, browser sessions and the device daemons' listings. None acts once expired; each holds a
+ * hash, a verifier or a sealed answer, kept for nothing.
+ */
+interface SignInLeftovers {
+    /**
+     * Deletes the rows that expired before [before], [limit] rows of a table at a time, until none is left.
+     *
+     * @return How many were deleted.
+     */
+    suspend fun purgeExpired(before: Instant, limit: Int): Long
 }
 
 /** The stored windows of [RateLimiter], shared by every replica. */

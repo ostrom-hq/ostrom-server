@@ -976,3 +976,4 @@ Where the product metrics are emitted, each next to the code that decides, never
 | `ostrom.inference.cost_usd`, `.tokens`, `.duration` `{source,provider}` | `gateway` `MeteredModelCallObserver`, per relayed call that reached a provider |
 | `ostrom.gates.pending` | `gates` `PendingGatesCount`, read every 30 s across organizations (`gates_pending_count()`) |
 | `ostrom.sessions.active{where="local"}` | `sessions` `ActiveSessionsCount`, read every 30 s across organizations (`sessions_active_count`) |
+| `db.client.connection.count{db.client.connection.state}`, `db.client.connection.max`, `db.client.connection.pending_requests` | kernel `PoolMetrics`, the HikariCP pool's state read at each collection, without a connection (audit CRL-04) |

@@ -6,6 +6,10 @@ package run.ostrom.server.kernel.text
  * in a URL, a `*_TOKEN=` variable, a token flag, a provider's or Ostrom's key. Such a text reaches a channel, every
  * member's list or the organization's audit log (AGENTS.md rule 9), so the server masks it again whatever the
  * workstation already removed.
+ *
+ * A bare credential is masked by its shape, the same shapes as the transcripts' ([TranscriptMask.secrets]: provider
+ * keys, GitHub and Slack tokens, every Ostrom credential prefix, AWS keys, JWTs, private keys), plus the server's own
+ * runner, terminal and webhook secrets (audit SEC-01).
  */
 object SecretMasks {
     /** What replaces a secret. */
@@ -20,7 +24,14 @@ object SecretMasks {
      */
     fun masked(text: String): String = SECRETS.fold(text) { masked, (pattern, replacement) ->
         pattern.replace(masked, replacement)
-    }
+    }.let { masked -> SHAPES.fold(masked) { next, pattern -> pattern.replace(next, MASK) } }
+
+    // Runner and terminal tokens (`ostrom_runner_`, `ostrom_term_`), webhook signing secrets (`whsec_`) and wait-event
+    // secrets (`wev_`), each followed by at least 16 random characters.
+    private val SERVER_SECRETS =
+        Regex("(?<![A-Za-z0-9_-])(?:ostrom_runner_|ostrom_term_|whsec_|wev_)[A-Za-z0-9_-]{16,}")
+
+    private val SHAPES: List<Regex> = TranscriptMask.secrets + SERVER_SECRETS
 
     private val SECRETS: List<Pair<Regex, String>> = listOf(
         Regex("(?i)\\b(bearer|basic|token)\\s+[A-Za-z0-9._~+/=-]{8,}") to "$1 $MASK",

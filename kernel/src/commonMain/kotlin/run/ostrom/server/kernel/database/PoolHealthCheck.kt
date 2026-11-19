@@ -12,8 +12,11 @@ import kotlin.time.TimeSource
  *
  * @property open Whether the pool is running and not closed.
  * @property waiting The callers waiting for a connection right now.
+ * @property used The connections lent to a transaction right now.
+ * @property idle The open connections waiting in the pool.
+ * @property max The most connections the pool may open.
  */
-data class PoolState(val open: Boolean, val waiting: Int)
+data class PoolState(val open: Boolean, val waiting: Int, val used: Int = 0, val idle: Int = 0, val max: Int = 0)
 
 /**
  * `/ready`'s database check (CRL-11): the pool's state, never a query. A database that stalls makes callers wait

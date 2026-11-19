@@ -76,6 +76,7 @@ import run.ostrom.server.identity.domain.OAuthAttemptsRepository
 import run.ostrom.server.identity.domain.PollDeviceAuthorizationUseCase
 import run.ostrom.server.identity.domain.PollDeviceAuthorizationUseCaseImpl
 import run.ostrom.server.identity.domain.RateLimitWindows
+import run.ostrom.server.identity.domain.SignInLeftovers
 import run.ostrom.server.identity.domain.RateLimiter
 import run.ostrom.server.identity.domain.RenameDeviceUseCase
 import run.ostrom.server.identity.domain.RenameDeviceUseCaseImpl
@@ -155,6 +156,7 @@ import run.ostrom.server.identity.infrastructure.NotificationPreferencesReposito
 import run.ostrom.server.identity.infrastructure.OAuthAttemptsRepositoryImpl
 import run.ostrom.server.identity.infrastructure.PhoneUnlockProofsImpl
 import run.ostrom.server.identity.infrastructure.RateLimiterImpl
+import run.ostrom.server.identity.infrastructure.SignInLeftoversImpl
 import run.ostrom.server.identity.infrastructure.SecureSecretGenerator
 import run.ostrom.server.identity.infrastructure.IdentityInstanceBootstrapper
 import run.ostrom.server.identity.infrastructure.SetupLinksRepositoryImpl
@@ -248,6 +250,7 @@ object IdentityModule : ServerModule {
         single { RateLimiterImpl(get<JdbcDatabase>(), get()) }
         single<RateLimiter> { get<RateLimiterImpl>() }
         single<RateLimitWindows> { get<RateLimiterImpl>() }
+        single<SignInLeftovers> { SignInLeftoversImpl(get<JdbcDatabase>()) }
 
         single<UsersRepository> { UsersRepositoryImpl(get<JdbcDatabase>()) }
         single<LinkedIdentities> { LinkedIdentitiesImpl(get<JdbcDatabase>()) }
@@ -401,16 +404,27 @@ object IdentityModule : ServerModule {
     /** How long an agent token is kept once expired: it no longer acts, and nothing reads it after its launch. */
     val AGENT_TOKEN_RETENTION: Duration = 7.days
 
+    /**
+     * How long what an expired sign-in leaves ([SignInLeftovers]) is kept: it no longer signs anybody in, and a late
+     * click on a link still reads "expired" for a week.
+     */
+    val SIGN_IN_RETENTION: Duration = 7.days
+
+    /** The rows of each sign-in table one hourly pass deletes at most. */
+    const val SIGN_IN_PURGE_BATCH: Int = 10_000
+
     /** The longest the hourly purge may take. */
     private val PURGE_TIMEOUT: Duration = 5.minutes
 
     // Every hour, the agent tokens expired more than AGENT_TOKEN_RETENTION ago are deleted: one per launch, they were
-    // kept for ever; and so are the rate limits' windows already over. One replica at a time runs it (ScheduledWork).
-    // A failed purge is logged and tried again the next hour; it never stops the server.
+    // kept for ever; and so are the rate limits' windows already over, and what sign-ins left SIGN_IN_RETENTION after
+    // it expired. One replica at a time runs it (ScheduledWork). A failed purge is logged and tried again the next
+    // hour; it never stops the server.
     override fun start(scope: CoroutineScope, koin: Koin) {
         warnWhenNobodyCanSignUp(scope, koin)
         val tokens = koin.get<ApiTokensRepository>()
         val windows = koin.get<RateLimitWindows>()
+        val leftovers = koin.get<SignInLeftovers>()
         val clock = koin.get<Clock>()
         val logger = koin.get<Logger>()
         val work = koin.scheduledWork()
@@ -419,6 +433,9 @@ object IdentityModule : ServerModule {
                 val before = clock.now() - AGENT_TOKEN_RETENTION
                 logger.purging("agent token purge failed") { tokens.purgeAgentTokens(before) }
                 logger.purging("rate limit purge failed") { windows.purgeExpired() }
+                logger.purging("sign-in purge failed") {
+                    leftovers.purgeExpired(clock.now() - SIGN_IN_RETENTION, SIGN_IN_PURGE_BATCH)
+                }
             }
         }
     }

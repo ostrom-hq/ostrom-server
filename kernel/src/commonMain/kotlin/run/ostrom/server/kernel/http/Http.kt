@@ -56,6 +56,7 @@ fun Application.configureHttp(koin: Koin, modules: List<ServerModule>) {
     val logger = koin.get<Logger>()
     install(ClientAddress) { proxies = koin.getOrNull<TrustedProxies>() ?: TrustedProxies.NONE }
     install(BodyLimit)
+    install(NoTransform)
     recordRouteTemplates()
     koin.getOrNull<Telemetry>()?.let { installTelemetry(it, koin.get<OstromMetrics>()) }
     install(ContentNegotiation) { json(OstromJson) }

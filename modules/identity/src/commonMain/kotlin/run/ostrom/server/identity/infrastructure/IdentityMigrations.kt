@@ -562,4 +562,15 @@ val IdentityMigrations: List<SchemaMigration> = listOf(
                 ON identity_device_daemon_listings (device_id, answered_at, expires_at)
         """.trimIndent(),
     ),
+    // The hourly purge of what expired sign-ins leave (SignInLeftoversImpl, audit SD-07) reads every one of these
+    // tables by `expires_at`; the other four already have that index.
+    SchemaMigration(
+        version = 22,
+        name = "sign_in_leftovers_expiry",
+        sql = """
+            CREATE INDEX identity_web_sessions_expiry ON identity_web_sessions (expires_at);
+            CREATE INDEX identity_device_authorizations_expiry ON identity_device_authorizations (expires_at);
+            CREATE INDEX identity_device_daemon_listings_expiry ON identity_device_daemon_listings (expires_at)
+        """.trimIndent(),
+    ),
 )
